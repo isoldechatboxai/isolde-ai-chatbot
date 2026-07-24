@@ -15,4 +15,4 @@ RUN mkdir -p uploads logs vector_store
 
 EXPOSE 5000
 
-CMD ["sh", "-c", "gunicorn -w 4 -b 0.0.0.0:${PORT} run:app"]
+CMD ["sh", "-c", "gunicorn -w 1 -b 0.0.0.0:${PORT} run:app"]
