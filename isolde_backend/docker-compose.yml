@@ -1,0 +1,29 @@
+version: "3.9"
+
+services:
+  backend:
+    build: .
+    container_name: isolde-backend
+    ports:
+      - "5000:5000"
+    env_file:
+      - .env
+    volumes:
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+      - ./vector_store:/app/vector_store
+    restart: unless-stopped
+
+  # Swap SQLite for Postgres in production by uncommenting this service
+  # and setting DATABASE_URL=postgresql://isolde:isolde@db:5432/isolde in .env
+  # db:
+  #   image: postgres:16-alpine
+  #   environment:
+  #     POSTGRES_USER: isolde
+  #     POSTGRES_PASSWORD: isolde
+  #     POSTGRES_DB: isolde
+  #   volumes:
+  #     - pgdata:/var/lib/postgresql/data
+
+# volumes:
+#   pgdata:
