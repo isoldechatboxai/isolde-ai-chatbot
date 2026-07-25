@@ -1,277 +1,672 @@
-// ===== Config =====
-// Relative path: works automatically when this page is served by the
-// Flask backend itself (http://127.0.0.1:5000/). If you instead open
-// this file directly (file://) or serve it from a separate dev server,
-// change this back to an absolute URL, e.g. "http://127.0.0.1:5000/api/chat",
-// and make sure that origin is listed in CORS_ORIGINS in the backend's .env.
-const API_URL = "/api/chat";
-const BOT_NAME = "Isolde";
+/* ==========================================================================
+   ISOLDE — AI Chatbot Interface
+   Production JavaScript · ES6+ · No frameworks, no dependencies
 
-// ===== State =====
-let chatHistory = []; // { role: 'user'|'bot', text, time }
+   Wires up the existing HTML/CSS:
+   - Chat send/receive, typing indicator, auto-scroll
+   - Welcome screen hide/restore
+   - Multi-conversation chat history (create, switch, highlight active)
+   - Clear chat
+   - Theme toggle (light/dark) via [data-theme] + localStorage
+   - Auto-resizing textarea (max 200px, matches CSS max-height)
+   - Voice button visual-only recording state (.is-recording)
+   - File upload filename preview (no backend upload)
+   - Copy message button with "Copied!" feedback
+   - Loading state (disables send button, shows typing indicator)
+   - Persists theme + all conversations to localStorage, restores on load
+   ========================================================================== */
 
-// ===== DOM =====
-const chatArea = document.getElementById("chatArea");
-const welcomeScreen = document.getElementById("welcomeScreen");
-const messageInput = document.getElementById("messageInput");
-const sendBtn = document.getElementById("sendBtn");
-const typingIndicator = document.getElementById("typingIndicator");
-const themeToggle = document.getElementById("themeToggle");
-const themeIcon = document.getElementById("themeIcon");
-const clearChatBtn = document.getElementById("clearChatBtn");
-const toast = document.getElementById("toast");
-const voiceBtn = document.getElementById("voiceBtn");
+(() => {
+  "use strict";
 
-const SpeechRecognition =
-  window.SpeechRecognition || window.webkitSpeechRecognition;
+  /* ========================================================================
+     CONSTANTS
+     ======================================================================== */
 
-let recognition;
+  const STORAGE_KEYS = {
+    THEME: "isolde-theme",
+    CONVERSATIONS: "isolde-conversations",
+    ACTIVE_CONVERSATION: "isolde-active-conversation",
+  };
 
-if (SpeechRecognition) {
-    recognition = new SpeechRecognition();
-    recognition.lang = "en-US";
-    recognition.interimResults = false;
-    recognition.continuous = false;
-    recognition.maxAlternatives = 1;
+  const MAX_TEXTAREA_HEIGHT = 200; // px — matches .message-textarea max-height in CSS
+  const BOT_REPLY_DELAY = 900; // ms — simulated "thinking" delay before a reply appears
+  const COPY_FEEDBACK_DURATION = 1600; // ms — how long "Copied!" stays visible
 
-    voiceBtn.addEventListener("click", () => {
-    messageInput.value = "";
-    recognition.start();
-});
+  /* ========================================================================
+     DOM REFERENCES
+     ======================================================================== */
 
-recognition.onstart = () => {
-    console.log("Speech recognition started");
-};
-    recognition.onresult = (event) => {
-        const text = event.results[0][0].transcript;
+  const dom = {
+    app: document.querySelector(".app"),
+    sidebar: document.querySelector(".sidebar"),
 
-        console.log("Recognized:", text);
+    newChatBtn: document.querySelector(".new-chat-btn"),
+    chatHistoryList: document.querySelector(".chat-history-list"),
 
-        alert(text);
+    themeToggleBtn: document.querySelector(".theme-toggle-btn"),
+    clearChatBtn: document.querySelector(".clear-chat-btn"),
 
-        messageInput.value = text;
-        updateSendButtonState();
-    };
+    chatArea: document.querySelector(".chat-area"),
+    welcomeScreen: document.querySelector(".welcome-screen"),
+    chatMessages: document.querySelector(".chat-messages"),
+    suggestionChips: document.querySelectorAll(".suggestion-chip"),
 
-    recognition.onend = () => {
-        console.log("Recognition ended");
-    };
+    typingIndicator: document.querySelector(".typing-indicator"),
 
-    recognition.onerror = (event) => {
-        console.log("Error:", event.error);
-        alert("Error: " + event.error);
-    };
-    
-}
+    messageForm: document.querySelector(".message-form"),
+    messageTextarea: document.querySelector(".message-textarea"),
+    sendBtn: document.querySelector(".send-btn"),
 
-// ===== Theme =====
-function initTheme() {
-  const saved = localStorageSafeGet("isolde-theme") || "light";
-  document.documentElement.setAttribute("data-theme", saved);
-  updateThemeIcon(saved);
-}
+    fileUploadBtn: document.querySelector(".file-upload-btn"),
+    fileUploadInput: document.querySelector(".file-upload-input"),
 
-function toggleTheme() {
-  const current = document.documentElement.getAttribute("data-theme") || "light";
-  const next = current === "light" ? "dark" : "light";
-  document.documentElement.setAttribute("data-theme", next);
-  localStorageSafeSet("isolde-theme", next);
-  updateThemeIcon(next);
-}
+    voiceInputBtn: document.querySelector(".voice-input-btn"),
+  };
 
-function updateThemeIcon(theme) {
-  if (theme === "dark") {
-    themeIcon.innerHTML = `<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>`;
-  } else {
-    themeIcon.innerHTML = `<circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>`;
+  /* ========================================================================
+     STATE
+     ======================================================================== */
+
+  /**
+   * conversations: {
+   *   [id]: { id, title, messages: [{ role, text, time }] }
+   * }
+   */
+  let state = {
+    conversations: {},
+    activeConversationId: null,
+    isLoading: false,
+    isRecording: false,
+  };
+
+  /* ========================================================================
+     UTILITY FUNCTIONS
+     ======================================================================== */
+
+  /** Generate a reasonably unique id without external libraries. */
+  function generateId() {
+    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   }
-}
 
-// Safe localStorage wrappers (in case of sandboxed environments)
-function localStorageSafeGet(key) {
-  try { return localStorage.getItem(key); } catch (e) { return null; }
-}
-function localStorageSafeSet(key, val) {
-  try { localStorage.setItem(key, val); } catch (e) {}
-}
+  /** Format a Date as a short local time string, e.g. "10:04 AM". */
+  function formatTime(date) {
+    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
 
-// ===== Utility =====
-function formatTime(date) {
-  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
+  /** Escape HTML special characters to prevent markup injection from text content. */
+  function escapeHtml(str) {
+    const div = document.createElement("div");
+    div.textContent = str ?? "";
+    return div.innerHTML;
+  }
 
-function escapeHtml(str) {
-  const div = document.createElement("div");
-  div.textContent = str;
-  return div.innerHTML;
-}
+  /** Derive a short conversation title from the first user message. */
+  function deriveTitle(text) {
+    const trimmed = text.trim().replace(/\s+/g, " ");
+    return trimmed.length > 42 ? `${trimmed.slice(0, 42)}…` : trimmed || "New conversation";
+  }
 
-function showToast(msg) {
-  toast.textContent = msg;
-  toast.classList.add("show");
-  setTimeout(() => toast.classList.remove("show"), 3000);
-}
+  /** Scroll the chat area smoothly to the latest message. */
+  function scrollToBottom() {
+    if (!dom.chatArea) return;
+    dom.chatArea.scrollTo({ top: dom.chatArea.scrollHeight, behavior: "smooth" });
+  }
 
-function scrollToBottom() {
-  chatArea.scrollTop = chatArea.scrollHeight;
-}
+  /* ========================================================================
+     LOCAL STORAGE
+     ======================================================================== */
 
-// ===== Rendering =====
-function hideWelcome() {
-  if (welcomeScreen) welcomeScreen.style.display = "none";
-}
+  function saveChat() {
+    try {
+      localStorage.setItem(STORAGE_KEYS.CONVERSATIONS, JSON.stringify(state.conversations));
+      localStorage.setItem(STORAGE_KEYS.ACTIVE_CONVERSATION, state.activeConversationId ?? "");
+    } catch (err) {
+      console.error("Isolde: failed to save chat to localStorage.", err);
+    }
+  }
 
-function renderMessage(role, text, time) {
-  hideWelcome();
+  function loadChat() {
+    try {
+      const rawConversations = localStorage.getItem(STORAGE_KEYS.CONVERSATIONS);
+      const rawActiveId = localStorage.getItem(STORAGE_KEYS.ACTIVE_CONVERSATION);
 
-  const row = document.createElement("div");
-  row.className = `message-row ${role}`;
+      state.conversations = rawConversations ? JSON.parse(rawConversations) : {};
+      state.activeConversationId = rawActiveId || null;
+    } catch (err) {
+      console.error("Isolde: failed to load chat from localStorage.", err);
+      state.conversations = {};
+      state.activeConversationId = null;
+    }
+  }
 
-  const avatar = document.createElement("div");
-  avatar.className = `message-avatar ${role === "user" ? "user-avatar" : "bot-avatar"}`;
-  avatar.innerHTML = role === "user"
-    ? "U"
-    : `<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" fill="white" fill-opacity="0.001"/><path d="M8 12.5C8 12.5 9.5 15 12 15C14.5 15 16 12.5 16 12.5" stroke="white" stroke-width="1.5" stroke-linecap="round"/><circle cx="9" cy="9.5" r="1" fill="white"/><circle cx="15" cy="9.5" r="1" fill="white"/></svg>`;
+  function saveTheme(theme) {
+    try {
+      localStorage.setItem(STORAGE_KEYS.THEME, theme);
+    } catch (err) {
+      console.error("Isolde: failed to save theme to localStorage.", err);
+    }
+  }
 
-  const content = document.createElement("div");
-  content.className = "message-content";
+  function loadTheme() {
+    try {
+      return localStorage.getItem(STORAGE_KEYS.THEME);
+    } catch (err) {
+      console.error("Isolde: failed to load theme from localStorage.", err);
+      return null;
+    }
+  }
 
-  const bubble = document.createElement("div");
-  bubble.className = "bubble";
-  if (role === "bot") {
-    bubble.innerHTML = marked.parse(text);
+  /* ========================================================================
+     THEME
+     ======================================================================== */
 
-    // Highlight code blocks
-    bubble.querySelectorAll("pre code").forEach((block) => {
-        hljs.highlightElement(block);
+  function applyTheme(theme) {
+    document.documentElement.setAttribute("data-theme", theme);
+    if (dom.themeToggleBtn) {
+      dom.themeToggleBtn.setAttribute("data-theme", theme);
+      dom.themeToggleBtn.setAttribute(
+        "title",
+        theme === "dark" ? "Switch to light mode" : "Switch to dark mode"
+      );
+    }
+  }
+
+  function toggleTheme() {
+    const current = document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
+    const next = current === "dark" ? "light" : "dark";
+    applyTheme(next);
+    saveTheme(next);
+  }
+
+  function restoreTheme() {
+    const saved = loadTheme();
+    const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches;
+    const theme = saved || (prefersDark ? "dark" : "light");
+    applyTheme(theme);
+  }
+
+  /* ========================================================================
+     WELCOME SCREEN
+     ======================================================================== */
+
+  function hideWelcomeScreen() {
+    if (dom.welcomeScreen) {
+      dom.welcomeScreen.style.display = "none";
+    }
+  }
+
+  function showWelcomeScreen() {
+    if (dom.welcomeScreen) {
+      dom.welcomeScreen.style.display = "";
+    }
+  }
+
+  /* ========================================================================
+     CONVERSATIONS / CHAT HISTORY
+     ======================================================================== */
+
+  /** Create a brand new empty conversation and make it active. */
+  function createConversation() {
+    const id = generateId();
+    state.conversations[id] = { id, title: "New conversation", messages: [] };
+    state.activeConversationId = id;
+
+    renderChatHistory();
+    renderActiveConversation();
+    saveChat();
+
+    return id;
+  }
+
+  /** Get the currently active conversation object, creating one if needed. */
+  function getActiveConversation() {
+    if (!state.activeConversationId || !state.conversations[state.activeConversationId]) {
+      createConversation();
+    }
+    return state.conversations[state.activeConversationId];
+  }
+
+  /** Switch to a different conversation by id and re-render the chat area. */
+  function switchConversation(id) {
+    if (!state.conversations[id]) return;
+    state.activeConversationId = id;
+    renderChatHistory();
+    renderActiveConversation();
+    saveChat();
+  }
+
+  /** Render the sidebar's chat-history list from current state. */
+  function renderChatHistory() {
+    if (!dom.chatHistoryList) return;
+
+    const conversations = Object.values(state.conversations).sort((a, b) => {
+      const aLast = a.messages[a.messages.length - 1]?.time ?? 0;
+      const bLast = b.messages[b.messages.length - 1]?.time ?? 0;
+      return new Date(bLast) - new Date(aLast);
     });
-} else {
-    bubble.innerHTML = escapeHtml(text).replace(/\n/g, "<br>");
-}
 
-  const meta = document.createElement("div");
-  meta.className = "message-meta";
-  meta.innerHTML = `<span>${formatTime(time)}</span>`;
+    dom.chatHistoryList.innerHTML = "";
 
-  const copyBtn = document.createElement("button");
-  copyBtn.className = "copy-btn";
-  copyBtn.title = "Copy message";
-  copyBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
-  copyBtn.addEventListener("click", () => {
-    navigator.clipboard.writeText(text).then(() => showToast("Copied to clipboard"));
-  });
-  meta.appendChild(copyBtn);
+    conversations.forEach((conversation) => {
+      const item = document.createElement("li");
+      item.className = "chat-history-item";
+      if (conversation.id === state.activeConversationId) {
+        item.classList.add("active");
+      }
 
-  content.appendChild(bubble);
-  content.appendChild(meta);
-  row.appendChild(avatar);
-row.appendChild(content);
+      const link = document.createElement("a");
+      link.className = "chat-history-link";
+      link.href = "#";
+      link.textContent = conversation.title;
+      link.addEventListener("click", (event) => {
+        event.preventDefault();
+        switchConversation(conversation.id);
+      });
 
-chatArea.appendChild(row);
+      item.appendChild(link);
+      dom.chatHistoryList.appendChild(item);
+    });
+  }
 
-scrollToBottom();
-}
+  /** Re-render the chat message list to reflect the active conversation. */
+  function renderActiveConversation() {
+    if (!dom.chatMessages) return;
 
-// ===== Typing indicator =====
-function showTyping() {
-  typingIndicator.style.display = "flex";
-  scrollToBottom();
-}
-function hideTyping() {
-  typingIndicator.style.display = "none";
-}
+    dom.chatMessages.innerHTML = "";
+    const conversation = state.conversations[state.activeConversationId];
 
-// ===== Sending messages =====
-async function sendMessage() {
-  const text = messageInput.value.trim();
-  if (!text) return;
+    if (!conversation || conversation.messages.length === 0) {
+      showWelcomeScreen();
+      return;
+    }
 
-  const now = new Date();
-  renderMessage("user", text, now);
-  chatHistory.push({ role: "user", text, time: now });
+    hideWelcomeScreen();
+    conversation.messages.forEach((message) => {
+      renderMessage(message.role, message.text, new Date(message.time));
+    });
+    scrollToBottom();
+  }
 
-  messageInput.value = "";
-  autoResizeInput();
-  updateSendButtonState();
+  /* ========================================================================
+     MESSAGE RENDERING
+     ======================================================================== */
 
-  showTyping();
+  /** Build and insert a message bubble into the DOM. Returns the created element. */
+  function renderMessage(role, text, time) {
+    const isUser = role === "user";
 
-  try {
-    const response = await fetch(API_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: text }),
+    const article = document.createElement("article");
+    article.className = `message ${isUser ? "message-user" : "message-bot"}`;
+
+    const avatar = document.createElement("img");
+    avatar.className = "message-avatar";
+    avatar.src = "";
+    avatar.alt = isUser ? "User avatar" : "Isolde avatar";
+
+    const content = document.createElement("div");
+    content.className = "message-content";
+
+    const textEl = document.createElement("p");
+    textEl.className = "message-text";
+    textEl.innerHTML = escapeHtml(text).replace(/\n/g, "<br>");
+
+    const timeEl = document.createElement("span");
+    timeEl.className = "message-time";
+    timeEl.textContent = formatTime(time);
+
+    content.appendChild(textEl);
+    content.appendChild(timeEl);
+
+    if (!isUser) {
+      const copyBtn = document.createElement("button");
+      copyBtn.className = "copy-message-btn";
+      copyBtn.type = "button";
+      copyBtn.title = "Copy message";
+      copyBtn.textContent = "Copy";
+      copyBtn.addEventListener("click", () => copyMessage(text, copyBtn));
+      content.appendChild(copyBtn);
+    }
+
+    article.appendChild(avatar);
+    article.appendChild(content);
+    dom.chatMessages.appendChild(article);
+
+    return article;
+  }
+
+  /** Append a user message to state + DOM. */
+  function appendUserMessage(text) {
+    const conversation = getActiveConversation();
+    const time = new Date();
+
+    conversation.messages.push({ role: "user", text, time: time.toISOString() });
+
+    if (conversation.messages.length === 1) {
+      conversation.title = deriveTitle(text);
+    }
+
+    hideWelcomeScreen();
+    renderMessage("user", text, time);
+    renderChatHistory();
+    scrollToBottom();
+    saveChat();
+  }
+
+  /** Append a bot message to state + DOM. */
+  function appendBotMessage(text) {
+    const conversation = getActiveConversation();
+    const time = new Date();
+
+    conversation.messages.push({ role: "bot", text, time: time.toISOString() });
+
+    renderMessage("bot", text, time);
+    scrollToBottom();
+    saveChat();
+  }
+
+  /* ========================================================================
+     TYPING INDICATOR
+     ======================================================================== */
+
+  function showTyping() {
+    dom.typingIndicator?.classList.add("is-visible");
+    scrollToBottom();
+  }
+
+  function hideTyping() {
+    dom.typingIndicator?.classList.remove("is-visible");
+  }
+
+  /* ========================================================================
+     LOADING STATE
+     ======================================================================== */
+
+  function setLoading(isLoading) {
+    state.isLoading = isLoading;
+    if (dom.sendBtn) {
+      dom.sendBtn.disabled = isLoading;
+    }
+    if (isLoading) {
+      showTyping();
+    } else {
+      hideTyping();
+    }
+  }
+
+  /* ========================================================================
+     BOT RESPONSE (placeholder — swap with a real API call when ready)
+     ======================================================================== */
+
+  /**
+   * Placeholder "AI" response generator. Replace the body of this function
+   * with a real API call (e.g. fetch to your backend) when ready — the rest
+   * of the app only depends on this function resolving with a string.
+   */
+ async function getBotResponse(userText) {
+
+    const response = await fetch("http://127.0.0.1:5000/api/chat", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            message: userText
+        })
     });
 
     if (!response.ok) {
-      throw new Error(`Server responded with status ${response.status}`);
+        throw new Error("Server Error");
     }
 
     const data = await response.json();
-    hideTyping();
 
-    const replyText = data.reply || "Sorry, I didn't get a proper response.";
-    const replyTime = new Date();
-    renderMessage("bot", replyText, replyTime);
-    chatHistory.push({ role: "bot", text: replyText, time: replyTime });
-  } catch (err) {
-    hideTyping();
-    console.error("Chat error:", err);
-    const errorMsg = "⚠️ Unable to reach the server. Please make sure the backend is running.";
-    renderMessage("bot", errorMsg, new Date());
-    showToast("Backend unavailable. Check your Flask server.");
+    return data.reply;
+}
+
+  /* ========================================================================
+     SEND MESSAGE
+     ======================================================================== */
+
+  async function sendMessage(rawText) {
+    const text = (rawText ?? dom.messageTextarea?.value ?? "").trim();
+    if (!text || state.isLoading) return;
+
+    appendUserMessage(text);
+    resetTextarea();
+    setLoading(true);
+
+    try {
+      const reply = await getBotResponse(text);
+      appendBotMessage(reply);
+    } catch (err) {
+      console.error("Isolde: failed to get a bot response.", err);
+      appendBotMessage("Sorry, something went wrong while generating a response.");
+    } finally {
+      setLoading(false);
+    }
   }
-}
 
-// ===== Input handling =====
-function autoResizeInput() {
-  messageInput.style.height = "auto";
-  messageInput.style.height = Math.min(messageInput.scrollHeight, 120) + "px";
-}
+  /* ========================================================================
+     CLEAR CHAT
+     ======================================================================== */
 
-function updateSendButtonState() {
-  sendBtn.disabled = messageInput.value.trim().length === 0;
-}
+  function clearChat() {
+    const conversation = state.conversations[state.activeConversationId];
+    if (!conversation) return;
 
-messageInput.addEventListener("input", () => {
-  autoResizeInput();
-  updateSendButtonState();
-});
+    conversation.messages = [];
+    conversation.title = "New conversation";
 
-messageInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey) {
-    e.preventDefault();
-    if (!sendBtn.disabled) sendMessage();
+    dom.chatMessages.innerHTML = "";
+    showWelcomeScreen();
+    hideTyping();
+    renderChatHistory();
+    saveChat();
   }
-});
 
-sendBtn.addEventListener("click", sendMessage);
+  /* ========================================================================
+     TEXTAREA AUTO-RESIZE
+     ======================================================================== */
 
-// ===== Suggestions =====
-document.querySelectorAll(".suggestion-chip").forEach((chip) => {
-  chip.addEventListener("click", () => {
-    messageInput.value = chip.dataset.text;
+  function autoResizeTextarea() {
+    const textarea = dom.messageTextarea;
+    if (!textarea) return;
+
+    textarea.style.height = "auto";
+    const nextHeight = Math.min(textarea.scrollHeight, MAX_TEXTAREA_HEIGHT);
+    textarea.style.height = `${nextHeight}px`;
+    textarea.style.overflowY = textarea.scrollHeight > MAX_TEXTAREA_HEIGHT ? "auto" : "hidden";
+  }
+
+  function resetTextarea() {
+    const textarea = dom.messageTextarea;
+    if (!textarea) return;
+
+    textarea.value = "";
+    textarea.style.height = "auto";
+    textarea.style.overflowY = "hidden";
     updateSendButtonState();
-    sendMessage();
-  });
-});
-
-// ===== Clear chat =====
-clearChatBtn.addEventListener("click", () => {
-  if (chatHistory.length === 0) return;
-  if (confirm("Clear the current chat session?")) {
-    chatHistory = [];
-    // Remove all message rows, keep welcome screen structure
-    document.querySelectorAll(".message-row").forEach((el) => el.remove());
-    if (welcomeScreen) welcomeScreen.style.display = "flex";
-    hideTyping();
   }
-});
 
-// ===== Theme toggle =====
-themeToggle.addEventListener("click", toggleTheme);
+  function updateSendButtonState() {
+    if (!dom.sendBtn || !dom.messageTextarea) return;
+    const hasText = dom.messageTextarea.value.trim().length > 0;
+    dom.sendBtn.disabled = !hasText || state.isLoading;
+  }
 
-// ===== Init =====
-initTheme();
-updateSendButtonState();
-messageInput.focus();
+  /* ========================================================================
+     VOICE INPUT (visual only — no speech recognition implemented)
+     ======================================================================== */
+
+  /** Placeholder: start "recording" visual state. Wire up real STT here later. */
+  function startVoiceRecording() {
+    state.isRecording = true;
+    dom.voiceInputBtn?.classList.add("is-recording");
+    dom.voiceInputBtn?.setAttribute("title", "Stop recording");
+  }
+
+  /** Placeholder: stop "recording" visual state. */
+  function stopVoiceRecording() {
+    state.isRecording = false;
+    dom.voiceInputBtn?.classList.remove("is-recording");
+    dom.voiceInputBtn?.setAttribute("title", "Voice input");
+  }
+
+  function toggleVoiceRecording() {
+    if (state.isRecording) {
+      stopVoiceRecording();
+    } else {
+      startVoiceRecording();
+    }
+  }
+
+  /* ========================================================================
+     FILE UPLOAD (filename preview only — no backend upload)
+     ======================================================================== */
+
+  function openFilePicker() {
+    dom.fileUploadInput?.click();
+  }
+
+  function handleFileSelected(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    // Drop the filename into the composer so the user sees what's attached.
+    const textarea = dom.messageTextarea;
+    if (textarea) {
+      const prefix = textarea.value.trim().length > 0 ? `${textarea.value.trim()}\n` : "";
+      textarea.value = `${prefix}📎 ${file.name}`;
+      autoResizeTextarea();
+      updateSendButtonState();
+      textarea.focus();
+    }
+
+    // Reset the input so selecting the same file again still fires "change".
+    event.target.value = "";
+  }
+
+  /* ========================================================================
+     COPY MESSAGE
+     ======================================================================== */
+
+  async function copyMessage(text, buttonEl) {
+    try {
+      await navigator.clipboard.writeText(text);
+      showCopyFeedback(buttonEl);
+    } catch (err) {
+      console.error("Isolde: failed to copy message.", err);
+      // Fallback for browsers without Clipboard API support.
+      fallbackCopy(text);
+      showCopyFeedback(buttonEl);
+    }
+  }
+
+  function fallbackCopy(text) {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    try {
+      document.execCommand("copy");
+    } catch (err) {
+      console.error("Isolde: fallback copy failed.", err);
+    }
+    document.body.removeChild(textarea);
+  }
+
+  function showCopyFeedback(buttonEl) {
+    if (!buttonEl) return;
+    const originalLabel = buttonEl.dataset.originalLabel ?? buttonEl.textContent;
+    buttonEl.dataset.originalLabel = originalLabel;
+    buttonEl.textContent = "Copied!";
+
+    clearTimeout(buttonEl._copyResetTimer);
+    buttonEl._copyResetTimer = setTimeout(() => {
+      buttonEl.textContent = originalLabel;
+    }, COPY_FEEDBACK_DURATION);
+  }
+
+  /* ========================================================================
+     EVENT BINDINGS
+     ======================================================================== */
+
+  function bindEvents() {
+    // Send message: form submit (covers Send button click + Enter-to-submit
+    // fallback), plus explicit Enter/Shift+Enter handling on the textarea.
+    dom.messageForm?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      sendMessage();
+    });
+
+    dom.messageTextarea?.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        sendMessage();
+      }
+      // Shift + Enter falls through and inserts a newline naturally.
+    });
+
+    dom.messageTextarea?.addEventListener("input", () => {
+      autoResizeTextarea();
+      updateSendButtonState();
+    });
+
+    // Suggestion chips on the welcome screen send their label as a message.
+    dom.suggestionChips?.forEach((chip) => {
+      chip.addEventListener("click", () => {
+        sendMessage(chip.textContent.trim());
+      });
+    });
+
+    // New chat.
+    dom.newChatBtn?.addEventListener("click", () => {
+      createConversation();
+    });
+
+    // Clear chat.
+    dom.clearChatBtn?.addEventListener("click", () => {
+      clearChat();
+    });
+
+    // Theme toggle.
+    dom.themeToggleBtn?.addEventListener("click", () => {
+      toggleTheme();
+    });
+
+    // Voice input (visual only).
+    dom.voiceInputBtn?.addEventListener("click", () => {
+      toggleVoiceRecording();
+    });
+
+    // File upload.
+    dom.fileUploadBtn?.addEventListener("click", () => {
+      openFilePicker();
+    });
+    dom.fileUploadInput?.addEventListener("change", handleFileSelected);
+  }
+
+  /* ========================================================================
+     INITIALIZATION
+     ======================================================================== */
+
+  function initializeApp() {
+    restoreTheme();
+    loadChat();
+
+    if (!state.activeConversationId || !state.conversations[state.activeConversationId]) {
+      createConversation();
+    } else {
+      renderChatHistory();
+      renderActiveConversation();
+    }
+
+    updateSendButtonState();
+    bindEvents();
+  }
+
+  document.addEventListener("DOMContentLoaded", initializeApp);
+})();
