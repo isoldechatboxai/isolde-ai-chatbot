@@ -405,3 +405,57 @@ body {
   .input-area { padding: 10px 14px 14px; }
   .suggestions { flex-direction: column; width: 100%; }
 }
+/* ===== Sidebar ===== */
+
+.app {
+    display: flex;
+    height: 100vh;
+}
+
+.sidebar {
+    width: 260px;
+    background: #1b1b1b;
+    color: white;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid #333;
+}
+
+.sidebar-header {
+    padding: 20px;
+    border-bottom: 1px solid #333;
+}
+
+.sidebar-header h2 {
+    margin-bottom: 15px;
+}
+
+.sidebar-header button {
+    width: 100%;
+    padding: 10px;
+    border: none;
+    border-radius: 8px;
+    background: #6c63ff;
+    color: white;
+    cursor: pointer;
+}
+
+.chat-history {
+    flex: 1;
+    padding: 15px;
+    overflow-y: auto;
+}
+
+.sidebar-footer {
+    padding: 15px;
+    border-top: 1px solid #333;
+}
+
+.sidebar-footer button {
+    width: 100%;
+    margin-bottom: 10px;
+    padding: 10px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+}

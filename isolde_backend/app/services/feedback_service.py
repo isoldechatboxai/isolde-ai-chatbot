@@ -33,3 +33,19 @@ def build_correction_context(corrections) -> str:
     for c in corrections:
         lines.append(f"- Q: {c.question}\n  Correct answer: {c.correction_text}")
     return "\n".join(lines)
+from difflib import SequenceMatcher
+from app.models import Feedback
+from app.extensions import db
+
+class FeedbackService:
+    @staticmethod
+    def create_feedback(user_id, message_id, rating, comment=None):
+        feedback = Feedback(
+            user_id=user_id,
+            message_id=message_id,
+            rating=rating,
+            comment=comment
+        )
+        db.session.add(feedback)
+        db.session.commit()
+        return feedback
