@@ -11,11 +11,6 @@ limiter = Limiter(key_func=get_remote_address, default_limits=["120 per minute"]
 
 
 def create_app(config_class=Config):
-    # Serve the frontend (index.html/style.css/script.js) directly from
-    # Flask as static files. This makes the app same-origin by default,
-    # so the browser never even sends a cross-origin request for /api/*
-    # and CORS problems disappear for the common case of just running
-    # `python run.py` and opening http://127.0.0.1:5000/.
     app = Flask(__name__, static_folder=FRONTEND_DIR, static_url_path="")
     app.config.from_object(config_class)
 
@@ -23,14 +18,52 @@ def create_app(config_class=Config):
     os.makedirs(app.config["LOG_DIR"], exist_ok=True)
     os.makedirs(app.config["VECTOR_STORE_DIR"], exist_ok=True)
 
-    # --- Extensions ---
+    # ---------------- Extensions ----------------
     db.init_app(app)
     jwt.init_app(app)
-    cors.init_app(app, resources={r"/api/*": {"origins": app.config["CORS_ORIGINS"]}})
+
+    # ---------------- JWT Debug ----------------
+    @jwt.invalid_token_loader
+    def invalid_token_callback(reason):
+        print("❌ INVALID TOKEN:", reason)
+        return jsonify({"error": reason}), 401
+
+    @jwt.unauthorized_loader
+    def missing_token_callback(reason):
+        print("❌ UNAUTHORIZED:", reason)
+        return jsonify({"error": reason}), 401
+
+    @jwt.expired_token_loader
+    def expired_token_callback(jwt_header, jwt_payload):
+        print("❌ TOKEN EXPIRED")
+        print(jwt_payload)
+        return jsonify({"error": "Token expired"}), 401
+
+    @jwt.revoked_token_loader
+    def revoked_token_callback(jwt_header, jwt_payload):
+        print("❌ TOKEN REVOKED")
+        return jsonify({"error": "Token revoked"}), 401
+
+    @jwt.needs_fresh_token_loader
+    def needs_fresh_callback(jwt_header, jwt_payload):
+        print("❌ FRESH TOKEN REQUIRED")
+        return jsonify({"error": "Fresh token required"}), 401
+
+    @jwt.user_lookup_error_loader
+    def user_lookup_error(jwt_header, jwt_payload):
+        print("❌ USER LOOKUP ERROR")
+        print(jwt_payload)
+        return jsonify({"error": "User lookup failed"}), 401
+
+    cors.init_app(
+        app,
+        resources={r"/api/*": {"origins": app.config["CORS_ORIGINS"]}},
+    )
+
     limiter.init_app(app)
     setup_logger(app)
 
-    # --- Blueprints ---
+    # ---------------- Blueprints ----------------
     from app.routes.auth_routes import auth_bp
     from app.routes.chat_routes import chat_bp
     from app.routes.upload_routes import upload_bp
@@ -45,10 +78,9 @@ def create_app(config_class=Config):
     app.register_blueprint(history_bp, url_prefix="/api")
     app.register_blueprint(profile_bp, url_prefix="/api")
 
-    # --- Tighter limits on auth endpoints (brute-force protection) ---
     limiter.limit("10 per minute")(auth_bp)
 
-    # --- Error handlers ---
+    # ---------------- Error Handlers ----------------
     @app.errorhandler(404)
     def not_found(e):
         return jsonify({"error": "Endpoint not found."}), 404
@@ -66,9 +98,13 @@ def create_app(config_class=Config):
         app.logger.error(f"Unhandled server error: {e}")
         return jsonify({"error": "Internal server error."}), 500
 
+    # ---------------- Routes ----------------
     @app.route("/api/health", methods=["GET"])
     def health():
-        return jsonify({"status": "ok", "service": "Isolde backend"})
+        return jsonify({
+            "status": "ok",
+            "service": "Isolde backend"
+        })
 
     @app.route("/", methods=["GET"])
     def serve_frontend():

@@ -74,11 +74,12 @@
    * }
    */
   let state = {
-    conversations: {},
-    activeConversationId: null,
-    isLoading: false,
-    isRecording: false,
-  };
+  conversations: {},
+  activeConversationId: null,
+  backendConversationId: null,
+  isLoading: false,
+  isRecording: false,
+};
 
   /* ========================================================================
      UTILITY FUNCTIONS
@@ -405,15 +406,17 @@
    */
  async function getBotResponse(userText) {
 
-    const response = await fetch("http://127.0.0.1:5000/api/chat", {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-            message: userText
-        })
-    });
+    const response = await fetch("/api/chat", {
+    method: "POST",
+    headers: {
+    "Content-Type": "application/json",
+    "Authorization": `Bearer ${localStorage.getItem("access_token")}`
+},
+    body: JSON.stringify({
+        message: userText,
+        conversation_id: state.backendConversationId
+    })
+});
 
     if (!response.ok) {
         throw new Error("Server Error");
@@ -421,7 +424,9 @@
 
     const data = await response.json();
 
-    return data.reply;
+state.backendConversationId = data.conversation_id;
+
+return data.reply;
 }
 
   /* ========================================================================
@@ -647,26 +652,71 @@
       openFilePicker();
     });
     dom.fileUploadInput?.addEventListener("change", handleFileSelected);
-  }
+}
 
+async function loadProfile() {
+    console.log("TOKEN:", localStorage.getItem("access_token"));
+
+    const response = await fetch("/api/profile", {
+        headers: {
+            "Authorization": `Bearer ${localStorage.getItem("access_token")}`
+        }
+    });
+
+    if (!response.ok) {
+        console.log("Profile not loaded");
+        return;
+    }
+
+    const user = await response.json();
+
+    console.log("Logged in User:", user);
+}
+
+async function loadHistory() {
+    const response = await fetch("/api/history", {
+        headers: {
+            "Authorization": `Bearer ${localStorage.getItem("access_token")}`
+        }
+    });
+
+    if (!response.ok) return;
+
+    const data = await response.json();
+
+    state.conversations = {};
+    state.activeConversationId = null;
+
+    data.conversations.forEach(convo => {
+        state.conversations[convo.id] = {
+            id: convo.id,
+            title: convo.title,
+            messages: []
+        };
+    });
+
+    renderChatHistory();
+}
   /* ========================================================================
      INITIALIZATION
      ======================================================================== */
 
   function initializeApp() {
     restoreTheme();
+    loadProfile();
+    loadHistory();
     loadChat();
 
     if (!state.activeConversationId || !state.conversations[state.activeConversationId]) {
-      createConversation();
+        createConversation();
     } else {
-      renderChatHistory();
-      renderActiveConversation();
+        renderChatHistory();
+        renderActiveConversation();
     }
 
     updateSendButtonState();
     bindEvents();
-  }
+}
 
   document.addEventListener("DOMContentLoaded", initializeApp);
 })();
