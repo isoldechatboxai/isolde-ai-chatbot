@@ -55,9 +55,16 @@ def create_app(config_class=Config):
         print(jwt_payload)
         return jsonify({"error": "User lookup failed"}), 401
 
+    # --- BUG 1 FIXED: Explicitly allow Authorization headers for CORS ---
     cors.init_app(
         app,
-        resources={r"/api/*": {"origins": app.config["CORS_ORIGINS"]}},
+        resources={
+            r"/api/*": {
+                "origins": app.config["CORS_ORIGINS"],
+                "allow_headers": ["Content-Type", "Authorization"],
+                "supports_credentials": True
+            }
+        },
     )
 
     limiter.init_app(app)
@@ -71,14 +78,15 @@ def create_app(config_class=Config):
     from app.routes.history_routes import history_bp
     from app.routes.profile_routes import profile_bp
 
+    # --- BUG 2 FIXED: Apply rate limiting BEFORE registering the blueprint ---
+    limiter.limit("10 per minute")(auth_bp)
+
     app.register_blueprint(auth_bp, url_prefix="/api")
     app.register_blueprint(chat_bp, url_prefix="/api")
     app.register_blueprint(upload_bp, url_prefix="/api")
     app.register_blueprint(feedback_bp, url_prefix="/api")
     app.register_blueprint(history_bp, url_prefix="/api")
     app.register_blueprint(profile_bp, url_prefix="/api")
-
-    limiter.limit("10 per minute")(auth_bp)
 
     # ---------------- Error Handlers ----------------
     @app.errorhandler(404)

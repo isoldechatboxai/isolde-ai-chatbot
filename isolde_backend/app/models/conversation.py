@@ -13,7 +13,9 @@ class Conversation(db.Model):
     id = db.Column(db.String(36), primary_key=True, default=_uuid)
     user_id = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=False)
     title = db.Column(db.String(200), default="New Conversation")
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    
+    # FIX 1: Ensure datetime is timezone-naive
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
     messages = db.relationship(
         "Message", backref="conversation", lazy=True, cascade="all, delete-orphan",
@@ -24,7 +26,8 @@ class Conversation(db.Model):
         data = {
             "id": self.id,
             "title": self.title,
-            "created_at": self.created_at.isoformat(),
+            # FIX 2: Safe isoformat check to prevent AttributeError
+            "created_at": self.created_at.isoformat() if self.created_at else None,
         }
         if include_messages:
             data["messages"] = [m.to_dict() for m in self.messages]
@@ -41,7 +44,9 @@ class Message(db.Model):
     role = db.Column(db.String(10), nullable=False)  # 'user' | 'bot'
     content = db.Column(db.Text, nullable=False)
     language = db.Column(db.String(10), default="en")
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    
+    # FIX 1: Ensure datetime is timezone-naive
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
     def to_dict(self):
         return {
@@ -49,5 +54,6 @@ class Message(db.Model):
             "role": self.role,
             "content": self.content,
             "language": self.language,
-            "created_at": self.created_at.isoformat(),
+            # FIX 2: Safe isoformat check to prevent AttributeError
+            "created_at": self.created_at.isoformat() if self.created_at else None,
         }

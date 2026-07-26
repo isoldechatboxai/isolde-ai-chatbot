@@ -74,12 +74,12 @@
    * }
    */
   let state = {
-  conversations: {},
-  activeConversationId: null,
-  backendConversationId: null,
-  isLoading: false,
-  isRecording: false,
-};
+    conversations: {},
+    activeConversationId: null,
+    backendConversationId: null,
+    isLoading: false,
+    isRecording: false,
+  };
 
   /* ========================================================================
      UTILITY FUNCTIONS
@@ -132,12 +132,16 @@
       const rawConversations = localStorage.getItem(STORAGE_KEYS.CONVERSATIONS);
       const rawActiveId = localStorage.getItem(STORAGE_KEYS.ACTIVE_CONVERSATION);
 
-      state.conversations = rawConversations ? JSON.parse(rawConversations) : {};
-      state.activeConversationId = rawActiveId || null;
+      if (rawConversations) {
+          const parsed = JSON.parse(rawConversations);
+          // Merge local storage data to avoid wiping existing messages
+          state.conversations = { ...parsed, ...state.conversations }; 
+      }
+      if (rawActiveId && state.conversations[rawActiveId]) {
+          state.activeConversationId = rawActiveId;
+      }
     } catch (err) {
       console.error("Isolde: failed to load chat from localStorage.", err);
-      state.conversations = {};
-      state.activeConversationId = null;
     }
   }
 
@@ -212,6 +216,7 @@
     const id = generateId();
     state.conversations[id] = { id, title: "New conversation", messages: [] };
     state.activeConversationId = id;
+    state.backendConversationId = id; // FIX 2: Keep backend ID in sync
 
     renderChatHistory();
     renderActiveConversation();
@@ -232,6 +237,7 @@
   function switchConversation(id) {
     if (!state.conversations[id]) return;
     state.activeConversationId = id;
+    state.backendConversationId = id; // FIX 2: Prevent cross-contamination of threads
     renderChatHistory();
     renderActiveConversation();
     saveChat();
@@ -396,38 +402,37 @@
   }
 
   /* ========================================================================
-     BOT RESPONSE (placeholder — swap with a real API call when ready)
+     BOT RESPONSE
      ======================================================================== */
 
-  /**
-   * Placeholder "AI" response generator. Replace the body of this function
-   * with a real API call (e.g. fetch to your backend) when ready — the rest
-   * of the app only depends on this function resolving with a string.
-   */
- async function getBotResponse(userText) {
-
+  async function getBotResponse(userText) {
     const response = await fetch("/api/chat", {
-    method: "POST",
-    headers: {
-    "Content-Type": "application/json",
-    "Authorization": `Bearer ${localStorage.getItem("access_token")}`
-},
-    body: JSON.stringify({
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${localStorage.getItem("access_token")}`
+      },
+      body: JSON.stringify({
         message: userText,
         conversation_id: state.backendConversationId
-    })
-});
+      })
+    });
+
+    // FIX 3: Properly handle 401 Unauthorized by logging out the user
+    if (response.status === 401) {
+        localStorage.removeItem("access_token");
+        window.location.href = "/login.html";
+        return;
+    }
 
     if (!response.ok) {
         throw new Error("Server Error");
     }
 
     const data = await response.json();
-
-state.backendConversationId = data.conversation_id;
-
-return data.reply;
-}
+    state.backendConversationId = data.conversation_id;
+    return data.reply;
+  }
 
   /* ========================================================================
      SEND MESSAGE
@@ -443,7 +448,9 @@ return data.reply;
 
     try {
       const reply = await getBotResponse(text);
-      appendBotMessage(reply);
+      if (reply) {
+        appendBotMessage(reply);
+      }
     } catch (err) {
       console.error("Isolde: failed to get a bot response.", err);
       appendBotMessage("Sorry, something went wrong while generating a response.");
@@ -504,14 +511,12 @@ return data.reply;
      VOICE INPUT (visual only — no speech recognition implemented)
      ======================================================================== */
 
-  /** Placeholder: start "recording" visual state. Wire up real STT here later. */
   function startVoiceRecording() {
     state.isRecording = true;
     dom.voiceInputBtn?.classList.add("is-recording");
     dom.voiceInputBtn?.setAttribute("title", "Stop recording");
   }
 
-  /** Placeholder: stop "recording" visual state. */
   function stopVoiceRecording() {
     state.isRecording = false;
     dom.voiceInputBtn?.classList.remove("is-recording");
@@ -538,7 +543,6 @@ return data.reply;
     const file = event.target.files?.[0];
     if (!file) return;
 
-    // Drop the filename into the composer so the user sees what's attached.
     const textarea = dom.messageTextarea;
     if (textarea) {
       const prefix = textarea.value.trim().length > 0 ? `${textarea.value.trim()}\n` : "";
@@ -548,7 +552,6 @@ return data.reply;
       textarea.focus();
     }
 
-    // Reset the input so selecting the same file again still fires "change".
     event.target.value = "";
   }
 
@@ -562,7 +565,6 @@ return data.reply;
       showCopyFeedback(buttonEl);
     } catch (err) {
       console.error("Isolde: failed to copy message.", err);
-      // Fallback for browsers without Clipboard API support.
       fallbackCopy(text);
       showCopyFeedback(buttonEl);
     }
@@ -600,8 +602,6 @@ return data.reply;
      ======================================================================== */
 
   function bindEvents() {
-    // Send message: form submit (covers Send button click + Enter-to-submit
-    // fallback), plus explicit Enter/Shift+Enter handling on the textarea.
     dom.messageForm?.addEventListener("submit", (event) => {
       event.preventDefault();
       sendMessage();
@@ -612,7 +612,6 @@ return data.reply;
         event.preventDefault();
         sendMessage();
       }
-      // Shift + Enter falls through and inserts a newline naturally.
     });
 
     dom.messageTextarea?.addEventListener("input", () => {
@@ -620,48 +619,47 @@ return data.reply;
       updateSendButtonState();
     });
 
-    // Suggestion chips on the welcome screen send their label as a message.
     dom.suggestionChips?.forEach((chip) => {
       chip.addEventListener("click", () => {
         sendMessage(chip.textContent.trim());
       });
     });
 
-    // New chat.
     dom.newChatBtn?.addEventListener("click", () => {
       createConversation();
     });
 
-    // Clear chat.
     dom.clearChatBtn?.addEventListener("click", () => {
       clearChat();
     });
 
-    // Theme toggle.
     dom.themeToggleBtn?.addEventListener("click", () => {
       toggleTheme();
     });
 
-    // Voice input (visual only).
     dom.voiceInputBtn?.addEventListener("click", () => {
       toggleVoiceRecording();
     });
 
-    // File upload.
     dom.fileUploadBtn?.addEventListener("click", () => {
       openFilePicker();
     });
     dom.fileUploadInput?.addEventListener("change", handleFileSelected);
-}
+  }
 
-async function loadProfile() {
-    console.log("TOKEN:", localStorage.getItem("access_token"));
-
+  async function loadProfile() {
     const response = await fetch("/api/profile", {
         headers: {
             "Authorization": `Bearer ${localStorage.getItem("access_token")}`
         }
     });
+
+    // FIX 3: Redirect to login if token expired during profile load
+    if (response.status === 401) {
+        localStorage.removeItem("access_token");
+        window.location.href = "/login.html";
+        return;
+    }
 
     if (!response.ok) {
         console.log("Profile not loaded");
@@ -669,54 +667,68 @@ async function loadProfile() {
     }
 
     const user = await response.json();
-
     console.log("Logged in User:", user);
-}
+  }
 
-async function loadHistory() {
+  async function loadHistory() {
     const response = await fetch("/api/history", {
         headers: {
             "Authorization": `Bearer ${localStorage.getItem("access_token")}`
         }
     });
 
+    // FIX 3: Redirect if token is invalid
+    if (response.status === 401) {
+        localStorage.removeItem("access_token");
+        window.location.href = "/login.html";
+        return;
+    }
+
     if (!response.ok) return;
 
     const data = await response.json();
 
-    state.conversations = {};
-    state.activeConversationId = null;
-
+    // Safely merge backend history with local state instead of wiping everything
     data.conversations.forEach(convo => {
-        state.conversations[convo.id] = {
-            id: convo.id,
-            title: convo.title,
-            messages: []
-        };
+        if (!state.conversations[convo.id]) {
+            state.conversations[convo.id] = {
+                id: convo.id,
+                title: convo.title,
+                messages: []
+            };
+        }
     });
 
     renderChatHistory();
-}
+  }
+
   /* ========================================================================
      INITIALIZATION
      ======================================================================== */
 
-  function initializeApp() {
+  // FIX 1: Make initializeApp async to prevent the race condition
+  async function initializeApp() {
     restoreTheme();
-    loadProfile();
-    loadHistory();
+    
+    // Load local data first
     loadChat();
+
+    // Await network requests so state.conversations doesn't get randomly overwritten
+    await loadProfile();
+    await loadHistory();
 
     if (!state.activeConversationId || !state.conversations[state.activeConversationId]) {
         createConversation();
     } else {
+        // FIX 2: Ensure backend ID is correctly synchronized on load
+        state.backendConversationId = state.activeConversationId;
         renderChatHistory();
         renderActiveConversation();
     }
 
     updateSendButtonState();
     bindEvents();
-}
+  }
 
   document.addEventListener("DOMContentLoaded", initializeApp);
 })();

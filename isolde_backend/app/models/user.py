@@ -26,7 +26,8 @@ class User(db.Model):
     preferred_voice = db.Column(db.String(50), default="default")
     persona_notes = db.Column(db.Text, nullable=True)  # freeform long-term memory
 
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    # FIX 1: Ensure the datetime is timezone-naive to match the naive db.DateTime column
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
     conversations = db.relationship(
         "Conversation", backref="user", lazy=True, cascade="all, delete-orphan"
@@ -46,5 +47,6 @@ class User(db.Model):
             "is_verified": self.is_verified,
             "preferred_language": self.preferred_language,
             "preferred_voice": self.preferred_voice,
-            "created_at": self.created_at.isoformat(),
+            # FIX 2: Prevent AttributeError if to_dict() is called before the session is committed
+            "created_at": self.created_at.isoformat() if self.created_at else None,
         }

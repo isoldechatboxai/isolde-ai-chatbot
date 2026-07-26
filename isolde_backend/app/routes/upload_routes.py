@@ -32,8 +32,15 @@ def upload_file():
     if not allowed_file(file.filename, allowed):
         return jsonify({"error": f"File type not allowed. Allowed: {sorted(allowed)}"}), 400
 
+    # FIX 1: Safely handle secure_filename stripping the extension dot
     filename = secure_filename(file.filename)
-    file_type = filename.rsplit(".", 1)[1].lower()
+    if "." in filename:
+        file_type = filename.rsplit(".", 1)[1].lower()
+    else:
+        # Fallback to the original filename's extension if secure_filename stripped the dot
+        file_type = file.filename.rsplit(".", 1)[-1].lower()
+        filename = f"{filename}.{file_type}" if filename else f"file.{file_type}"
+        
     unique_name = f"{uuid.uuid4()}_{filename}"
     save_path = os.path.join(current_app.config["UPLOAD_FOLDER"], unique_name)
     os.makedirs(current_app.config["UPLOAD_FOLDER"], exist_ok=True)
@@ -48,8 +55,15 @@ def upload_file():
         stored_path=save_path,
         file_type=file_type,
     )
-    db.session.add(record)
-    db.session.commit()
+    
+    # FIX 2: Handle database commit errors with rollback
+    try:
+        db.session.add(record)
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Database error while saving file metadata: {e}")
+        return jsonify({"error": "Failed to save file record in database."}), 500
 
     # --- Images: answer directly via Gemini Vision, skip text indexing ---
     if file_type in IMAGE_TYPES:
@@ -87,7 +101,13 @@ def upload_file():
         except Exception as e:
             current_app.logger.error(f"Indexing failed for {filename}: {e}")
 
-    db.session.commit()
+    # FIX 2: Handle second database commit with rollback
+    try:
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Database error after file indexing: {e}")
+
     log_event(current_app, "FILE_UPLOAD", f"{filename} ({file_type})", user_id)
 
     return jsonify({
