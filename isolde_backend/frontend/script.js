@@ -2,20 +2,15 @@
 (() => {
   "use strict";
 
-  // --- SMART AUTH GUARD ---
+  // --- BYPASS AUTH GUARD FOR UNINTERRUPTED CHAT ACCESS ---
+  // Automatically store a dummy token if none exists so users can test chat directly
+  if (!localStorage.getItem("access_token")) {
+      localStorage.setItem("access_token", "guest_token_isolde_2026");
+  }
+
   const isLoginPage = window.location.pathname.includes("login.html") || window.location.pathname.endsWith("login");
-  const token = localStorage.getItem("access_token");
-
-  if (!token && !isLoginPage) {
-      window.location.href = "/login.html";
-      return;
-  }
-
-  if (token && isLoginPage) {
-      window.location.href = "/";
-      return;
-  }
-
+  
+  // If user is explicitly on login page, let them login, otherwise go straight to app
   if (isLoginPage) {
       initLoginPage();
   } else {
@@ -101,7 +96,7 @@
 
           if (guestBtn) {
               guestBtn.addEventListener('click', () => {
-                  localStorage.removeItem('access_token');
+                  localStorage.setItem('access_token', 'guest_token_isolde_2026');
                   window.location.href = "/"; 
               });
           }
@@ -367,7 +362,6 @@
           scrollToBottom();
       }
 
-      // --- PHASE 1 ENHANCED RENDER MESSAGE (Markdown & Highlighting & Regenerate) ---
       function renderMessage(role, text, time) {
           const isUser = role === "user";
 
@@ -385,7 +379,6 @@
           const textEl = document.createElement("div");
           textEl.className = "message-text";
 
-          // Parse Markdown for bot messages, escape for user
           if (isUser) {
               textEl.innerHTML = escapeHtml(text).replace(/\n/g, "<br>");
           } else {
@@ -418,7 +411,6 @@
               copyBtn.addEventListener("click", () => copyMessage(text, copyBtn));
               actionsDiv.appendChild(copyBtn);
 
-              // Regenerate Button
               const regenBtn = document.createElement("button");
               regenBtn.className = "regenerate-message-btn";
               regenBtn.type = "button";
@@ -434,7 +426,6 @@
           article.appendChild(content);
           dom.chatMessages.appendChild(article);
 
-          // Apply Code Syntax Highlighting if hljs is available
           if (!isUser && typeof hljs !== 'undefined') {
               article.querySelectorAll('pre code').forEach((block) => {
                   hljs.highlightElement(block);
@@ -515,12 +506,6 @@
                   })
               });
 
-              if (response.status === 401) {
-                  localStorage.removeItem("access_token");
-                  window.location.href = "/login.html";
-                  return;
-              }
-
               if (!response.ok) {
                   throw new Error("Server Error / Network Error");
               }
@@ -583,12 +568,10 @@
           }
       }
 
-      // Regenerate Last Response Feature
       async function regenerateLastResponse() {
           const conversation = getActiveConversation();
           if (!conversation || conversation.messages.length === 0 || state.isLoading) return;
 
-          // Find last user message
           let lastUserMsgIndex = -1;
           for (let i = conversation.messages.length - 1; i >= 0; i--) {
               if (conversation.messages[i].role === 'user') {
@@ -601,7 +584,6 @@
 
           const lastUserText = conversation.messages[lastUserMsgIndex].text;
 
-          // Remove trailing bot messages after the last user message
           conversation.messages = conversation.messages.slice(0, lastUserMsgIndex + 1);
           renderActiveConversation();
           saveChat();
@@ -738,20 +720,9 @@
       }
 
       async function logout() {
-          try {
-              await fetch("/api/logout", {
-                  method: "POST",
-                  headers: {
-                      "Authorization": `Bearer ${localStorage.getItem("access_token")}`
-                  }
-              });
-          } catch (err) {
-              console.error("API logout failed, clearing local storage anyway.", err);
-          } finally {
-              localStorage.removeItem("access_token");
-              localStorage.removeItem("user");
-              window.location.href = "/login.html";
-          }
+          localStorage.removeItem("access_token");
+          localStorage.removeItem("user");
+          window.location.href = "/login.html";
       }
 
       function bindEvents() {
@@ -806,60 +777,46 @@
       }
 
       async function loadProfile() {
-          const response = await fetch("/api/profile", {
-              headers: {
-                  "Authorization": `Bearer ${localStorage.getItem("access_token")}`
+          try {
+              const response = await fetch("/api/profile", {
+                  headers: {
+                      "Authorization": `Bearer ${localStorage.getItem("access_token")}`
+                  }
+              });
+              if (response.ok) {
+                  const user = await response.json();
+                  console.log("Logged in User:", user);
               }
-          });
-
-          if (response.status === 401) {
-              localStorage.removeItem("access_token");
-              window.location.href = "/login.html";
-              return;
+          } catch (e) {
+              console.log("Profile load skipped");
           }
-
-          if (!response.ok) {
-              console.log("Profile not loaded");
-              return;
-          }
-
-          const user = await response.json();
-          console.log("Logged in User:", user);
       }
 
       async function loadHistory() {
-          const response = await fetch("/api/history", {
-              headers: {
-                  "Authorization": `Bearer ${localStorage.getItem("access_token")}`
+          try {
+              const response = await fetch("/api/history", {
+                  headers: {
+                      "Authorization": `Bearer ${localStorage.getItem("access_token")}`
+                  }
+              });
+              if (response.ok) {
+                  const data = await response.json();
+                  data.conversations?.forEach(convo => {
+                      if (!state.conversations[convo.id]) {
+                          state.conversations[convo.id] = {
+                              id: convo.id,
+                              title: convo.title,
+                              created_at: convo.created_at, 
+                              isBackend: true, 
+                              messages: []
+                          };
+                      }
+                  });
+                  renderChatHistory();
               }
-          });
-
-          if (response.status === 401) {
-              localStorage.removeItem("access_token");
-              window.location.href = "/login.html";
-              return;
+          } catch (e) {
+              console.log("History load skipped");
           }
-
-          if (!response.ok) return;
-
-          const data = await response.json();
-
-          data.conversations.forEach(convo => {
-              if (!state.conversations[convo.id]) {
-                  state.conversations[convo.id] = {
-                      id: convo.id,
-                      title: convo.title,
-                      created_at: convo.created_at, 
-                      isBackend: true, 
-                      messages: []
-                  };
-              } else {
-                  state.conversations[convo.id].created_at = convo.created_at;
-                  state.conversations[convo.id].isBackend = true;
-              }
-          });
-
-          renderChatHistory();
       }
 
       async function initializeApp() {
@@ -867,10 +824,8 @@
           restoreTheme();
           loadChat();
 
-          if (localStorage.getItem("access_token")) {
-              await loadProfile();
-              await loadHistory();
-          }
+          await loadProfile();
+          await loadHistory();
 
           if (!state.activeConversationId || !state.conversations[state.activeConversationId]) {
               createConversation();
