@@ -1,3 +1,4 @@
+# app/routes/auth_routes.py
 import random
 from datetime import datetime, timedelta, timezone
 
@@ -19,13 +20,11 @@ auth_bp = Blueprint("auth", __name__)
 
 @auth_bp.route("/register", methods=["POST"])
 def register():
-    # FIX 3: silent=True prevents Flask from throwing an HTML error if JSON is missing or malformed
     data = request.get_json(silent=True)
 
     if data is None:
         return jsonify({"error": "Invalid JSON payload."}), 400
 
-    # FIX 1: Safely cast inputs to str before calling string methods to prevent 500 errors
     name = sanitize_text(str(data.get("name", ""))).strip()
     email = str(data.get("email") or "").strip().lower()
     password = str(data.get("password", ""))
@@ -43,7 +42,6 @@ def register():
 
     db.session.add(user)
     
-    # FIX 4: Handle database race conditions and ensure rollbacks on errors
     try:
         db.session.commit()
     except IntegrityError:
@@ -80,7 +78,6 @@ def login():
         log_event(current_app, "LOGIN_FAILED", f"attempt for {email}")
         return jsonify({"error": "Invalid email or password."}), 401
 
-    # Integer identity instead of string
     token = create_access_token(identity=user.id)
 
     log_event(current_app, "LOGIN_SUCCESS", email, user.id)
@@ -90,6 +87,11 @@ def login():
         "access_token": token,
         "user": user.to_dict()
     }), 200
+
+
+@auth_bp.route("/logout", methods=["POST"])
+def logout():
+    return jsonify({"message": "Logged out successfully."}), 200
 
 
 @auth_bp.route("/forgot-password", methods=["POST"])
@@ -128,7 +130,6 @@ def forgot_password():
         "message": "If that account exists, an OTP has been sent."
     }
 
-    # Show OTP only in development mode
     if current_app.config.get("DEBUG"):
         response["dev_otp"] = otp
 
@@ -143,7 +144,7 @@ def reset_password():
         return jsonify({"error": "Invalid JSON payload."}), 400
 
     email = str(data.get("email") or "").strip().lower()
-    otp = str(data.get("otp", ""))  # FIX 2: Explicitly cast to string to prevent mismatched type comparisons
+    otp = str(data.get("otp", ""))  
     new_password = str(data.get("new_password", ""))
 
     user = User.query.filter_by(email=email).first()

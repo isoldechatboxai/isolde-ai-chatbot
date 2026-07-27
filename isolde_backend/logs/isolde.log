@@ -35,3 +35,13 @@
 [2026-07-25 16:41:20,155] INFO in logger: [REGISTER] user=a0ac5188-d1a3-4c6f-99f9-c3cb6b738923 | new user isoldechatboxai@gmail.com
 [2026-07-25 16:46:42,996] INFO in logger: [LOGIN_SUCCESS] user=a0ac5188-d1a3-4c6f-99f9-c3cb6b738923 | isoldechatboxai@gmail.com
 [2026-07-25 17:01:13,185] INFO in logger: [CHAT] user=a0ac5188-d1a3-4c6f-99f9-c3cb6b738923 | lang=fi rag_hits=0
+[2026-07-26 11:45:07,284] INFO in logger: [LOGIN_SUCCESS] user=a0ac5188-d1a3-4c6f-99f9-c3cb6b738923 | isoldechatboxai@gmail.com
+[2026-07-26 11:45:20,607] INFO in logger: [CHAT] user=a0ac5188-d1a3-4c6f-99f9-c3cb6b738923 | lang=sw rag_hits=0
+[2026-07-26 11:45:32,742] INFO in logger: [CHAT] user=a0ac5188-d1a3-4c6f-99f9-c3cb6b738923 | lang=en rag_hits=0
+[2026-07-26 11:48:47,909] INFO in logger: [CHAT] user=a0ac5188-d1a3-4c6f-99f9-c3cb6b738923 | lang=en rag_hits=0
+[2026-07-26 11:50:06,879] INFO in logger: [CHAT] user=a0ac5188-d1a3-4c6f-99f9-c3cb6b738923 | lang=en rag_hits=0
+[2026-07-26 12:34:31,758] INFO in logger: [LOGIN_SUCCESS] user=a0ac5188-d1a3-4c6f-99f9-c3cb6b738923 | isoldechatboxai@gmail.com
+[2026-07-26 12:34:48,072] INFO in logger: [LOGIN_SUCCESS] user=a0ac5188-d1a3-4c6f-99f9-c3cb6b738923 | isoldechatboxai@gmail.com
+[2026-07-26 13:20:10,826] INFO in logger: [CHAT] user=a0ac5188-d1a3-4c6f-99f9-c3cb6b738923 | lang=sw rag_hits=0
+[2026-07-26 13:25:42,563] INFO in logger: [CHAT] user=a0ac5188-d1a3-4c6f-99f9-c3cb6b738923 | lang=en rag_hits=0
+[2026-07-26 13:51:47,041] INFO in logger: [LOGIN_SUCCESS] user=a0ac5188-d1a3-4c6f-99f9-c3cb6b738923 | isoldechatboxai@gmail.com

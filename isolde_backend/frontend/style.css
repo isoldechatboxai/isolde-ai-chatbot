@@ -1,18 +1,12 @@
 /* ==========================================================================
-   ISOLDE — AI Chatbot Interface
+   ISOLDE — AI Chatbot Interface & Login
    Production CSS · Light & Dark themes · Fully responsive
-
-   Design language: "twilight" — deep plum/indigo darks, soft lavender-white
-   lights, and a single violet→rose aurora gradient reserved for the brand
-   mark, primary actions, and the typing indicator. Fraunces italic is used
-   sparingly for the wordmark and welcome headline; Inter carries everything
-   else. Icons are drawn with CSS mask-image (no external icon files).
    ========================================================================== */
 
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fraunces:ital,wght@0,500;1,500;1,600&display=swap");
 
 /* ==========================================================================
-   VARIABLES
+   VARIABLES (Main App & Login)
    ========================================================================== */
 
 :root {
@@ -114,11 +108,26 @@
   --transition-base: 220ms var(--ease-out);
   --transition-slow: 380ms var(--ease-in-out);
 
+  /* ================== LOGIN PAGE VARIABLES ================== */
+  --login-bg-base: #0F172A;
+  --login-card-bg: rgba(30, 41, 59, 0.65);
+  --login-card-border: rgba(255, 255, 255, 0.08);
+  --login-primary: #3B82F6;
+  --login-accent: #38BDF8;
+  --login-text-main: #FFFFFF;
+  --login-text-sec: #CBD5E1;
+  --login-input-bg: rgba(15, 23, 42, 0.5);
+  --login-input-border: rgba(255, 255, 255, 0.12);
+  --login-error: #EF4444;
+  --login-error-bg: rgba(239, 68, 68, 0.1);
+  --login-success: #10B981;
+  --login-success-bg: rgba(16, 185, 129, 0.1);
+
   color-scheme: light;
 }
 
 /* ==========================================================================
-   RESET
+   RESET & GLOBALS
    ========================================================================== */
 
 *,
@@ -219,10 +228,6 @@ input:focus-visible {
   }
 }
 
-/* ==========================================================================
-   BODY
-   ========================================================================== */
-
 body {
   height: 100vh;
   overflow: hidden;
@@ -237,7 +242,7 @@ body {
 }
 
 /* ==========================================================================
-   LAYOUT
+   APP LAYOUT (Chat Interface)
    ========================================================================== */
 
 .app {
@@ -253,6 +258,14 @@ body {
 
 .sidebar {
   grid-area: sidebar;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: var(--space-5) var(--space-4);
+  background: var(--bg-sidebar);
+  border-right: 1px solid var(--border-subtle);
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .main-content {
@@ -267,25 +280,14 @@ body {
 
 .app-footer {
   grid-area: footer;
-}
-
-/* ==========================================================================
-   SIDEBAR
-   ========================================================================== */
-
-.sidebar {
   display: flex;
-  flex-direction: column;
-  height: 100%;
-  padding: var(--space-5) var(--space-4);
-  background: var(--bg-sidebar);
-  border-right: 1px solid var(--border-subtle);
-  overflow-y: auto;
-  overflow-x: hidden;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-2) var(--space-4);
+  background: var(--bg-canvas);
 }
 
-/* ---- Brand ---- */
-
+/* ---- Sidebar Brand ---- */
 .sidebar-brand {
   display: flex;
   align-items: center;
@@ -311,8 +313,7 @@ body {
   color: var(--text-primary);
 }
 
-/* ---- New chat ---- */
-
+/* ---- Sidebar New Chat ---- */
 .new-chat-btn {
   display: flex;
   align-items: center;
@@ -350,8 +351,7 @@ body {
   mask: var(--icon-plus) center / contain no-repeat;
 }
 
-/* ---- Chat history ---- */
-
+/* ---- Sidebar Chat History ---- */
 .chat-history {
   flex: 1;
   min-height: 0;
@@ -407,8 +407,7 @@ body {
   color: var(--text-primary);
 }
 
-/* ---- Sidebar footer (profile + settings) ---- */
-
+/* ---- Sidebar Footer ---- */
 .sidebar-footer {
   display: flex;
   flex-direction: column;
@@ -493,7 +492,7 @@ body {
 }
 
 /* ==========================================================================
-   HEADER
+   APP HEADER
    ========================================================================== */
 
 .app-header {
@@ -575,7 +574,7 @@ body {
 }
 
 /* ==========================================================================
-   WELCOME SCREEN
+   APP WELCOME SCREEN
    ========================================================================== */
 
 .welcome-screen {
@@ -643,7 +642,7 @@ body {
 }
 
 /* ==========================================================================
-   CHAT AREA
+   APP CHAT AREA & MESSAGES
    ========================================================================== */
 
 .chat-area {
@@ -665,10 +664,6 @@ body {
   margin: 0 auto;
   padding: var(--space-6) var(--space-6) var(--space-4);
 }
-
-/* ==========================================================================
-   MESSAGES
-   ========================================================================== */
 
 .message {
   display: flex;
@@ -710,8 +705,6 @@ body {
   padding: 0 var(--space-2);
 }
 
-/* ---- User message ---- */
-
 .message-user {
   flex-direction: row-reverse;
   align-self: flex-end;
@@ -731,8 +724,6 @@ body {
   border-bottom-right-radius: var(--radius-sm);
   box-shadow: 0 6px 18px rgba(124, 92, 255, 0.25);
 }
-
-/* ---- Bot message ---- */
 
 .message-bot {
   align-self: flex-start;
@@ -778,7 +769,7 @@ body {
 }
 
 /* ==========================================================================
-   TYPING INDICATOR
+   APP TYPING INDICATOR
    ========================================================================== */
 
 .typing-indicator {
@@ -834,7 +825,7 @@ body {
 }
 
 /* ==========================================================================
-   INPUT AREA
+   APP INPUT AREA
    ========================================================================== */
 
 .input-area {
@@ -961,18 +952,6 @@ body {
   mask: var(--icon-send) center / contain no-repeat;
 }
 
-/* ==========================================================================
-   FOOTER
-   ========================================================================== */
-
-.app-footer {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--space-2) var(--space-4);
-  background: var(--bg-canvas);
-}
-
 .disclaimer {
   font-size: 11.5px;
   color: var(--text-tertiary);
@@ -980,9 +959,8 @@ body {
 }
 
 /* ==========================================================================
-   ICONS (CSS mask data-URIs — no external assets)
+   ICONS (CSS mask data-URIs)
    ========================================================================== */
-
 :root {
   --icon-plus: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round'%3E%3Cline x1='12' y1='5' x2='12' y2='19'/%3E%3Cline x1='5' y1='12' x2='19' y2='12'/%3E%3C/svg%3E");
   --icon-settings: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='3'/%3E%3Cpath d='M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z'/%3E%3C/svg%3E");
@@ -994,60 +972,37 @@ body {
 }
 
 /* ==========================================================================
-   ANIMATIONS
+   APP & LOGIN ANIMATIONS
    ========================================================================== */
 
 @keyframes fade-in-up {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes message-in {
-  from {
-    opacity: 0;
-    transform: translateY(8px) scale(0.98);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 @keyframes typing-bounce {
-  0%,
-  60%,
-  100% {
-    transform: translateY(0);
-    opacity: 0.5;
-  }
-  30% {
-    transform: translateY(-5px);
-    opacity: 1;
-  }
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.5; }
+  30% { transform: translateY(-5px); opacity: 1; }
 }
 
 @keyframes pulse-ring {
-  0% {
-    box-shadow: 0 0 0 0 rgba(229, 72, 77, 0.35);
-  }
-  70% {
-    box-shadow: 0 0 0 8px rgba(229, 72, 77, 0);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(229, 72, 77, 0);
-  }
+  0% { box-shadow: 0 0 0 0 rgba(229, 72, 77, 0.35); }
+  70% { box-shadow: 0 0 0 8px rgba(229, 72, 77, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(229, 72, 77, 0); }
 }
 
 @keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes orb-float {
+  0% { transform: translate(0, 0) scale(1); }
+  100% { transform: translate(50px, 30px) scale(1.1); }
 }
 
 .theme-toggle-btn[data-theme="dark"] .theme-toggle-icon,
@@ -1055,8 +1010,281 @@ body {
   transform: rotate(40deg);
 }
 
+
 /* ==========================================================================
-   RESPONSIVE
+   LOGIN PAGE SPECIFIC STYLES (Scoped to .login-page)
+   ========================================================================== */
+
+body.login-page {
+    background-color: var(--login-bg-base);
+    color: var(--login-text-main);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    position: relative;
+    /* Resetting app grid */
+    height: 100vh;
+}
+
+.login-page .ai-orb {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(80px);
+    z-index: 0;
+    animation: orb-float 12s infinite ease-in-out alternate;
+}
+
+.login-page .orb-primary {
+    width: 400px;
+    height: 400px;
+    background: radial-gradient(circle, var(--login-primary) 0%, transparent 70%);
+    top: -100px;
+    left: -100px;
+    opacity: 0.3;
+}
+
+.login-page .orb-secondary {
+    width: 350px;
+    height: 350px;
+    background: radial-gradient(circle, var(--login-accent) 0%, transparent 70%);
+    bottom: -150px;
+    right: -50px;
+    opacity: 0.2;
+    animation-delay: -5s;
+    animation-direction: alternate-reverse;
+}
+
+.login-wrapper {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: 440px;
+    padding: 1.5rem;
+}
+
+.login-card {
+    background: var(--login-card-bg);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--login-card-border);
+    border-radius: 20px;
+    padding: 2.5rem 2.5rem 2rem;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+}
+
+.login-page .brand-header {
+    text-align: center;
+}
+
+.login-page .logo-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    width: 90px;
+    height: 90px;
+    margin: 0 auto 20px;
+    background: transparent;
+    box-shadow: none;
+}
+
+.login-page .brand-logo {
+    width: 80px;
+    height: 80px;
+    object-fit: contain;
+}
+
+.login-page .brand-title {
+    font-size: 1.75rem;
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    margin-bottom: 0.375rem;
+    color: var(--login-text-main);
+}
+
+.login-page .brand-subtitle {
+    font-size: 0.95rem;
+    color: var(--login-text-sec);
+}
+
+.login-page .auth-form {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+}
+
+.login-page .input-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.login-page .label-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.login-page label {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--login-text-sec);
+}
+
+.login-page .input-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.login-page .input-icon {
+    position: absolute;
+    left: 1rem;
+    width: 18px;
+    height: 18px;
+    color: var(--login-text-sec);
+    pointer-events: none;
+    transition: color 0.3s ease;
+}
+
+.login-page input {
+    width: 100%;
+    background: var(--login-input-bg);
+    border: 1px solid var(--login-input-border);
+    border-radius: 10px;
+    padding: 0.875rem 1rem 0.875rem 2.75rem;
+    color: var(--login-text-main);
+    font-size: 0.95rem;
+    font-family: inherit;
+    transition: all 0.2s ease;
+    outline: none;
+}
+
+.login-page input::placeholder {
+    color: rgba(203, 213, 225, 0.4);
+}
+
+.login-page input:focus {
+    border-color: var(--login-primary);
+    background: rgba(15, 23, 42, 0.7);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+
+.login-page input:focus + .input-icon, 
+.login-page .input-wrapper:focus-within .input-icon {
+    color: var(--login-accent);
+}
+
+.login-page .action-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    margin-top: 0.5rem;
+}
+
+.login-page .btn {
+    width: 100%;
+    padding: 0.875rem;
+    border-radius: 10px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    transition: all 0.2s ease;
+    border: none;
+    outline: none;
+}
+
+.login-page .btn-primary {
+    background: linear-gradient(135deg, var(--login-primary) 0%, var(--login-accent) 100%);
+    color: white;
+    box-shadow: 0 4px 14px rgba(59, 130, 246, 0.3);
+}
+
+.login-page .btn-primary:hover {
+    box-shadow: 0 6px 20px rgba(59, 130, 246, 0.4);
+    transform: translateY(-1px);
+}
+
+.login-page .btn-primary:active {
+    transform: translateY(1px);
+}
+
+.login-page .btn-secondary {
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--login-text-main);
+    border: 1px solid var(--login-card-border);
+}
+
+.login-page .btn-secondary:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.login-page .text-link {
+    font-size: 0.875rem;
+    color: var(--login-text-sec);
+    text-decoration: none;
+    transition: color 0.2s ease;
+}
+
+.login-page .text-link:hover, .login-page .text-link.active {
+    color: var(--login-accent);
+}
+
+.login-page .auth-footer {
+    text-align: center;
+    font-size: 0.875rem;
+    color: var(--login-text-sec);
+    padding-top: 1rem;
+    border-top: 1px solid var(--login-card-border);
+}
+
+.login-page .message {
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    text-align: center;
+}
+
+.login-page .message.error {
+    background: var(--login-error-bg);
+    color: var(--login-error);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.login-page .message.success {
+    background: var(--login-success-bg);
+    color: var(--login-success);
+    border: 1px solid rgba(16, 185, 129, 0.2);
+}
+
+.login-page .hidden {
+    display: none !important;
+}
+
+.login-page .spinner {
+    width: 20px;
+    height: 20px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-radius: 50%;
+    border-top-color: white;
+    animation: spin 0.8s linear infinite;
+}
+
+@media (max-width: 480px) {
+    .login-wrapper { padding: 1rem; }
+    .login-card { padding: 2rem 1.5rem; }
+    .login-page .brand-title { font-size: 1.5rem; }
+}
+
+/* ==========================================================================
+   APP RESPONSIVE LAYOUT (Chat Interface)
    ========================================================================== */
 
 /* ---- Laptop ---- */
@@ -1065,168 +1293,54 @@ body {
     --sidebar-width: 240px;
     --content-max-width: 720px;
   }
-
-  .app-header {
-    padding: 0 var(--space-5);
-  }
+  .app-header { padding: 0 var(--space-5); }
 }
 
 /* ---- Tablet ---- */
 @media (max-width: 900px) {
-  :root {
-    --sidebar-width: 84px;
-  }
-
-  .sidebar {
-    align-items: center;
-    padding: var(--space-5) var(--space-2);
-  }
-
-  .brand-name,
-  .new-chat-label,
-  .chat-history,
-  .user-info,
-  .settings-label {
-    display: none;
-  }
-
-  .sidebar-brand {
-    justify-content: center;
-    padding: var(--space-2);
-  }
-
-  .new-chat-btn {
-    justify-content: center;
-    width: 44px;
-    height: 44px;
-    padding: 0;
-    border-radius: var(--radius-full);
-  }
-
-  .sidebar-footer {
-    align-items: center;
-  }
-
-  .user-profile {
-    justify-content: center;
-    width: 44px;
-    padding: var(--space-2);
-  }
-
-  .settings-btn {
-    justify-content: center;
-    width: 44px;
-    height: 44px;
-    padding: 0;
-    border-radius: var(--radius-full);
-  }
-
-  .app-header {
-    padding: 0 var(--space-4);
-  }
-
-  .chat-messages,
-  .typing-indicator {
-    padding-left: var(--space-4);
-    padding-right: var(--space-4);
-  }
-
-  .message-content {
-    max-width: 82%;
-  }
+  :root { --sidebar-width: 84px; }
+  .sidebar { align-items: center; padding: var(--space-5) var(--space-2); }
+  .brand-name, .new-chat-label, .chat-history, .user-info, .settings-label { display: none; }
+  .sidebar-brand { justify-content: center; padding: var(--space-2); }
+  .new-chat-btn { justify-content: center; width: 44px; height: 44px; padding: 0; border-radius: var(--radius-full); }
+  .sidebar-footer { align-items: center; }
+  .user-profile { justify-content: center; width: 44px; padding: var(--space-2); }
+  .settings-btn { justify-content: center; width: 44px; height: 44px; padding: 0; border-radius: var(--radius-full); }
+  .app-header { padding: 0 var(--space-4); }
+  .chat-messages, .typing-indicator { padding-left: var(--space-4); padding-right: var(--space-4); }
+  .message-content { max-width: 82%; }
 }
 
 /* ---- Mobile ---- */
 @media (max-width: 640px) {
-  .app {
-    grid-template-columns: 0 1fr;
-  }
-
+  .app { grid-template-columns: 0 1fr; }
   .sidebar {
-    position: fixed;
-    inset: 0 auto 0 0;
-    z-index: 100;
-    width: 260px;
-    transform: translateX(-100%);
-    box-shadow: var(--shadow-lg);
-    transition: transform var(--transition-slow);
+    position: fixed; inset: 0 auto 0 0; z-index: 100; width: 260px;
+    transform: translateX(-100%); box-shadow: var(--shadow-lg); transition: transform var(--transition-slow);
   }
-
-  .sidebar.is-open {
-    transform: translateX(0);
-  }
-
-  .sidebar.is-open .brand-name,
-  .sidebar.is-open .new-chat-label,
-  .sidebar.is-open .chat-history,
-  .sidebar.is-open .user-info,
-  .sidebar.is-open .settings-label {
-    display: revert;
-  }
-
-  .app-header {
-    padding: 0 var(--space-4);
-  }
-
-  .app-title {
-    font-size: 17px;
-  }
-
-  .welcome-title {
-    font-size: 24px;
-  }
-
-  .suggestions {
-    flex-direction: column;
-    align-items: stretch;
-    width: 100%;
-  }
-
-  .suggestion-chip {
-    text-align: center;
-  }
-
-  .chat-messages {
-    padding: var(--space-4) var(--space-4) var(--space-2);
-    gap: var(--space-5);
-  }
-
-  .message-content {
-    max-width: 86%;
-  }
-
-  .input-area {
-    padding: var(--space-3) var(--space-3) var(--space-4);
-  }
-
-  .message-form {
-    border-radius: var(--radius-lg);
-  }
-
-  .app-footer {
-    padding: var(--space-2) var(--space-3) var(--space-3);
-  }
-
-  .disclaimer {
-    font-size: 10.5px;
-  }
+  .sidebar.is-open { transform: translateX(0); }
+  .sidebar.is-open .brand-name, .sidebar.is-open .new-chat-label, .sidebar.is-open .chat-history,
+  .sidebar.is-open .user-info, .sidebar.is-open .settings-label { display: revert; }
+  .app-header { padding: 0 var(--space-4); }
+  .app-title { font-size: 17px; }
+  .welcome-title { font-size: 24px; }
+  .suggestions { flex-direction: column; align-items: stretch; width: 100%; }
+  .suggestion-chip { text-align: center; }
+  .chat-messages { padding: var(--space-4) var(--space-4) var(--space-2); gap: var(--space-5); }
+  .message-content { max-width: 86%; }
+  .input-area { padding: var(--space-3) var(--space-3) var(--space-4); }
+  .message-form { border-radius: var(--radius-lg); }
+  .app-footer { padding: var(--space-2) var(--space-3) var(--space-3); }
+  .disclaimer { font-size: 10.5px; }
 }
 
 @media (max-width: 400px) {
-  .file-upload-btn,
-  .voice-input-btn {
-    width: 34px;
-    height: 34px;
-  }
-
-  .send-btn {
-    width: 34px;
-    height: 34px;
-  }
+  .file-upload-btn, .voice-input-btn { width: 34px; height: 34px; }
+  .send-btn { width: 34px; height: 34px; }
 }
 
 /* ==========================================================================
-   DARK THEME
+   APP DARK THEME
    ========================================================================== */
 
 [data-theme="dark"] {

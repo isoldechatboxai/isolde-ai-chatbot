@@ -4,46 +4,79 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Isolde AI - Login</title>
-
+    
+    <!-- Unified CSS File -->
     <link rel="stylesheet" href="style.css">
 </head>
-<body>
+<body class="login-page">
 
-    <div class="login-container">
+    <!-- Animated Background Orbs -->
+    <div class="ai-orb orb-primary"></div>
+    <div class="ai-orb orb-secondary"></div>
 
-        <h1>Welcome to Isolde AI</h1>
-        <p>Please sign in to continue</p>
+    <main class="login-wrapper">
+        <div class="login-card">
+            <!-- Brand Header -->
+            <div class="brand-header">
+                <div class="logo-container">
+                   <div class="logo-container">
+    <img src="images/isolde-logo.png"
+         alt="Isolde AI Logo"
+         class="brand-logo">
+</div>
+                </div>
+                <h1 class="brand-title">Welcome Back</h1>
+                <p class="brand-subtitle">Your intelligent AI assistant</p>
+            </div>
 
-        <form id="loginForm">
+            <!-- Dynamic Message Container (Used by JS for errors/success) -->
+            <div id="message-container" class="message hidden"></div>
 
-            <input
-                type="email"
-                id="email"
-                placeholder="Email"
-                required
-            >
+            <!-- Login Form -->
+            <form id="login-form" class="auth-form" novalidate>
+                <div class="input-group">
+                    <label for="email">Email</label>
+                    <div class="input-wrapper">
+                        <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                        </svg>
+                        <input type="email" id="email" name="email" placeholder="name@example.com" required autocomplete="email">
+                    </div>
+                </div>
 
-            <input
-                type="password"
-                id="password"
-                placeholder="Password"
-                required
-            >
+                <div class="input-group">
+                    <div class="label-row">
+                        <label for="password">Password</label>
+                        <a href="/forgot-password" class="text-link">Forgot Password?</a>
+                    </div>
+                    <div class="input-wrapper">
+                        <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="3" y="11" width="18" height="11" rx="2" ry="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            <path d="M7 11V7a5 5 0 0110 0v4" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                        <input type="password" id="password" name="password" placeholder="••••••••" required autocomplete="current-password">
+                    </div>
+                </div>
 
-            <button type="submit">
-                Login
-            </button>
+                <div class="action-group">
+                    <button type="submit" id="login-btn" class="btn btn-primary">
+                        <span class="btn-text">Login</span>
+                        <div class="spinner hidden"></div>
+                    </button>
+                    <button type="button" id="guest-btn" class="btn btn-secondary">
+                        <span>Continue as Guest</span>
+                    </button>
+                </div>
+            </form>
 
-        </form>
+            <div class="auth-footer">
+                <p>Don't have an account? <a href="/register" class="text-link active">Register</a></p>
+            </div>
+        </div>
+    </main>
 
-        <p>
-            Don't have an account?
-            <a href="#">Register</a>
-        </p>
-
-    </div>
-
-    <script src="login.js"></script>
+    <!-- Unified JS File -->
+    <script src="script.js"></script>
 
 </body>
 </html>

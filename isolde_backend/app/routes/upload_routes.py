@@ -17,9 +17,8 @@ upload_bp = Blueprint("upload", __name__)
 IMAGE_TYPES = {"png", "jpg", "jpeg"}
 MIME_MAP = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg"}
 
-
 @upload_bp.route("/upload", methods=["POST"])
-@jwt_required(optional=True)
+@jwt_required()
 def upload_file():
     if "file" not in request.files:
         return jsonify({"error": "No file part in the request."}), 400
@@ -32,7 +31,7 @@ def upload_file():
     if not allowed_file(file.filename, allowed):
         return jsonify({"error": f"File type not allowed. Allowed: {sorted(allowed)}"}), 400
 
-    # FIX 1: Safely handle secure_filename stripping the extension dot
+    # Safely handle secure_filename stripping the extension dot
     filename = secure_filename(file.filename)
     if "." in filename:
         file_type = filename.rsplit(".", 1)[1].lower()
@@ -56,7 +55,7 @@ def upload_file():
         file_type=file_type,
     )
     
-    # FIX 2: Handle database commit errors with rollback
+    # Handle database commit errors with rollback
     try:
         db.session.add(record)
         db.session.commit()
@@ -73,6 +72,11 @@ def upload_file():
                 "file": record.to_dict(),
                 "note": "Include a 'question' form field to ask about this image.",
             }), 201
+
+        # IMPROVEMENT: Verify file size before reading the image into memory
+        max_size = current_app.config.get("MAX_CONTENT_LENGTH")
+        if max_size and os.path.getsize(save_path) > max_size:
+            return jsonify({"error": "Image file size exceeds the configured limit."}), 413
 
         with open(save_path, "rb") as f:
             image_bytes = f.read()
@@ -101,7 +105,7 @@ def upload_file():
         except Exception as e:
             current_app.logger.error(f"Indexing failed for {filename}: {e}")
 
-    # FIX 2: Handle second database commit with rollback
+    # Handle second database commit with rollback
     try:
         db.session.commit()
     except Exception as e:

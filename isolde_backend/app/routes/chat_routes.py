@@ -18,9 +18,18 @@ def _get_or_create_conversation(user_id: str, conversation_id: str | None) -> Co
         convo = Conversation.query.filter_by(id=conversation_id, user_id=user_id).first()
         if convo:
             return convo
+            
     convo = Conversation(user_id=user_id, title="New Conversation")
-    db.session.add(convo)
-    db.session.commit()
+    
+    # FIX 2: Added try/except/rollback to prevent session corruption
+    try:
+        db.session.add(convo)
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Error creating conversation: {e}")
+        raise
+        
     return convo
 
 
@@ -67,8 +76,11 @@ def chat():
     history = []
     convo = None
     if user_id:
-        convo = _get_or_create_conversation(user_id, conversation_id)
-        history = _history_for_gemini(convo)
+        try:
+            convo = _get_or_create_conversation(user_id, conversation_id)
+            history = _history_for_gemini(convo)
+        except Exception:
+            return jsonify({"error": "Database error while loading conversation."}), 500
 
     # 5. Generate the answer
     try:
@@ -84,10 +96,16 @@ def chat():
     if user_id and convo:
         user_msg = Message(conversation_id=convo.id, role="user", content=message, language=lang_code)
         bot_msg = Message(conversation_id=convo.id, role="bot", content=reply_text, language=lang_code)
-        db.session.add_all([user_msg, bot_msg])
-        if convo.title == "New Conversation":
-            convo.title = message[:50]
-        db.session.commit()
+        
+        # FIX 2: Added try/except/rollback to prevent session corruption
+        try:
+            db.session.add_all([user_msg, bot_msg])
+            if convo.title == "New Conversation":
+                convo.title = message[:50]
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            current_app.logger.error(f"Error saving messages: {e}")
 
     log_event(current_app, "CHAT", f"lang={lang_code} rag_hits={len(rag_chunks)}", user_id)
 
@@ -106,10 +124,6 @@ def voice_chat():
     Accepts a transcribed message from the frontend's Web Speech API
     (browser-side Speech-to-Text) and returns a text reply that the
     frontend can pass to the browser's Text-to-Speech (SpeechSynthesis).
-
-    Doing STT/TTS in the browser avoids extra paid API dependencies;
-    swap this for a server-side STT/TTS provider if you need it
-    server-driven (e.g. Google Cloud Speech, Whisper, ElevenLabs).
     """
     data = request.get_json(silent=True) or {}
     transcript = sanitize_text(data.get("transcript", ""))
@@ -117,9 +131,19 @@ def voice_chat():
     if not is_non_empty(transcript):
         return jsonify({"error": "No speech transcript received."}), 400
 
+    # FIX 1: Retrieve user_id and pass it to rag_search to prevent cross-tenant data leaks
+    user_id = get_jwt_identity()
+
     lang_code = detect_language(transcript)
-    rag_chunks = rag_search(transcript, top_k=4)
-    system_context = build_context_block(rag_chunks)
+    lang_instruction = language_instruction(lang_code) # Pudhusa add pannathu
+    
+    rag_chunks = rag_search(transcript, top_k=4, user_id=user_id)
+    rag_context = build_context_block(rag_chunks)
+
+    # RAG context matrum language instruction rendaiyum theliva system_context-la sekkirom
+    system_context = "\n\n".join(
+        part for part in [rag_context, lang_instruction] if part
+    )
 
     try:
         reply_text = generate_reply(transcript, system_context=system_context)

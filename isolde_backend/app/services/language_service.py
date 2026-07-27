@@ -16,6 +16,12 @@ LANGUAGE_NAMES = {
 
 
 def detect_language(text: str) -> str:
+    # FIX: Intercept common English greetings and ambiguous short texts
+    # This prevents "hi" from being misclassified as Hindi ("hi")
+    cleaned_text = text.strip().lower()
+    if cleaned_text in {"hi", "hello", "hey", "good morning", "good evening"}:
+        return "en"
+
     try:
         code = detect(text)
         return code
@@ -24,7 +30,12 @@ def detect_language(text: str) -> str:
 
 
 def language_instruction(code: str) -> str:
-    name = LANGUAGE_NAMES.get(code, code)
-    if code == "en":
+    # FIX: Strictly enforce the whitelist. 
+    # If the code (e.g., 'fi') is not in LANGUAGE_NAMES, it returns None.
+    name = LANGUAGE_NAMES.get(code)
+    
+    # If name is None (unsupported language) or code is 'en', default to English (no instruction)
+    if not name or code == "en":
         return ""
+        
     return f"Reply in {name}, matching the user's language."
