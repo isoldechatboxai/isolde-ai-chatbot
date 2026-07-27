@@ -3,23 +3,19 @@
   "use strict";
 
   // --- SMART AUTH GUARD ---
-  // Check if current page is login page
   const isLoginPage = window.location.pathname.includes("login.html") || window.location.pathname.endsWith("login");
   const token = localStorage.getItem("access_token");
 
-  // Redirect to login if no token and not already on login page
   if (!token && !isLoginPage) {
       window.location.href = "/login.html";
       return;
   }
 
-  // Redirect to app if token exists and user is on login page
   if (token && isLoginPage) {
       window.location.href = "/";
       return;
   }
 
-  // Route to specific page logic
   if (isLoginPage) {
       initLoginPage();
   } else {
@@ -28,7 +24,7 @@
 
   // ==========================================================================
   // LOGIN PAGE LOGIC
-  // ========================================== ================================
+  // ==========================================================================
   function initLoginPage() {
       document.addEventListener('DOMContentLoaded', () => {
           const loginForm = document.getElementById('login-form');
@@ -77,7 +73,6 @@
                   setLoading(true);
 
                   try {
-                      // Adjust this URL to match your actual backend login route
                       const response = await fetch('/api/login', {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json' },
@@ -106,8 +101,6 @@
 
           if (guestBtn) {
               guestBtn.addEventListener('click', () => {
-                  // For Guest mode, bypass auth by removing token (if your backend allows optional JWT)
-                  // Note: You might need to adjust the Auth Guard at the top to allow guest access
                   localStorage.removeItem('access_token');
                   window.location.href = "/"; 
               });
@@ -116,7 +109,7 @@
   }
 
   // ==========================================================================
-  // CHATBOT APP LOGIC (ISOLDE)
+  // CHATBOT APP LOGIC (ISOLDE) + PHASE 1 FEATURES
   // ==========================================================================
   function initChatbotApp() {
       const STORAGE_KEYS = {
@@ -126,7 +119,6 @@
       };
 
       const MAX_TEXTAREA_HEIGHT = 200; 
-      const BOT_REPLY_DELAY = 900; 
       const COPY_FEEDBACK_DURATION = 1600; 
 
       let dom = {};
@@ -169,20 +161,14 @@
           return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
       }
 
-      function escapeHtml(str) {
-          const div = document.createElement("div");
-          div.textContent = str ?? "";
-          return div.innerHTML;
-      }
-
       function deriveTitle(text) {
           const trimmed = text.trim().replace(/\s+/g, " ");
           return trimmed.length > 42 ? `${trimmed.slice(0, 42)}…` : trimmed || "New conversation";
       }
 
       function scrollToBottom() {
-          if (!dom.chatArea) return;
-          dom.chatArea.scrollTo({ top: dom.chatArea.scrollHeight, behavior: "smooth" });
+          if (!dom.chatMessages) return;
+          dom.chatMessages.scrollTop = dom.chatMessages.scrollHeight;
       }
 
       function saveChat() {
@@ -269,7 +255,6 @@
           const id = generateId();
           state.conversations[id] = { id, title: "New conversation", messages: [], isBackend: false };
           state.activeConversationId = id;
-          
           state.backendConversationId = null; 
 
           renderChatHistory();
@@ -382,6 +367,7 @@
           scrollToBottom();
       }
 
+      // --- PHASE 1 ENHANCED RENDER MESSAGE (Markdown & Highlighting & Regenerate) ---
       function renderMessage(role, text, time) {
           const isUser = role === "user";
 
@@ -396,9 +382,19 @@
           const content = document.createElement("div");
           content.className = "message-content";
 
-          const textEl = document.createElement("p");
+          const textEl = document.createElement("div");
           textEl.className = "message-text";
-          textEl.innerHTML = escapeHtml(text).replace(/\n/g, "<br>");
+
+          // Parse Markdown for bot messages, escape for user
+          if (isUser) {
+              textEl.innerHTML = escapeHtml(text).replace(/\n/g, "<br>");
+          } else {
+              if (typeof marked !== 'undefined') {
+                  textEl.innerHTML = marked.parse(text);
+              } else {
+                  textEl.innerHTML = escapeHtml(text).replace(/\n/g, "<br>");
+              }
+          }
 
           const timeEl = document.createElement("span");
           timeEl.className = "message-time";
@@ -408,20 +404,50 @@
           content.appendChild(timeEl);
 
           if (!isUser) {
+              const actionsDiv = document.createElement("div");
+              actionsDiv.className = "message-actions";
+              actionsDiv.style.display = "flex";
+              actionsDiv.style.gap = "8px";
+              actionsDiv.style.marginTop = "6px";
+
               const copyBtn = document.createElement("button");
               copyBtn.className = "copy-message-btn";
               copyBtn.type = "button";
               copyBtn.title = "Copy message";
-              copyBtn.textContent = "Copy";
+              copyBtn.textContent = "📋 Copy";
               copyBtn.addEventListener("click", () => copyMessage(text, copyBtn));
-              content.appendChild(copyBtn);
+              actionsDiv.appendChild(copyBtn);
+
+              // Regenerate Button
+              const regenBtn = document.createElement("button");
+              regenBtn.className = "regenerate-message-btn";
+              regenBtn.type = "button";
+              regenBtn.title = "Regenerate response";
+              regenBtn.textContent = "↻ Regenerate";
+              regenBtn.addEventListener("click", () => regenerateLastResponse());
+              actionsDiv.appendChild(regenBtn);
+
+              content.appendChild(actionsDiv);
           }
 
           article.appendChild(avatar);
           article.appendChild(content);
           dom.chatMessages.appendChild(article);
 
+          // Apply Code Syntax Highlighting if hljs is available
+          if (!isUser && typeof hljs !== 'undefined') {
+              article.querySelectorAll('pre code').forEach((block) => {
+                  hljs.highlightElement(block);
+              });
+          }
+
           return article;
+      }
+
+      function escapeHtml(str) {
+          const div = document.createElement("div");
+          div.textContent = str ?? "";
+          return div.innerHTML;
       }
 
       function appendUserMessage(text) {
@@ -454,11 +480,13 @@
 
       function showTyping() {
           dom.typingIndicator?.classList.add("is-visible");
+          if (dom.typingIndicator) dom.typingIndicator.style.display = "flex";
           scrollToBottom();
       }
 
       function hideTyping() {
           dom.typingIndicator?.classList.remove("is-visible");
+          if (dom.typingIndicator) dom.typingIndicator.style.display = "none";
       }
 
       function setLoading(isLoading) {
@@ -474,59 +502,64 @@
       }
 
       async function getBotResponse(userText) {
-          const response = await fetch("/api/chat", {
-              method: "POST",
-              headers: {
-                  "Content-Type": "application/json",
-                  "Authorization": `Bearer ${localStorage.getItem("access_token")}`
-              },
-              body: JSON.stringify({
-                  message: userText,
-                  conversation_id: state.backendConversationId
-              })
-          });
+          try {
+              const response = await fetch("/api/chat", {
+                  method: "POST",
+                  headers: {
+                      "Content-Type": "application/json",
+                      "Authorization": `Bearer ${localStorage.getItem("access_token")}`
+                  },
+                  body: JSON.stringify({
+                      message: userText,
+                      conversation_id: state.backendConversationId
+                  })
+              });
 
-          if (response.status === 401) {
-              localStorage.removeItem("access_token");
-              window.location.href = "/login.html";
-              return;
-          }
+              if (response.status === 401) {
+                  localStorage.removeItem("access_token");
+                  window.location.href = "/login.html";
+                  return;
+              }
 
-          if (!response.ok) {
-              throw new Error("Server Error");
-          }
+              if (!response.ok) {
+                  throw new Error("Server Error / Network Error");
+              }
 
-          const data = await response.json();
-          const realId = data.conversation_id;
+              const data = await response.json();
+              const realId = data.conversation_id;
 
-          if (realId && state.activeConversationId !== realId) {
-              const oldId = state.activeConversationId;
-              
-              if (state.conversations[oldId]) {
-                  if (!state.conversations[realId]) {
-                      state.conversations[realId] = state.conversations[oldId];
-                      state.conversations[realId].id = realId;
-                      state.conversations[realId].isBackend = true;
-                  } else {
-                      state.conversations[realId].messages = state.conversations[oldId].messages;
+              if (realId && state.activeConversationId !== realId) {
+                  const oldId = state.activeConversationId;
+                  
+                  if (state.conversations[oldId]) {
+                      if (!state.conversations[realId]) {
+                          state.conversations[realId] = state.conversations[oldId];
+                          state.conversations[realId].id = realId;
+                          state.conversations[realId].isBackend = true;
+                      } else {
+                          state.conversations[realId].messages = state.conversations[oldId].messages;
+                          state.conversations[realId].isBackend = true;
+                      }
+                      delete state.conversations[oldId];
+                  }
+
+                  state.activeConversationId = realId;
+                  state.backendConversationId = realId;
+                  
+                  renderChatHistory();
+                  saveChat();
+              } else if (realId) {
+                  state.backendConversationId = realId;
+                  if (state.conversations[realId]) {
                       state.conversations[realId].isBackend = true;
                   }
-                  delete state.conversations[oldId];
               }
 
-              state.activeConversationId = realId;
-              state.backendConversationId = realId;
-              
-              renderChatHistory();
-              saveChat();
-          } else if (realId) {
-              state.backendConversationId = realId;
-              if (state.conversations[realId]) {
-                  state.conversations[realId].isBackend = true;
-              }
+              return data.reply;
+          } catch (err) {
+              console.error("Isolde Network/Quota Error:", err);
+              return "⚠ Connection Error / Quota Limit reached. Please check your network or try again later.";
           }
-
-          return data.reply;
       }
 
       async function sendMessage(rawText) {
@@ -544,7 +577,43 @@
               }
           } catch (err) {
               console.error("Isolde: failed to get a bot response.", err);
-              appendBotMessage("Sorry, something went wrong while generating a response.");
+              appendBotMessage("⚠ Sorry, something went wrong while generating a response.");
+          } finally {
+              setLoading(false);
+          }
+      }
+
+      // Regenerate Last Response Feature
+      async function regenerateLastResponse() {
+          const conversation = getActiveConversation();
+          if (!conversation || conversation.messages.length === 0 || state.isLoading) return;
+
+          // Find last user message
+          let lastUserMsgIndex = -1;
+          for (let i = conversation.messages.length - 1; i >= 0; i--) {
+              if (conversation.messages[i].role === 'user') {
+                  lastUserMsgIndex = i;
+                  break;
+              }
+          }
+
+          if (lastUserMsgIndex === -1) return;
+
+          const lastUserText = conversation.messages[lastUserMsgIndex].text;
+
+          // Remove trailing bot messages after the last user message
+          conversation.messages = conversation.messages.slice(0, lastUserMsgIndex + 1);
+          renderActiveConversation();
+          saveChat();
+
+          setLoading(true);
+          try {
+              const reply = await getBotResponse(lastUserText);
+              if (reply) {
+                  appendBotMessage(reply);
+              }
+          } catch (err) {
+              appendBotMessage("⚠ Failed to regenerate response.");
           } finally {
               setLoading(false);
           }
@@ -660,7 +729,7 @@
           if (!buttonEl) return;
           const originalLabel = buttonEl.dataset.originalLabel ?? buttonEl.textContent;
           buttonEl.dataset.originalLabel = originalLabel;
-          buttonEl.textContent = "Copied!";
+          buttonEl.textContent = "✓ Copied!";
 
           clearTimeout(buttonEl._copyResetTimer);
           buttonEl._copyResetTimer = setTimeout(() => {
@@ -798,7 +867,6 @@
           restoreTheme();
           loadChat();
 
-          // Only attempt API calls if not a guest (assuming guest has no token)
           if (localStorage.getItem("access_token")) {
               await loadProfile();
               await loadHistory();
