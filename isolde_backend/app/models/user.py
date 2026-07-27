@@ -3,10 +3,8 @@ from datetime import datetime, timezone
 from werkzeug.security import generate_password_hash, check_password_hash
 from app.extensions import db
 
-
 def _uuid():
     return str(uuid.uuid4())
-
 
 class User(db.Model):
     __tablename__ = "users"
@@ -21,12 +19,15 @@ class User(db.Model):
     reset_otp = db.Column(db.String(10), nullable=True)
     reset_otp_expires = db.Column(db.DateTime, nullable=True)
 
+    # --- 🌟 ADMIN FIELDS ---
+    role = db.Column(db.String(50), default="Client")
+    status = db.Column(db.String(20), default="Active")
+
     # personalization / long-term memory
     preferred_language = db.Column(db.String(10), default="en")
     preferred_voice = db.Column(db.String(50), default="default")
-    persona_notes = db.Column(db.Text, nullable=True)  # freeform long-term memory
+    persona_notes = db.Column(db.Text, nullable=True)
 
-    # FIX 1: Ensure the datetime is timezone-naive to match the naive db.DateTime column
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
     conversations = db.relationship(
@@ -45,8 +46,46 @@ class User(db.Model):
             "name": self.name,
             "email": self.email,
             "is_verified": self.is_verified,
+            "role": self.role,
+            "status": self.status,
             "preferred_language": self.preferred_language,
             "preferred_voice": self.preferred_voice,
-            # FIX 2: Prevent AttributeError if to_dict() is called before the session is committed
             "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+# ==========================================
+# 🌟 CHAT MODEL
+# ==========================================
+class Chat(db.Model):
+    __tablename__ = 'chats'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    user_message = db.Column(db.Text, nullable=False)
+    ai_response = db.Column(db.Text, nullable=False)
+    timestamp = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "user_message": self.user_message,
+            "ai_response": self.ai_response,
+            "timestamp": self.timestamp.strftime("%Y-%m-%d %H:%M:%S") if self.timestamp else None
+        }
+
+
+# ==========================================
+# 🌟 SETTING MODEL (Dynamic API & Model Save)
+# ==========================================
+class Setting(db.Model):
+    __tablename__ = 'settings'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    key = db.Column(db.String(100), unique=True, nullable=False)
+    value = db.Column(db.Text, nullable=True)
+
+    def to_dict(self):
+        return {
+            "key": self.key,
+            "value": self.value
         }

@@ -1,31 +1,36 @@
 """
 Wrapper around Google's Gemini API using the current, supported
-`google-genai` SDK (the older `google-generativeai` package and the
-`gemini-1.5-*` model family it defaulted to have both been shut down).
-Keeps the API key server-side only; the frontend never sees it.
+`google-genai` SDK. Keeps the API key server-side only.
 """
 from google import genai
 from google.genai import types
 from flask import current_app
-
-_client = None
-
+from app.models.user import Setting
 
 def _get_client() -> genai.Client:
-    global _client
-    if _client is None:
+    # 1. First check Database settings
+    db_key_setting = Setting.query.filter_by(key="gemini_api_key").first()
+    api_key = db_key_setting.value if db_key_setting and db_key_setting.value else None
+    
+    # 2. Fallback to .env if not in DB
+    if not api_key:
         api_key = current_app.config.get("GEMINI_API_KEY")
-        if not api_key:
-            raise RuntimeError(
-                "GEMINI_API_KEY is not set. Add it to your .env file."
-            )
-        _client = genai.Client(api_key=api_key)
-    return _client
+        
+    if not api_key:
+        raise RuntimeError(
+            "GEMINI_API_KEY is not set. Add it in Admin Panel or your .env file."
+        )
+    return genai.Client(api_key=api_key)
+
+
+def _get_model_name() -> str:
+    db_model_setting = Setting.query.filter_by(key="gemini_model").first()
+    if db_model_setting and db_model_setting.value:
+        return db_model_setting.value
+    return "gemini-2.0-flash"
 
 
 def _to_content_history(history):
-    """Convert our stored {'role': 'user'/'model', 'parts': [text]} dicts
-    into the google-genai SDK's typed Content objects."""
     if not history:
         return []
     contents = []
@@ -50,13 +55,10 @@ def _system_instruction(system_context: str) -> str:
 
 
 def generate_reply(prompt: str, history=None, system_context: str = "") -> str:
-    """
-    prompt: latest user message
-    history: list of {"role": "user"/"model", "parts": [text]} for memory
-    system_context: RAG-retrieved context / corrections to ground the answer
-    """
     client = _get_client()
-    model_name = current_app.config.get("GEMINI_MODEL", "gemini-flash-latest")
+    model_name = _get_model_name()
+    
+    print(f"Using Gemini model: {model_name}")
 
     chat = client.chats.create(
         model=model_name,
@@ -65,14 +67,17 @@ def generate_reply(prompt: str, history=None, system_context: str = "") -> str:
             system_instruction=_system_instruction(system_context),
         ),
     )
+    
+    print("Sending Gemini request...")
     response = chat.send_message(message=prompt)
+    print("Gemini response received!")
+    
     return (response.text or "").strip()
 
 
 def generate_reply_stream(prompt: str, history=None, system_context: str = ""):
-    """Generator yielding response chunks for real-time streaming endpoints."""
     client = _get_client()
-    model_name = current_app.config.get("GEMINI_MODEL", "gemini-flash-latest")
+    model_name = _get_model_name()
 
     chat = client.chats.create(
         model=model_name,
@@ -87,20 +92,18 @@ def generate_reply_stream(prompt: str, history=None, system_context: str = ""):
 
 
 def embed_text(text: str):
-    """Generate an embedding vector for RAG semantic search."""
     client = _get_client()
     result = client.models.embed_content(
-        model="gemini-embedding-001",
+        model="text-embedding-004",
         contents=text,
     )
     return list(result.embeddings[0].values)
 
 
 def analyze_image(image_bytes: bytes, mime_type: str, question: str) -> str:
-    """Gemini Vision: answer a question about an uploaded image."""
     client = _get_client()
-    model_name = current_app.config.get("GEMINI_MODEL", "gemini-flash-latest")
-
+    model_name = _get_model_name()
+    
     response = client.models.generate_content(
         model=model_name,
         contents=[

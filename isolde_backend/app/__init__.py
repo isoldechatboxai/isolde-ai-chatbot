@@ -9,7 +9,6 @@ from app.utils.logger import setup_logger
 
 limiter = Limiter(key_func=get_remote_address, default_limits=["120 per minute"])
 
-
 def create_app(config_class=Config):
     app = Flask(__name__, static_folder=FRONTEND_DIR, static_url_path="")
     app.config.from_object(config_class)
@@ -55,13 +54,13 @@ def create_app(config_class=Config):
         print(jwt_payload)
         return jsonify({"error": "User lookup failed"}), 401
 
-    # --- BUG 1 FIXED: Explicitly allow Authorization headers for CORS ---
+    # --- CORS (Fixed for React Frontend) ---
     cors.init_app(
         app,
         resources={
             r"/api/*": {
-                "origins": app.config["CORS_ORIGINS"],
-                "allow_headers": ["Content-Type", "Authorization"],
+                "origins": ["http://localhost:5173", "http://127.0.0.1:5173"], 
+                "allow_headers": ["Content-Type", "Authorization", "Accept"],
                 "supports_credentials": True
             }
         },
@@ -77,8 +76,11 @@ def create_app(config_class=Config):
     from app.routes.feedback_routes import feedback_bp
     from app.routes.history_routes import history_bp
     from app.routes.profile_routes import profile_bp
+    
+    # 🌟 PHASE 1: Admin Routes Import
+    from app.routes.admin_routes import admin_bp
 
-    # --- BUG 2 FIXED: Apply rate limiting BEFORE registering the blueprint ---
+    # Rate limiting for auth
     limiter.limit("10 per minute")(auth_bp)
 
     app.register_blueprint(auth_bp, url_prefix="/api")
@@ -87,6 +89,9 @@ def create_app(config_class=Config):
     app.register_blueprint(feedback_bp, url_prefix="/api")
     app.register_blueprint(history_bp, url_prefix="/api")
     app.register_blueprint(profile_bp, url_prefix="/api")
+    
+    # 🌟 PHASE 1: Admin Blueprint Register
+    app.register_blueprint(admin_bp, url_prefix="/api")
 
     # ---------------- Error Handlers ----------------
     @app.errorhandler(404)

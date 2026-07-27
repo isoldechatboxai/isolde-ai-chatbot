@@ -45,3 +45,9 @@
 [2026-07-26 13:20:10,826] INFO in logger: [CHAT] user=a0ac5188-d1a3-4c6f-99f9-c3cb6b738923 | lang=sw rag_hits=0
 [2026-07-26 13:25:42,563] INFO in logger: [CHAT] user=a0ac5188-d1a3-4c6f-99f9-c3cb6b738923 | lang=en rag_hits=0
 [2026-07-26 13:51:47,041] INFO in logger: [LOGIN_SUCCESS] user=a0ac5188-d1a3-4c6f-99f9-c3cb6b738923 | isoldechatboxai@gmail.com
+[2026-07-27 10:25:37,263] INFO in logger: [LOGIN_SUCCESS] user=a0ac5188-d1a3-4c6f-99f9-c3cb6b738923 | isoldechatboxai@gmail.com
+[2026-07-27 13:24:17,047] INFO in logger: [LOGIN_FAILED] user=anonymous | attempt for isoldechatboxai@gmail.com
+[2026-07-27 13:24:18,572] INFO in logger: [LOGIN_FAILED] user=anonymous | attempt for isoldechatboxai@gmail.com
+[2026-07-27 13:24:22,742] INFO in logger: [LOGIN_FAILED] user=anonymous | attempt for isoldechatboxai@gmail.com
+[2026-07-27 13:25:25,391] INFO in logger: [LOGIN_FAILED] user=anonymous | attempt for isoldechatboxai@gmail.com
+[2026-07-27 13:25:34,398] INFO in logger: [LOGIN_FAILED] user=anonymous | attempt for isoldechatboxai@gmail.com
