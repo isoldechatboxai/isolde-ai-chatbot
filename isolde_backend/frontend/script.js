@@ -2,24 +2,31 @@
 (() => {
   "use strict";
 
-  // --- BYPASS AUTH GUARD FOR UNINTERRUPTED CHAT ACCESS ---
-  // Automatically store a dummy token if none exists so users can test chat directly
-  if (!localStorage.getItem("access_token")) {
-      localStorage.setItem("access_token", "guest_token_isolde_2026");
+  // --- FIX: Remove the invalid dummy token if it exists from previous test ---
+  if (localStorage.getItem("access_token") === "guest_token_isolde_2026") {
+      localStorage.removeItem("access_token");
   }
 
   const isLoginPage = window.location.pathname.includes("login.html") || window.location.pathname.endsWith("login");
   
-  // If user is explicitly on login page, let them login, otherwise go straight to app
   if (isLoginPage) {
       initLoginPage();
   } else {
       initChatbotApp();
   }
 
-  // ==========================================================================
-  // LOGIN PAGE LOGIC
-  // ==========================================================================
+  function getAuthHeaders(includeJson = false) {
+      const headers = {};
+      if (includeJson) {
+          headers["Content-Type"] = "application/json";
+      }
+      const token = localStorage.getItem("access_token");
+      if (token && token !== "null" && token !== "undefined") {
+          headers["Authorization"] = `Bearer ${token}`;
+      }
+      return headers;
+  }
+
   function initLoginPage() {
       document.addEventListener('DOMContentLoaded', () => {
           const loginForm = document.getElementById('login-form');
@@ -56,7 +63,6 @@
           if (loginForm) {
               loginForm.addEventListener('submit', async (e) => {
                   e.preventDefault();
-                  
                   const email = document.getElementById('email').value;
                   const password = document.getElementById('password').value;
 
@@ -96,16 +102,13 @@
 
           if (guestBtn) {
               guestBtn.addEventListener('click', () => {
-                  localStorage.setItem('access_token', 'guest_token_isolde_2026');
+                  localStorage.removeItem('access_token');
                   window.location.href = "/"; 
               });
           }
       });
   }
 
-  // ==========================================================================
-  // CHATBOT APP LOGIC (ISOLDE) + PHASE 1 FEATURES
-  // ==========================================================================
   function initChatbotApp() {
       const STORAGE_KEYS = {
           THEME: "isolde-theme",
@@ -125,6 +128,34 @@
           isRecording: false,
       };
 
+      let speechRecognition = null;
+      if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+          const SpeechAuth = window.SpeechRecognition || window.webkitSpeechRecognition;
+          speechRecognition = new SpeechAuth();
+          speechRecognition.continuous = false;
+          speechRecognition.interimResults = false;
+          
+          speechRecognition.onresult = function(event) {
+              const transcript = event.results[0][0].transcript;
+              if (dom.messageTextarea) {
+                  const currentVal = dom.messageTextarea.value.trim();
+                  dom.messageTextarea.value = currentVal ? `${currentVal} ${transcript}` : transcript;
+                  autoResizeTextarea();
+                  updateSendButtonState();
+              }
+              stopVoiceRecording();
+          };
+          
+          speechRecognition.onerror = function(event) {
+              console.error("Speech recognition error:", event.error);
+              stopVoiceRecording();
+          };
+          
+          speechRecognition.onend = function() {
+              stopVoiceRecording();
+          };
+      }
+
       function bindDomElements() {
           dom = {
               app: document.querySelector(".app"),
@@ -139,12 +170,16 @@
               chatMessages: document.querySelector(".chat-messages"),
               suggestionChips: document.querySelectorAll(".suggestion-chip"),
               typingIndicator: document.querySelector(".typing-indicator"),
-              messageForm: document.querySelector(".message-form"),
-              messageTextarea: document.querySelector(".message-textarea"),
-              sendBtn: document.querySelector(".send-btn"),
-              fileUploadBtn: document.querySelector(".file-upload-btn"),
-              fileUploadInput: document.querySelector(".file-upload-input"),
-              voiceInputBtn: document.querySelector(".voice-input-btn"),
+              messageForm: document.querySelector(".message-form, form"),
+              messageTextarea: document.querySelector(".message-textarea, textarea"),
+              sendBtn: document.querySelector(".send-btn, button[type='submit']"),
+              fileUploadBtn: document.querySelector(".file-upload-btn, .attachment-btn"),
+              fileUploadInput: document.querySelector(".file-upload-input, input[type='file']"),
+              voiceInputBtn: document.querySelector(".voice-input-btn, .mic-btn"),
+              sidebarUserName: document.getElementById("sidebar-user-name"),
+              sidebarUserEmail: document.getElementById("sidebar-user-email"),
+              memoryList: document.getElementById("memory-list"),
+              clearAllMemoriesBtn: document.getElementById("clear-all-memories"),
           };
       }
 
@@ -204,7 +239,6 @@
           try {
               return localStorage.getItem(STORAGE_KEYS.THEME);
           } catch (err) {
-              console.error("Isolde: failed to load theme from localStorage.", err);
               return null;
           }
       }
@@ -266,21 +300,37 @@
           return state.conversations[state.activeConversationId];
       }
 
+      function renderActiveConversation() {
+          if (!dom.chatMessages) return;
+
+          dom.chatMessages.innerHTML = "";
+          const conversation = state.conversations[state.activeConversationId];
+
+          if (!conversation || conversation.messages.length === 0) {
+              showWelcomeScreen();
+              return;
+          }
+
+          hideWelcomeScreen();
+          conversation.messages.forEach((message) => {
+              renderMessage(message.role, message.text, new Date(message.time));
+          });
+          scrollToBottom();
+      }
+
       async function loadConversationMessages(id) {
           if (!state.conversations[id] || !state.conversations[id].isBackend) return;
 
           try {
               const response = await fetch(`/api/history/${id}`, {
-                  headers: {
-                      "Authorization": `Bearer ${localStorage.getItem("access_token")}`
-                  }
+                  headers: getAuthHeaders()
               });
 
               if (response.ok) {
                   const data = await response.json();
                   if (data.conversation && data.conversation.messages) {
                       state.conversations[id].messages = data.conversation.messages.map(m => ({
-                          role: m.role,
+                          role: (m.role === 'user') ? 'user' : 'bot',
                           text: m.content,
                           time: m.created_at
                       }));
@@ -325,6 +375,10 @@
           conversations.forEach((conversation) => {
               const item = document.createElement("li");
               item.className = "chat-history-item";
+              item.style.display = "flex";
+              item.style.justifyContent = "space-between";
+              item.style.alignItems = "center";
+
               if (conversation.id === state.activeConversationId) {
                   item.classList.add("active");
               }
@@ -333,33 +387,130 @@
               link.className = "chat-history-link";
               link.href = "#";
               link.textContent = conversation.title;
+              link.style.flex = "1";
+              link.style.overflow = "hidden";
+              link.style.textOverflow = "ellipsis";
+              link.style.whiteSpace = "nowrap";
               
               link.addEventListener("click", async (event) => {
                   event.preventDefault();
                   await switchConversation(conversation.id);
               });
 
+              const deleteBtn = document.createElement("button");
+              deleteBtn.type = "button";
+              deleteBtn.textContent = "🗑️";
+              deleteBtn.title = "Delete chat";
+              deleteBtn.style.background = "transparent";
+              deleteBtn.style.border = "none";
+              deleteBtn.style.cursor = "pointer";
+              deleteBtn.style.fontSize = "12px";
+              deleteBtn.style.padding = "2px 4px";
+              deleteBtn.style.marginLeft = "6px";
+
+              deleteBtn.addEventListener("click", async (event) => {
+                  event.stopPropagation();
+                  
+                  if (conversation.isBackend) {
+                      try {
+                          await fetch(`/api/history/${conversation.id}`, {
+                              method: "DELETE",
+                              headers: getAuthHeaders()
+                          });
+                      } catch (e) {}
+                  }
+
+                  delete state.conversations[conversation.id];
+
+                  if (state.activeConversationId === conversation.id) {
+                      const remainingIds = Object.keys(state.conversations);
+                      if (remainingIds.length > 0) {
+                          await switchConversation(remainingIds[0]);
+                      } else {
+                          createConversation();
+                      }
+                  } else {
+                      renderChatHistory();
+                  }
+                  saveChat();
+              });
+
               item.appendChild(link);
+              item.appendChild(deleteBtn);
               dom.chatHistoryList.appendChild(item);
           });
       }
 
-      function renderActiveConversation() {
-          if (!dom.chatMessages) return;
-
-          dom.chatMessages.innerHTML = "";
-          const conversation = state.conversations[state.activeConversationId];
-
-          if (!conversation || conversation.messages.length === 0) {
-              showWelcomeScreen();
-              return;
+      async function submitFeedback(rating, comment) {
+          try {
+              await fetch("/api/feedback", {
+                  method: "POST",
+                  headers: getAuthHeaders(true),
+                  body: JSON.stringify({ rating, comment })
+              });
+          } catch (err) {
+              console.error("Isolde: Feedback submission failed", err);
           }
+      }
 
-          hideWelcomeScreen();
-          conversation.messages.forEach((message) => {
-              renderMessage(message.role, message.text, new Date(message.time));
-          });
-          scrollToBottom();
+      async function loadMemories() {
+          try {
+              const response = await fetch("/api/memory/list", {
+                  headers: getAuthHeaders()
+              });
+              if (response.ok) {
+                  const data = await response.json();
+                  if (dom.memoryList) {
+                      dom.memoryList.innerHTML = "";
+                      if (!data.memories || data.memories.length === 0) {
+                          dom.memoryList.innerHTML = `<li style="color: #6b7280; font-style: italic;">No memories saved yet.</li>`;
+                          return;
+                      }
+                      data.memories.forEach(mem => {
+                          const li = document.createElement("li");
+                          li.style.display = "flex";
+                          li.style.justifyContent = "space-between";
+                          li.style.alignItems = "center";
+                          li.style.marginBottom = "4px";
+                          li.innerHTML = `<span><b>[${mem.category}]</b> ${escapeHtml(mem.memory)}</span> <button class="delete-memory-btn" data-id="${mem.id}" title="Delete memory" style="background:transparent; border:none; color:#ef4444; cursor:pointer; font-size:10px;">❌</button>`;
+                          dom.memoryList.appendChild(li);
+                      });
+
+                      dom.memoryList.querySelectorAll(".delete-memory-btn").forEach(btn => {
+                          btn.addEventListener("click", async () => {
+                              const memId = btn.getAttribute("data-id");
+                              await deleteMemory(memId);
+                          });
+                      });
+                  }
+              }
+          } catch (e) {
+              console.log("Memory load skipped");
+          }
+      }
+
+      async function deleteMemory(id) {
+          try {
+              await fetch(`/api/memory/${id}`, {
+                  method: "DELETE",
+                  headers: getAuthHeaders()
+              });
+              loadMemories();
+          } catch (err) {
+              console.error("Failed to delete memory", err);
+          }
+      }
+
+      async function clearAllMemories() {
+          try {
+              await fetch("/api/memory/all", {
+                  method: "DELETE",
+                  headers: getAuthHeaders()
+              });
+              loadMemories();
+          } catch (err) {
+              console.error("Failed to clear memories", err);
+          }
       }
 
       function renderMessage(role, text, time) {
@@ -401,13 +552,15 @@
               actionsDiv.className = "message-actions";
               actionsDiv.style.display = "flex";
               actionsDiv.style.gap = "8px";
-              actionsDiv.style.marginTop = "6px";
+              actionsDiv.style.marginTop = "8px";
+              actionsDiv.style.alignItems = "center";
 
               const copyBtn = document.createElement("button");
               copyBtn.className = "copy-message-btn";
               copyBtn.type = "button";
               copyBtn.title = "Copy message";
               copyBtn.textContent = "📋 Copy";
+              copyBtn.style.cursor = "pointer";
               copyBtn.addEventListener("click", () => copyMessage(text, copyBtn));
               actionsDiv.appendChild(copyBtn);
 
@@ -416,8 +569,41 @@
               regenBtn.type = "button";
               regenBtn.title = "Regenerate response";
               regenBtn.textContent = "↻ Regenerate";
+              regenBtn.style.cursor = "pointer";
               regenBtn.addEventListener("click", () => regenerateLastResponse());
               actionsDiv.appendChild(regenBtn);
+
+              const likeBtn = document.createElement("button");
+              likeBtn.type = "button";
+              likeBtn.title = "Good response";
+              likeBtn.textContent = "👍";
+              likeBtn.style.cursor = "pointer";
+              likeBtn.style.background = "none";
+              likeBtn.style.border = "none";
+              likeBtn.style.fontSize = "14px";
+              likeBtn.addEventListener("click", () => {
+                  submitFeedback("Thumbs Up", "User liked the response");
+                  likeBtn.textContent = "✅";
+                  likeBtn.disabled = true;
+                  dislikeBtn.disabled = true;
+              });
+              actionsDiv.appendChild(likeBtn);
+
+              const dislikeBtn = document.createElement("button");
+              dislikeBtn.type = "button";
+              dislikeBtn.title = "Bad response";
+              dislikeBtn.textContent = "👎";
+              dislikeBtn.style.cursor = "pointer";
+              dislikeBtn.style.background = "none";
+              dislikeBtn.style.border = "none";
+              dislikeBtn.style.fontSize = "14px";
+              dislikeBtn.addEventListener("click", () => {
+                  submitFeedback("Thumbs Down", "User disliked the response");
+                  dislikeBtn.textContent = "✅";
+                  likeBtn.disabled = true;
+                  dislikeBtn.disabled = true;
+              });
+              actionsDiv.appendChild(dislikeBtn);
 
               content.appendChild(actionsDiv);
           }
@@ -425,12 +611,6 @@
           article.appendChild(avatar);
           article.appendChild(content);
           dom.chatMessages.appendChild(article);
-
-          if (!isUser && typeof hljs !== 'undefined') {
-              article.querySelectorAll('pre code').forEach((block) => {
-                  hljs.highlightElement(block);
-              });
-          }
 
           return article;
       }
@@ -492,25 +672,51 @@
           }
       }
 
+      function showBroadcastToast(message) {
+          const toast = document.createElement("div");
+          toast.textContent = "📢 " + message;
+          toast.style.position = "fixed";
+          toast.style.top = "20px";
+          toast.style.left = "50%";
+          toast.style.transform = "translateX(-50%)";
+          toast.style.backgroundColor = "#EF4444"; 
+          toast.style.color = "#FFF";
+          toast.style.padding = "12px 24px";
+          toast.style.borderRadius = "8px";
+          toast.style.boxShadow = "0 4px 12px rgba(0,0,0,0.3)";
+          toast.style.zIndex = "9999";
+          toast.style.fontWeight = "bold";
+          toast.style.transition = "opacity 0.5s ease";
+
+          document.body.appendChild(toast);
+
+          setTimeout(() => {
+              toast.style.opacity = "0";
+              setTimeout(() => document.body.removeChild(toast), 500);
+          }, 8000);
+      }
+
       async function getBotResponse(userText) {
           try {
               const response = await fetch("/api/chat", {
                   method: "POST",
-                  headers: {
-                      "Content-Type": "application/json",
-                      "Authorization": `Bearer ${localStorage.getItem("access_token")}`
-                  },
+                  headers: getAuthHeaders(true),
                   body: JSON.stringify({
                       message: userText,
                       conversation_id: state.backendConversationId
                   })
               });
 
+              const data = await response.json().catch(() => ({}));
+
               if (!response.ok) {
-                  throw new Error("Server Error / Network Error");
+                  throw new Error(data.error || "Server Error / Network Error");
               }
 
-              const data = await response.json();
+              if (data.broadcast) {
+                  showBroadcastToast(data.broadcast);
+              }
+
               const realId = data.conversation_id;
 
               if (realId && state.activeConversationId !== realId) {
@@ -540,10 +746,11 @@
                   }
               }
 
+              loadMemories();
               return data.reply;
           } catch (err) {
               console.error("Isolde Network/Quota Error:", err);
-              return "⚠ Connection Error / Quota Limit reached. Please check your network or try again later.";
+              throw new Error(err.message || "⚠ Connection Error. Please check your network.");
           }
       }
 
@@ -562,7 +769,7 @@
               }
           } catch (err) {
               console.error("Isolde: failed to get a bot response.", err);
-              appendBotMessage("⚠ Sorry, something went wrong while generating a response.");
+              appendBotMessage(`⚠ ${err.message}`);
           } finally {
               setLoading(false);
           }
@@ -595,7 +802,7 @@
                   appendBotMessage(reply);
               }
           } catch (err) {
-              appendBotMessage("⚠ Failed to regenerate response.");
+              appendBotMessage(`⚠ ${err.message || "Failed to regenerate response."}`);
           } finally {
               setLoading(false);
           }
@@ -642,15 +849,27 @@
       }
 
       function startVoiceRecording() {
+          if (!speechRecognition) {
+              alert("Your browser does not support Voice Recognition.");
+              return;
+          }
           state.isRecording = true;
           dom.voiceInputBtn?.classList.add("is-recording");
           dom.voiceInputBtn?.setAttribute("title", "Stop recording");
+          try {
+              speechRecognition.start();
+          } catch(e) {}
       }
 
       function stopVoiceRecording() {
           state.isRecording = false;
           dom.voiceInputBtn?.classList.remove("is-recording");
           dom.voiceInputBtn?.setAttribute("title", "Voice input");
+          if (speechRecognition) {
+              try {
+                  speechRecognition.stop();
+              } catch(e) {}
+          }
       }
 
       function toggleVoiceRecording() {
@@ -686,7 +905,6 @@
               await navigator.clipboard.writeText(text);
               showCopyFeedback(buttonEl);
           } catch (err) {
-              console.error("Isolde: failed to copy message.", err);
               fallbackCopy(text);
               showCopyFeedback(buttonEl);
           }
@@ -701,9 +919,7 @@
           textarea.select();
           try {
               document.execCommand("copy");
-          } catch (err) {
-              console.error("Isolde: fallback copy failed.", err);
-          }
+          } catch (err) {}
           document.body.removeChild(textarea);
       }
 
@@ -720,9 +936,12 @@
       }
 
       async function logout() {
+          try {
+              await fetch('/api/logout', { method: 'POST', headers: getAuthHeaders() });
+          } catch (e) {}
           localStorage.removeItem("access_token");
           localStorage.removeItem("user");
-          window.location.href = "/login.html";
+          window.location.href = "login.html";
       }
 
       function bindEvents() {
@@ -774,30 +993,33 @@
           dom.logoutBtn?.addEventListener("click", () => {
               logout();
           });
+
+          dom.clearAllMemoriesBtn?.addEventListener("click", () => {
+              clearAllMemories();
+          });
       }
 
       async function loadProfile() {
           try {
               const response = await fetch("/api/profile", {
-                  headers: {
-                      "Authorization": `Bearer ${localStorage.getItem("access_token")}`
-                  }
+                  headers: getAuthHeaders()
               });
               if (response.ok) {
                   const user = await response.json();
-                  console.log("Logged in User:", user);
+                  if (dom.sidebarUserName) {
+                      dom.sidebarUserName.textContent = user.name || user.username || "User";
+                  }
+                  if (dom.sidebarUserEmail) {
+                      dom.sidebarUserEmail.textContent = user.email || "user@example.com";
+                  }
               }
-          } catch (e) {
-              console.log("Profile load skipped");
-          }
+          } catch (e) {}
       }
 
       async function loadHistory() {
           try {
               const response = await fetch("/api/history", {
-                  headers: {
-                      "Authorization": `Bearer ${localStorage.getItem("access_token")}`
-                  }
+                  headers: getAuthHeaders()
               });
               if (response.ok) {
                   const data = await response.json();
@@ -814,9 +1036,7 @@
                   });
                   renderChatHistory();
               }
-          } catch (e) {
-              console.log("History load skipped");
-          }
+          } catch (e) {}
       }
 
       async function initializeApp() {
@@ -826,6 +1046,7 @@
 
           await loadProfile();
           await loadHistory();
+          await loadMemories();
 
           if (!state.activeConversationId || !state.conversations[state.activeConversationId]) {
               createConversation();

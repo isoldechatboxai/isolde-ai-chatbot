@@ -1,3 +1,4 @@
+# app/__init__.py
 import os
 from flask import Flask, jsonify, send_from_directory
 from flask_limiter import Limiter
@@ -76,9 +77,8 @@ def create_app(config_class=Config):
     from app.routes.feedback_routes import feedback_bp
     from app.routes.history_routes import history_bp
     from app.routes.profile_routes import profile_bp
-    
-    # 🌟 PHASE 1: Admin Routes Import
     from app.routes.admin_routes import admin_bp
+    from app.routes.memory_routes import memory_bp
 
     # Rate limiting for auth
     limiter.limit("10 per minute")(auth_bp)
@@ -89,9 +89,8 @@ def create_app(config_class=Config):
     app.register_blueprint(feedback_bp, url_prefix="/api")
     app.register_blueprint(history_bp, url_prefix="/api")
     app.register_blueprint(profile_bp, url_prefix="/api")
-    
-    # 🌟 PHASE 1: Admin Blueprint Register
     app.register_blueprint(admin_bp, url_prefix="/api")
+    app.register_blueprint(memory_bp, url_prefix="/api")
 
     # ---------------- Error Handlers ----------------
     @app.errorhandler(404)
@@ -122,6 +121,16 @@ def create_app(config_class=Config):
     @app.route("/", methods=["GET"])
     def serve_frontend():
         return send_from_directory(FRONTEND_DIR, "index.html")
+
+    @app.route("/login", methods=["GET"])
+    @app.route("/login.html", methods=["GET"])
+    def serve_login_page():
+        return send_from_directory(FRONTEND_DIR, "login.html")
+
+    @app.route("/register", methods=["GET"])
+    @app.route("/register.html", methods=["GET"])
+    def serve_register_page():
+        return send_from_directory(FRONTEND_DIR, "register.html")
 
     with app.app_context():
         db.create_all()

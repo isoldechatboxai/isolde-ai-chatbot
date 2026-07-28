@@ -1,38 +1,85 @@
-const registerForm = document.getElementById("registerForm");
+// frontend/script.js (Login Logic Section)
+document.addEventListener('DOMContentLoaded', () => {
+    const loginForm = document.getElementById('login-form') || document.querySelector('form');
+    const loginBtn = document.getElementById('login-btn') || document.querySelector("button[type='submit']");
+    const messageContainer = document.getElementById('message-container');
 
-registerForm.addEventListener("submit", async (e) => {
-    e.preventDefault();
-
-    const username = document.getElementById("username").value.trim();
-    const email = document.getElementById("email").value.trim();
-    const password = document.getElementById("password").value;
-
-    try {
-        const response = await fetch("/api/register", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-    name: username,
-    email: email,
-    password: password
-            })
-        });
-
-        const data = await response.json();
-
-        if (!response.ok) {
-            alert(data.error || "Registration failed");
+    const showMessage = (type, text) => {
+        if (!messageContainer) {
+            alert(text); // Fallback if message container is missing
             return;
         }
+        messageContainer.textContent = text;
+        messageContainer.className = `message ${type}`;
+    };
 
-        alert("Registration Successful!");
+    if (loginForm) {
+        loginForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const emailInput = document.getElementById('email');
+            const passwordInput = document.getElementById('password');
+            
+            if (!emailInput || !passwordInput) return;
 
-        window.location.href = "login.html";
+            const email = emailInput.value.trim();
+            const password = passwordInput.value;
 
-    } catch (error) {
-        console.error(error);
-        alert("Unable to connect to server.");
+            if (!email || !password) {
+                showMessage('error', 'Please fill in all fields.');
+                return;
+            }
+
+            if (loginBtn) {
+                loginBtn.disabled = true;
+                loginBtn.style.opacity = '0.7';
+                const btnText = loginBtn.querySelector('.btn-text');
+                if (btnText) btnText.textContent = 'Logging in...';
+            }
+
+            try {
+                const response = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.access_token) {
+                    localStorage.setItem('access_token', data.access_token);
+                    showMessage('success', 'Login successful! Redirecting...');
+                    setTimeout(() => {
+                        window.location.href = "/";
+                    }, 1000);
+                } else {
+                    showMessage('error', data.error || 'Invalid email or password.');
+                    if (loginBtn) {
+                        loginBtn.disabled = false;
+                        loginBtn.style.opacity = '1';
+                        const btnText = loginBtn.querySelector('.btn-text');
+                        if (btnText) btnText.textContent = 'Login';
+                    }
+                }
+            } catch (err) {
+                console.error('Login failed', err);
+                showMessage('error', 'Server error. Please try again later.');
+                if (loginBtn) {
+                    loginBtn.disabled = false;
+                    loginBtn.style.opacity = '1';
+                    const btnText = loginBtn.querySelector('.btn-text');
+                    if (btnText) btnText.textContent = 'Login';
+                }
+            }
+        });
+    }
+
+    // Guest Button Handler
+    const guestBtn = document.getElementById('guest-btn');
+    if (guestBtn) {
+        guestBtn.addEventListener('click', () => {
+            localStorage.removeItem('access_token');
+            window.location.href = "/";
+        });
     }
 });

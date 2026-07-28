@@ -22,6 +22,7 @@ class User(db.Model):
     # --- 🌟 ADMIN FIELDS ---
     role = db.Column(db.String(50), default="Client")
     status = db.Column(db.String(20), default="Active")
+    tokens_used = db.Column(db.Integer, default=0) # புதுசு: AI Token usage-ஐ ட்ராக் செய்ய
 
     # personalization / long-term memory
     preferred_language = db.Column(db.String(10), default="en")
@@ -48,6 +49,7 @@ class User(db.Model):
             "is_verified": self.is_verified,
             "role": self.role,
             "status": self.status,
+            "tokens_used": self.tokens_used,
             "preferred_language": self.preferred_language,
             "preferred_voice": self.preferred_voice,
             "created_at": self.created_at.isoformat() if self.created_at else None,
@@ -88,4 +90,66 @@ class Setting(db.Model):
         return {
             "key": self.key,
             "value": self.value
+        }
+
+
+# ==========================================
+# 🌟 NEW: FEEDBACK MODEL (Real-time feedback)
+# ==========================================
+class Feedback(db.Model):
+    __tablename__ = 'feedbacks'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    user_name = db.Column(db.String(120), nullable=False)
+    rating = db.Column(db.String(50), nullable=False) 
+    comment = db.Column(db.Text, nullable=True)
+    timestamp = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "user": self.user_name,
+            "rating": self.rating,
+            "comment": self.comment,
+            "date": self.timestamp.strftime("%Y-%m-%d") if self.timestamp else None
+        }
+
+
+# ==========================================
+# 🌟 NEW: BROADCAST MODEL (Push Notifications)
+# ==========================================
+class Broadcast(db.Model):
+    __tablename__ = 'broadcasts'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    message = db.Column(db.Text, nullable=False)
+    target = db.Column(db.String(50), default="All Users")
+    timestamp = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "message": self.message,
+            "target": self.target,
+            "date": self.timestamp.strftime("%Y-%m-%d") if self.timestamp else None
+        }
+
+
+# ==========================================
+# 🌟 NEW: PROMO CODE MODEL (Marketing)
+# ==========================================
+class PromoCode(db.Model):
+    __tablename__ = 'promo_codes'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    code = db.Column(db.String(50), unique=True, nullable=False)
+    discount = db.Column(db.String(50), nullable=False)
+    status = db.Column(db.String(20), default="Active")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "code": self.code,
+            "discount": self.discount,
+            "status": self.status
         }

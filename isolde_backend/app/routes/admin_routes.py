@@ -1,7 +1,8 @@
 from flask import Blueprint, jsonify, request
 from google.genai.errors import ClientError
 from app.extensions import db
-from app.models.user import User, Chat, Setting
+# 🌟 FIX: Added Feedback, Broadcast, Setting imports
+from app.models.user import User, Chat, Setting, Feedback, Broadcast
 from app.services.gemini_service import generate_reply
 
 admin_bp = Blueprint('admin_bp', __name__)
@@ -40,6 +41,7 @@ def manage_users():
             db.session.rollback()
             return jsonify({"status": "error", "message": str(e)}), 500
 
+
 @admin_bp.route('/admin/users/<user_id>', methods=['PUT'])
 def update_user(user_id):
     try:
@@ -63,6 +65,7 @@ def update_user(user_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({"status": "error", "message": str(e)}), 500
+
 
 @admin_bp.route('/admin/users/<user_id>', methods=['DELETE'])
 def delete_user(user_id):
@@ -139,6 +142,7 @@ def manage_chats():
             db.session.rollback()
             return jsonify({"status": "error", "message": str(e)}), 500
 
+
 @admin_bp.route('/admin/chats/<chat_id>', methods=['DELETE'])
 def delete_chat(chat_id):
     try:
@@ -160,15 +164,15 @@ def delete_chat(chat_id):
 def manage_settings():
     if request.method == 'GET':
         try:
-            api_key_setting = Setting.query.filter_by(key="gemini_api_key").first()
-            model_setting = Setting.query.filter_by(key="gemini_model").first()
-            
-            has_key = bool(api_key_setting and api_key_setting.value)
-            current_model = model_setting.value if model_setting else "gemini-2.0-flash"
+            # 🌟 FIX: Fetch ALL settings to show in Admin Panel UI
+            settings = Setting.query.all()
+            settings_dict = {s.key: s.value for s in settings}
             
             settings_data = {
-                "api_key_configured": has_key, 
-                "model": current_model
+                "api_key_configured": bool(settings_dict.get("gemini_api_key")), 
+                "model": settings_dict.get("gemini_model", "gemini-2.0-flash"),
+                "system_prompt": settings_dict.get("system_prompt", ""),
+                "maintenance_mode": settings_dict.get("maintenance_mode", "False")
             }
             return jsonify({"status": "success", "settings": settings_data}), 200
         except Exception as e:
@@ -177,31 +181,69 @@ def manage_settings():
     if request.method == 'POST':
         try:
             data = request.get_json() or {}
-            new_api_key = data.get('api_key') or data.get('gemini_api_key')
-            new_model = data.get('model')
             
-            if new_api_key:
-                key_setting = Setting.query.filter_by(key="gemini_api_key").first()
-                if not key_setting:
-                    key_setting = Setting(key="gemini_api_key", value=new_api_key)
-                    db.session.add(key_setting)
-                else:
-                    key_setting.value = new_api_key
+            # 🌟 FIX: Dynamically update API Key, Prompt, and Maintenance Mode
+            updates = {
+                "gemini_api_key": data.get('api_key') or data.get('gemini_api_key'),
+                "gemini_model": data.get('model'),
+                "system_prompt": data.get('system_prompt'),
+                "maintenance_mode": str(data.get('maintenance_mode')) if 'maintenance_mode' in data else None
+            }
             
-            if new_model:
-                model_setting = Setting.query.filter_by(key="gemini_model").first()
-                if not model_setting:
-                    model_setting = Setting(key="gemini_model", value=new_model)
-                    db.session.add(model_setting)
-                else:
-                    model_setting.value = new_model
-                    
+            for key, value in updates.items():
+                if value is not None: # Update only if data is sent
+                    setting = Setting.query.filter_by(key=key).first()
+                    if not setting:
+                        setting = Setting(key=key, value=str(value))
+                        db.session.add(setting)
+                    else:
+                        setting.value = str(value)
+                        
             db.session.commit()
-            return jsonify({"status": "success", "message": "Settings updated successfully in Database!"}), 200
+            return jsonify({"status": "success", "message": "Settings perfectly updated in Database!"}), 200
         except Exception as e:
             db.session.rollback()
             return jsonify({"status": "error", "message": str(e)}), 500
 
+
 @admin_bp.route('/admin/settings/test-key', methods=['GET'])
 def test_api_key():
-    return jsonify({"status": "success", "message": "API Key is Working Perfectly!"}), 200
+    # 🌟 FIX: Check if Key actually exists in DB instead of fake success
+    key_setting = Setting.query.filter_by(key="gemini_api_key").first()
+    if key_setting and key_setting.value:
+        return jsonify({"status": "success", "message": "API Key is Active and Configured!"}), 200
+    return jsonify({"status": "error", "message": "No API Key found. Please add one."}), 400
+
+
+# ==========================================
+# 4. 🌟 NEW: BROADCAST & FEEDBACK ROUTES
+# ==========================================
+@admin_bp.route('/admin/broadcast', methods=['POST'])
+def create_broadcast():
+    try:
+        data = request.get_json() or {}
+        message = data.get('message')
+        
+        if not message:
+            return jsonify({"status": "error", "message": "Message is required"}), 400
+            
+        new_broadcast = Broadcast(message=message)
+        db.session.add(new_broadcast)
+        db.session.commit()
+        
+        return jsonify({"status": "success", "message": "Broadcast sent to all Live Users!"}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@admin_bp.route('/admin/feedbacks', methods=['GET'])
+def get_feedbacks():
+    try:
+        feedbacks = Feedback.query.order_by(Feedback.timestamp.desc()).all()
+        return jsonify({
+            "status": "success", 
+            "feedbacks": [fb.to_dict() for fb in feedbacks]
+        }), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500

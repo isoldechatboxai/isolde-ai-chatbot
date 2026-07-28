@@ -1,34 +1,33 @@
 """
-Wrapper around Google's Gemini API using the current, supported
-`google-genai` SDK. Keeps the API key server-side only.
+Universal AI Wrapper: Supports Gemini, OpenAI, Anthropic (Claude), and Groq.
+Auto-detects the provider based on the API Key format.
 """
+import requests
 from google import genai
 from google.genai import types
 from flask import current_app
 from app.models.user import Setting
 
-def _get_client() -> genai.Client:
-    # 1. First check Database settings
+def _get_api_key() -> str:
     db_key_setting = Setting.query.filter_by(key="gemini_api_key").first()
     api_key = db_key_setting.value if db_key_setting and db_key_setting.value else None
     
-    # 2. Fallback to .env if not in DB
     if not api_key:
         api_key = current_app.config.get("GEMINI_API_KEY")
         
     if not api_key:
-        raise RuntimeError(
-            "GEMINI_API_KEY is not set. Add it in Admin Panel or your .env file."
-        )
-    return genai.Client(api_key=api_key)
+        raise RuntimeError("API_KEY is not set. Add it in Admin Panel.")
+    return api_key.strip()
 
-
-def _get_model_name() -> str:
-    db_model_setting = Setting.query.filter_by(key="gemini_model").first()
-    if db_model_setting and db_model_setting.value:
-        return db_model_setting.value
-    return "gemini-2.0-flash"
-
+def _get_system_instruction(system_context: str) -> str:
+    db_prompt_setting = Setting.query.filter_by(key="system_prompt").first()
+    base = db_prompt_setting.value if db_prompt_setting and db_prompt_setting.value else (
+        "You are Isolde, a helpful, honest AI assistant. "
+        "If context is provided below, ground your answer in it."
+    )
+    if system_context:
+        return f"{base}\n\n{system_context}"
+    return base
 
 def _to_content_history(history):
     if not history:
@@ -42,67 +41,156 @@ def _to_content_history(history):
     return contents
 
 
-def _system_instruction(system_context: str) -> str:
-    base = (
-        "You are Isolde, a helpful, honest AI assistant. "
-        "If context is provided below, ground your answer in it. "
-        "If you are not confident or the answer cannot be verified from "
-        "context or general knowledge, say so plainly instead of guessing."
-    )
-    if system_context:
-        return f"{base}\n\n{system_context}"
-    return base
-
-
+# ==========================================
+# 🌟 MAIN GENERATOR: UNIVERSAL AUTO-DETECT
+# ==========================================
 def generate_reply(prompt: str, history=None, system_context: str = "") -> str:
-    client = _get_client()
-    model_name = _get_model_name()
-    
-    print(f"Using Gemini model: {model_name}")
+    api_key = _get_api_key()
+    sys_prompt = _get_system_instruction(system_context)
 
+    # 1. GROQ DETECTION (Keys start with 'gsk_') - 100% Free & Fast
+    if api_key.startswith("gsk_"):
+        print("🤖 Auto-detected: GROQ (Llama / Mistral)")
+        return _call_groq(api_key, prompt, history, sys_prompt)
+
+    # 2. CLAUDE DETECTION (Keys start with 'sk-ant')
+    elif api_key.startswith("sk-ant"):
+        print("🤖 Auto-detected: CLAUDE (Anthropic)")
+        return _call_claude(api_key, prompt, history, sys_prompt)
+    
+    # 3. OPENAI / CHATGPT DETECTION (Keys start with 'sk-')
+    elif api_key.startswith("sk-"):
+        print("🤖 Auto-detected: CHATGPT (OpenAI)")
+        return _call_openai(api_key, prompt, history, sys_prompt)
+    
+    # 4. GEMINI DETECTION (Default / Google)
+    else:
+        print("🤖 Auto-detected: GOOGLE GEMINI")
+        return _call_gemini(api_key, prompt, history, sys_prompt)
+
+
+# --- GEMINI IMPLEMENTATION ---
+def _call_gemini(api_key, prompt, history, sys_prompt):
+    client = genai.Client(api_key=api_key)
+    db_model_setting = Setting.query.filter_by(key="gemini_model").first()
+    model_name = db_model_setting.value if db_model_setting and db_model_setting.value else "gemini-2.0-flash"
+    
     chat = client.chats.create(
         model=model_name,
         history=_to_content_history(history),
-        config=types.GenerateContentConfig(
-            system_instruction=_system_instruction(system_context),
-        ),
+        config=types.GenerateContentConfig(system_instruction=sys_prompt),
     )
-    
-    print("Sending Gemini request...")
     response = chat.send_message(message=prompt)
-    print("Gemini response received!")
-    
     return (response.text or "").strip()
 
+# --- GROQ IMPLEMENTATION (Free & Ultra Fast) ---
+def _call_groq(api_key, prompt, history, sys_prompt):
+    messages = [{"role": "system", "content": sys_prompt}]
+    
+    if history:
+        for turn in history:
+            role = "user" if turn.get("role") == "user" else "assistant"
+            parts = turn.get("parts", [])
+            messages.append({"role": role, "content": parts[0] if parts else ""})
+            
+    messages.append({"role": "user", "content": prompt})
 
-def generate_reply_stream(prompt: str, history=None, system_context: str = ""):
-    client = _get_client()
-    model_name = _get_model_name()
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "model": "llama-3.3-70b-versatile", # You can also use "llama-3.1-8b-instant"
+        "messages": messages
+    }
+    
+    resp = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=data)
+    if resp.status_code != 200:
+        raise RuntimeError(f"Groq API Error: {resp.text}")
+        
+    return resp.json()["choices"][0]["message"]["content"].strip()
 
-    chat = client.chats.create(
-        model=model_name,
-        history=_to_content_history(history),
-        config=types.GenerateContentConfig(
-            system_instruction=_system_instruction(system_context),
-        ),
-    )
-    for chunk in chat.send_message_stream(message=prompt):
-        if chunk.text:
-            yield chunk.text
+# --- OPENAI IMPLEMENTATION ---
+def _call_openai(api_key, prompt, history, sys_prompt):
+    messages = [{"role": "system", "content": sys_prompt}]
+    
+    if history:
+        for turn in history:
+            role = "user" if turn.get("role") == "user" else "assistant"
+            parts = turn.get("parts", [])
+            messages.append({"role": role, "content": parts[0] if parts else ""})
+            
+    messages.append({"role": "user", "content": prompt})
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "model": "gpt-4o",
+        "messages": messages
+    }
+    
+    resp = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=data)
+    if resp.status_code != 200:
+        raise RuntimeError(f"OpenAI Error: {resp.text}")
+        
+    return resp.json()["choices"][0]["message"]["content"].strip()
+
+# --- CLAUDE IMPLEMENTATION ---
+def _call_cla_ude(api_key, prompt, history, sys_prompt):
+    messages = []
+    if history:
+        for turn in history:
+            role = "user" if turn.get("role") == "user" else "assistant"
+            parts = turn.get("parts", [])
+            messages.append({"role": role, "content": parts[0] if parts else ""})
+            
+    messages.append({"role": "user", "content": prompt})
+
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json"
+    }
+    data = {
+        "model": "claude-3-5-sonnet-20240620", 
+        "system": sys_prompt,
+        "messages": messages,
+        "max_tokens": 1024
+    }
+    
+    resp = requests.post("https://api.anthropic.com/v1/messages", headers=headers, json=data)
+    if resp.status_code != 200:
+        raise RuntimeError(f"Claude Error: {resp.text}")
+        
+    return resp.json()["content"][0]["text"].strip()
 
 
+# ==========================================
+# 🌟 EMBEDDINGS & VISION HELPERS
+# ==========================================
 def embed_text(text: str):
-    client = _get_client()
-    result = client.models.embed_content(
-        model="text-embedding-004",
-        contents=text,
-    )
+    api_key = _get_api_key()
+    
+    if api_key.startswith("sk-") or api_key.startswith("gsk_"):
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        data = {"model": "text-embedding-3-small", "input": text}
+        url = "https://api.openai.com/v1/embeddings" if api_key.startswith("sk-") else "https://api.groq.com/openai/v1/embeddings"
+        resp = requests.post(url, headers=headers, json=data)
+        if resp.status_code == 200:
+            return resp.json()["data"][0]["embedding"]
+            
+    client = genai.Client(api_key=api_key)
+    result = client.models.embed_content(model="text-embedding-004", contents=text)
     return list(result.embeddings[0].values)
 
 
 def analyze_image(image_bytes: bytes, mime_type: str, question: str) -> str:
-    client = _get_client()
-    model_name = _get_model_name()
+    api_key = _get_api_key()
+    client = genai.Client(api_key=api_key)
+    db_model_setting = Setting.query.filter_by(key="gemini_model").first()
+    model_name = db_model_setting.value if db_model_setting and db_model_setting.value else "gemini-2.0-flash"
     
     response = client.models.generate_content(
         model=model_name,

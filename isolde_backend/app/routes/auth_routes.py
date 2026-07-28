@@ -1,8 +1,9 @@
 # app/routes/auth_routes.py
 import random
+import os
 from datetime import datetime, timedelta, timezone
 
-from flask import Blueprint, request, jsonify, current_app
+from flask import Blueprint, request, jsonify, current_app, send_from_directory
 from flask_jwt_extended import create_access_token
 from sqlalchemy.exc import IntegrityError
 
@@ -16,6 +17,19 @@ from app.utils.validators import (
 from app.utils.logger import log_event
 
 auth_bp = Blueprint("auth", __name__)
+
+
+# 🌟 NEW: Serve frontend HTML pages directly to avoid 404 / Endpoint errors
+@auth_bp.route("/register", methods=["GET"])
+def serve_register_page():
+    frontend_dir = os.path.abspath(os.path.join(current_app.root_path, '../frontend'))
+    return send_from_directory(frontend_dir, 'register.html')
+
+
+@auth_bp.route("/login", methods=["GET"])
+def serve_login_page():
+    frontend_dir = os.path.abspath(os.path.join(current_app.root_path, '../frontend'))
+    return send_from_directory(frontend_dir, 'login.html')
 
 
 @auth_bp.route("/register", methods=["POST"])

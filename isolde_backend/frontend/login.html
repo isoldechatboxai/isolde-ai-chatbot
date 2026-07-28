@@ -3,80 +3,353 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Isolde AI - Login</title>
-    
-    <!-- Unified CSS File -->
+
     <link rel="stylesheet" href="style.css">
+
+    <title>Isolde AI - Login</title>
+    <style>
+        :root {
+            --primary: #3b82f6;
+            --primary-hover: #2563eb;
+            --bg-color: #0b0f19;
+            --card-bg: #111827;
+            --text-main: #f9fafb;
+            --text-muted: #9ca3af;
+            --border-color: #374151;
+        }
+
+        body {
+            margin: 0;
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-color);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            color: var(--text-main);
+        }
+
+        .auth-card {
+            background: var(--card-bg);
+            width: 100%;
+            max-width: 400px;
+            padding: 40px;
+            border-radius: 16px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+            border: 1px solid var(--border-color);
+            box-sizing: border-box;
+        }
+
+        .brand {
+            text-align: center;
+            margin-bottom: 25px;
+        }
+
+        .brand h1 {
+            margin: 10px 0 0;
+            color: var(--text-main);
+            font-size: 24px;
+        }
+
+        .brand p {
+            color: var(--text-muted);
+            margin: 5px 0 0;
+            font-size: 13px;
+        }
+
+        .input-group {
+            margin-bottom: 20px;
+        }
+
+        .input-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-muted);
+        }
+
+        .input-group input {
+            width: 100%;
+            padding: 12px 15px;
+            background-color: #1f2937;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            font-size: 14px;
+            color: white;
+            box-sizing: border-box;
+        }
+
+        .input-group input:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+
+        .auth-btn {
+            width: 100%;
+            padding: 12px;
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 10px;
+            transition: background-color 0.3s;
+        }
+
+        .auth-btn:hover {
+            background-color: var(--primary-hover);
+        }
+
+        .guest-btn {
+            width: 100%;
+            padding: 12px;
+            background-color: transparent;
+            color: var(--text-muted);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            margin-top: 10px;
+            transition: all 0.3s;
+        }
+
+        .guest-btn:hover {
+            background-color: #1f2937;
+            color: white;
+        }
+
+        .switch-page {
+            text-align: center;
+            margin-top: 25px;
+            font-size: 13px;
+            color: var(--text-muted);
+        }
+
+        .switch-page a {
+            color: var(--primary);
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        .switch-page a:hover {
+            text-decoration: underline;
+        }
+
+        .forgot-link {
+            text-align: right;
+            margin-top: -12px;
+            margin-bottom: 20px;
+            font-size: 12px;
+        }
+
+        .forgot-link a {
+            color: var(--text-muted);
+            text-decoration: none;
+        }
+        .forgot-link a:hover {
+            color: var(--primary);
+        }
+
+        .message {
+            display: none;
+            padding: 10px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            font-size: 13px;
+            text-align: center;
+        }
+        .message.error {
+            display: block;
+            background-color: rgba(239, 68, 68, 0.2);
+            color: #ef4444;
+            border: 1px solid #ef4444;
+        }
+        .message.success {
+            display: block;
+            background-color: rgba(16, 185, 129, 0.2);
+            color: #10b981;
+            border: 1px solid #10b981;
+        }
+
+        /* Modal Overlay for Forgot Password */
+        #forgot-modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.7);
+            justify-content: center; align-items: center;
+            z-index: 1000;
+        }
+        .modal-card {
+            background: var(--card-bg);
+            padding: 30px;
+            border-radius: 12px;
+            width: 100%;
+            max-width: 360px;
+            border: 1px solid var(--border-color);
+        }
+    </style>
 </head>
-<body class="login-page">
+<body>
 
-    <!-- Animated Background Orbs -->
-    <div class="ai-orb orb-primary"></div>
-    <div class="ai-orb orb-secondary"></div>
-
-    <main class="login-wrapper">
-        <div class="login-card">
-            <!-- Brand Header -->
-            <div class="brand-header">
-                <div class="logo-container">
-                   <div class="logo-container">
-    <img src="images/isolde-logo.png"
-         alt="Isolde AI Logo"
-         class="brand-logo">
-</div>
-                </div>
-                <h1 class="brand-title">Welcome Back</h1>
-                <p class="brand-subtitle">Your intelligent AI assistant</p>
-            </div>
-
-            <!-- Dynamic Message Container (Used by JS for errors/success) -->
-            <div id="message-container" class="message hidden"></div>
-
-            <!-- Login Form -->
-            <form id="login-form" class="auth-form" novalidate>
-                <div class="input-group">
-                    <label for="email">Email</label>
-                    <div class="input-wrapper">
-                        <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                        </svg>
-                        <input type="email" id="email" name="email" placeholder="name@example.com" required autocomplete="email">
-                    </div>
-                </div>
-
-                <div class="input-group">
-                    <div class="label-row">
-                        <label for="password">Password</label>
-                        <a href="/forgot-password" class="text-link">Forgot Password?</a>
-                    </div>
-                    <div class="input-wrapper">
-                        <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <rect x="3" y="11" width="18" height="11" rx="2" ry="2" stroke-linecap="round" stroke-linejoin="round"/>
-                            <path d="M7 11V7a5 5 0 0110 0v4" stroke-linecap="round" stroke-linejoin="round"/>
-                        </svg>
-                        <input type="password" id="password" name="password" placeholder="••••••••" required autocomplete="current-password">
-                    </div>
-                </div>
-
-                <div class="action-group">
-                    <button type="submit" id="login-btn" class="btn btn-primary">
-                        <span class="btn-text">Login</span>
-                        <div class="spinner hidden"></div>
-                    </button>
-                    <button type="button" id="guest-btn" class="btn btn-secondary">
-                        <span>Continue as Guest</span>
-                    </button>
-                </div>
-            </form>
-
-            <div class="auth-footer">
-                <p>Don't have an account? <a href="/register" class="text-link active">Register</a></p>
-            </div>
+    <div class="auth-card">
+        <div class="brand">
+            <div style="font-size: 32px;">🤖</div>
+            <h1>Welcome Back</h1>
+            <p>Your intelligent AI assistant</p>
         </div>
-    </main>
 
-    <!-- Unified JS File -->
-    <script src="script.js"></script>
+        <div id="message-container" class="message"></div>
 
+        <form id="login-form">
+            <div class="input-group">
+                <label>Email</label>
+                <input type="email" id="email" placeholder="name@example.com" required>
+            </div>
+            <div class="input-group" style="margin-bottom: 8px;">
+                <label>Password</label>
+                <input type="password" id="password" placeholder="••••••••" required>
+            </div>
+            
+            <div class="forgot-link">
+                <a href="#" id="open-forgot-modal">Forgot Password?</a>
+            </div>
+
+            <button type="submit" class="auth-btn" id="login-btn">
+                <span class="btn-text">Login</span>
+            </button>
+
+            <button type="button" class="guest-btn" id="guest-btn">
+                Continue as Guest
+            </button>
+        </form>
+
+        <div class="switch-page">
+            Don't have an account? <a href="register.html">Register</a>
+        </div>
+    </div>
+
+    <!-- Forgot Password Modal Popup -->
+    <div id="forgot-modal">
+        <div class="modal-card">
+            <h3>Reset Password</h3>
+            <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 15px;">Enter your email to receive OTP and set a new password.</p>
+            
+            <div id="modal-msg" class="message" style="margin-bottom: 10px;"></div>
+
+            <div class="input-group">
+                <label>Email Address</label>
+                <input type="email" id="forgot-email" placeholder="name@example.com">
+            </div>
+
+            <div class="input-group" id="otp-group" style="display:none;">
+                <label>Enter OTP / New Password</label>
+                <input type="text" id="forgot-otp" placeholder="6-digit OTP" style="margin-bottom: 10px;">
+                <input type="password" id="new-password" placeholder="New Password">
+            </div>
+
+            <button type="button" class="auth-btn" id="send-otp-btn">Send OTP</button>
+            <button type="button" class="guest-btn" id="verify-reset-btn" style="display:none;">Reset Password</button>
+            <button type="button" class="guest-btn" id="close-modal-btn" style="margin-top: 8px;">Cancel</button>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const form = document.getElementById('login-form');
+            const msg = document.getElementById('message-container');
+
+            form.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const email = document.getElementById('email').value.trim();
+                const password = document.getElementById('password').value;
+
+                try {
+                    const res = await fetch('/api/login', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({email, password})
+                    });
+                    const data = await res.json();
+
+                    if(res.ok && data.access_token) {
+                        localStorage.setItem('access_token', data.access_token);
+                        msg.textContent = "Login successful! Redirecting...";
+                        msg.className = "message success";
+                        setTimeout(() => window.location.href = "/", 1000);
+                    } else {
+                        msg.textContent = data.error || "Invalid email or password.";
+                        msg.className = "message error";
+                    }
+                } catch(err) {
+                    msg.textContent = "Server connection error.";
+                    msg.className = "message error";
+                }
+            });
+
+            document.getElementById('guest-btn').addEventListener('click', () => {
+                localStorage.removeItem('access_token');
+                window.location.href = "/";
+            });
+
+            // Modal Logic
+            document.getElementById('open-forgot-modal').addEventListener('click', (e) => {
+                e.preventDefault();
+                document.getElementById('forgot-modal').style.display = 'flex';
+            });
+            document.getElementById('close-modal-btn').addEventListener('click', () => {
+                document.getElementById('forgot-modal').style.display = 'none';
+            });
+            document.getElementById('send-otp-btn').addEventListener('click', async () => {
+                const email = document.getElementById('forgot-email').value;
+                const m = document.getElementById('modal-msg');
+                if(!email) { alert("Please enter email"); return; }
+                
+                try {
+                    const res = await fetch('/api/forgot-password', {
+                        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({email})
+                    });
+                    const data = await res.json();
+                    m.textContent = data.message || "OTP sent";
+                    m.className = "message success";
+                    document.getElementById('otp-group').style.display = 'block';
+                    document.getElementById('send-otp-btn').style.display = 'none';
+                    document.getElementById('verify-reset-btn').style.display = 'block';
+                    if(data.dev_otp) alert("DEV OTP: " + data.dev_otp);
+                } catch(err) {
+                    m.textContent = "Error sending OTP";
+                    m.className = "message error";
+                }
+            });
+            document.getElementById('verify-reset-btn').addEventListener('click', async () => {
+                const email = document.getElementById('forgot-email').value;
+                const otp = document.getElementById('forgot-otp').value;
+                const new_password = document.getElementById('new-password').value;
+                const m = document.getElementById('modal-msg');
+
+                try {
+                    const res = await fetch('/api/reset-password', {
+                        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({email, otp, new_password})
+                    });
+                    const data = await res.json();
+                    if(res.ok) {
+                        m.textContent = data.message;
+                        m.className = "message success";
+                        setTimeout(() => document.getElementById('forgot-modal').style.display = 'none', 2000);
+                    } else {
+                        m.textContent = data.error || "Failed";
+                        m.className = "message error";
+                    }
+                } catch(err) {
+                    m.textContent = "Server error";
+                    m.className = "message error";
+                }
+            });
+        });
+    </script>
 </body>
 </html>
