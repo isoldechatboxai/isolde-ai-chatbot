@@ -7,6 +7,7 @@ from google import genai
 from google.genai import types
 from flask import current_app
 from app.models.user import Setting
+from app.models.workspace_model import Agent, Workspace, Project, WorkspaceDocument
 
 def _get_api_key() -> str:
     db_key_setting = Setting.query.filter_by(key="gemini_api_key").first()
@@ -29,6 +30,79 @@ def _get_system_instruction(system_context: str) -> str:
         return f"{base}\n\n{system_context}"
     return base
 
+
+# ==========================================
+# 🌟 NEW: PHASE 4 — WORKSPACE & AGENT CONTEXT BUILDER
+# ==========================================
+def _build_agent_workspace_context(
+    agent_id: int = None,
+    workspace_id: int = None,
+    project_id: int = None,
+) -> str:
+    """
+    Builds an additional context block (agent persona + workspace knowledge +
+    project scope) that gets appended to system_context BEFORE it reaches
+    _get_system_instruction(). This runs alongside — never replaces — the
+    existing memory injection that callers (e.g. chat_routes.py) already do.
+
+    Safe by design: every lookup is wrapped so a missing/invalid id never
+    raises — it just contributes nothing to the context, and the base
+    Isolde system prompt + existing memory context still work exactly as
+    before if Phase 4 tables are empty or ids are omitted.
+    """
+    context_blocks = []
+
+    # --- Agent persona ---
+    if agent_id:
+        try:
+            agent = Agent.query.get(agent_id)
+            if agent and agent.is_active:
+                agent_block = f"ACTIVE AGENT PERSONA ({agent.name}):\n{agent.system_prompt}"
+                if agent.role_description:
+                    agent_block += f"\nRole: {agent.role_description}"
+                context_blocks.append(agent_block)
+        except Exception as e:
+            print(f"⚠️ Agent context skipped (non-fatal): {e}")
+
+    # --- Workspace-level shared knowledge (documents without a project) ---
+    if workspace_id:
+        try:
+            workspace = Workspace.query.get(workspace_id)
+            if workspace:
+                docs = WorkspaceDocument.query.filter_by(
+                    workspace_id=workspace_id, project_id=None
+                ).limit(5).all()
+                doc_snippets = [
+                    d.extracted_text[:1500] for d in docs if d.extracted_text
+                ]
+                if doc_snippets:
+                    context_blocks.append(
+                        f"WORKSPACE KNOWLEDGE ({workspace.name}):\n" + "\n---\n".join(doc_snippets)
+                    )
+        except Exception as e:
+            print(f"⚠️ Workspace context skipped (non-fatal): {e}")
+
+    # --- Project-level scoped knowledge ---
+    if project_id:
+        try:
+            project = Project.query.get(project_id)
+            if project:
+                proj_docs = WorkspaceDocument.query.filter_by(project_id=project_id).limit(5).all()
+                proj_snippets = [
+                    d.extracted_text[:1500] for d in proj_docs if d.extracted_text
+                ]
+                proj_block = f"ACTIVE PROJECT ({project.name})"
+                if project.description:
+                    proj_block += f": {project.description}"
+                if proj_snippets:
+                    proj_block += "\nProject documents:\n" + "\n---\n".join(proj_snippets)
+                context_blocks.append(proj_block)
+        except Exception as e:
+            print(f"⚠️ Project context skipped (non-fatal): {e}")
+
+    return "\n\n".join(context_blocks)
+
+
 def _to_content_history(history):
     if not history:
         return []
@@ -44,9 +118,32 @@ def _to_content_history(history):
 # ==========================================
 # 🌟 MAIN GENERATOR: UNIVERSAL AUTO-DETECT
 # ==========================================
-def generate_reply(prompt: str, history=None, system_context: str = "") -> str:
+def generate_reply(
+    prompt: str,
+    history=None,
+    system_context: str = "",
+    agent_id: int = None,
+    workspace_id: int = None,
+    project_id: int = None,
+) -> str:
+    """
+    NOTE ON BACKWARD COMPATIBILITY:
+    agent_id / workspace_id / project_id are all optional and default to None.
+    Every existing call site (e.g. memory_routes.py's
+    generate_reply(prompt, system_context="...")) continues to work exactly
+    as before, completely unaffected. Only NEW call sites that explicitly
+    pass these Phase 4 ids will get agent/workspace/project context injected.
+    """
     api_key = _get_api_key()
-    sys_prompt = _get_system_instruction(system_context)
+
+    # NEW: merge Phase 4 agent/workspace/project context alongside whatever
+    # system_context the caller already built (e.g. memory context).
+    phase4_context = _build_agent_workspace_context(agent_id, workspace_id, project_id)
+    combined_context = system_context or ""
+    if phase4_context:
+        combined_context = f"{combined_context}\n\n{phase4_context}".strip()
+
+    sys_prompt = _get_system_instruction(combined_context)
 
     # 1. GROQ DETECTION (Keys start with 'gsk_') - 100% Free & Fast
     if api_key.startswith("gsk_"):
@@ -138,7 +235,7 @@ def _call_openai(api_key, prompt, history, sys_prompt):
     return resp.json()["choices"][0]["message"]["content"].strip()
 
 # --- CLAUDE IMPLEMENTATION ---
-def _call_cla_ude(api_key, prompt, history, sys_prompt):
+def _call_claude(api_key, prompt, history, sys_prompt):
     messages = []
     if history:
         for turn in history:
@@ -173,17 +270,24 @@ def _call_cla_ude(api_key, prompt, history, sys_prompt):
 def embed_text(text: str):
     api_key = _get_api_key()
     
-    if api_key.startswith("sk-") or api_key.startswith("gsk_"):
+    # FIX: Properly separate OpenAI from Groq/Claude to prevent errors
+    if api_key.startswith("sk-") and not api_key.startswith("sk-ant"):
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         data = {"model": "text-embedding-3-small", "input": text}
-        url = "https://api.openai.com/v1/embeddings" if api_key.startswith("sk-") else "https://api.groq.com/openai/v1/embeddings"
-        resp = requests.post(url, headers=headers, json=data)
+        resp = requests.post("https://api.openai.com/v1/embeddings", headers=headers, json=data)
         if resp.status_code == 200:
             return resp.json()["data"][0]["embedding"]
+        else:
+            raise RuntimeError(f"OpenAI Embedding Error: {resp.text}")
             
-    client = genai.Client(api_key=api_key)
-    result = client.models.embed_content(model="text-embedding-004", contents=text)
-    return list(result.embeddings[0].values)
+    elif api_key.startswith("gsk_") or api_key.startswith("sk-ant"):
+        raise RuntimeError("Embeddings are currently supported natively for Google Gemini and OpenAI. Please configure a valid API key for embeddings.")
+        
+    else:
+        # Default fallback to Gemini
+        client = genai.Client(api_key=api_key)
+        result = client.models.embed_content(model="text-embedding-004", contents=text)
+        return list(result.embeddings[0].values)
 
 
 def analyze_image(image_bytes: bytes, mime_type: str, question: str) -> str:

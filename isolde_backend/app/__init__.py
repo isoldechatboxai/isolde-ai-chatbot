@@ -36,7 +36,6 @@ def create_app(config_class=Config):
     @jwt.expired_token_loader
     def expired_token_callback(jwt_header, jwt_payload):
         print("❌ TOKEN EXPIRED")
-        print(jwt_payload)
         return jsonify({"error": "Token expired"}), 401
 
     @jwt.revoked_token_loader
@@ -52,10 +51,9 @@ def create_app(config_class=Config):
     @jwt.user_lookup_error_loader
     def user_lookup_error(jwt_header, jwt_payload):
         print("❌ USER LOOKUP ERROR")
-        print(jwt_payload)
         return jsonify({"error": "User lookup failed"}), 401
 
-    # --- CORS (Fixed for React Frontend) ---
+    # --- CORS ---
     cors.init_app(
         app,
         resources={
@@ -79,6 +77,22 @@ def create_app(config_class=Config):
     from app.routes.profile_routes import profile_bp
     from app.routes.admin_routes import admin_bp
     from app.routes.memory_routes import memory_bp
+    from app.routes.workspace_routes import workspace_bp
+    from app.routes.agent_routes import agent_bp
+    from app.routes.productivity_routes import productivity_bp
+    from app.routes.voice_routes import voice_bp
+    from app.routes.workflow_routes import workflow_bp
+    from app.routes.collaboration_routes import collaboration_bp
+    from app.routes.marketplace_routes import marketplace_bp
+    from app.routes.saas_cloud_routes import saas_cloud_bp
+    # --- NEW: Phase 11 — Isolde Intelligence Platform ---
+    from app.routes.intelligence_routes import intelligence_bp
+    # --- NEW: RAG File Upload Blueprint ---
+    from app.routes.rag_routes import rag_bp
+    
+    # 🌟 NEW: Module 1 Chat Extended Features (Models & Blueprint)
+    from app.models import chat_extended_models
+    from app.routes.chat_extended_routes import chat_ext_bp
 
     # Rate limiting for auth
     limiter.limit("10 per minute")(auth_bp)
@@ -91,6 +105,21 @@ def create_app(config_class=Config):
     app.register_blueprint(profile_bp, url_prefix="/api")
     app.register_blueprint(admin_bp, url_prefix="/api")
     app.register_blueprint(memory_bp, url_prefix="/api")
+    app.register_blueprint(workspace_bp, url_prefix="/api")
+    app.register_blueprint(agent_bp, url_prefix="/api")
+    app.register_blueprint(productivity_bp, url_prefix="/api")
+    app.register_blueprint(voice_bp, url_prefix="/api")
+    app.register_blueprint(workflow_bp, url_prefix="/api")
+    app.register_blueprint(collaboration_bp, url_prefix="/api")
+    app.register_blueprint(marketplace_bp, url_prefix="/api")
+    app.register_blueprint(saas_cloud_bp, url_prefix="/api")
+    # --- NEW: Phase 11 Intelligence blueprint registered under /api prefix ---
+    app.register_blueprint(intelligence_bp, url_prefix="/api")
+    # --- NEW: RAG Blueprint Registered ---
+    app.register_blueprint(rag_bp)
+    
+    # 🌟 NEW: Chat Extended Blueprint Registered 
+    app.register_blueprint(chat_ext_bp)
 
     # ---------------- Error Handlers ----------------
     @app.errorhandler(404)
@@ -115,7 +144,8 @@ def create_app(config_class=Config):
     def health():
         return jsonify({
             "status": "ok",
-            "service": "Isolde backend"
+            "service": "Isolde backend",
+            "platform_tier": "Phase 11 Intelligence OS"
         })
 
     @app.route("/", methods=["GET"])

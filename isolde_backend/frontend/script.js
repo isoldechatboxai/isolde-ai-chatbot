@@ -2,9 +2,21 @@
 (() => {
   "use strict";
 
-  // --- FIX: Remove the invalid dummy token if it exists from previous test ---
   if (localStorage.getItem("access_token") === "guest_token_isolde_2026") {
       localStorage.removeItem("access_token");
+  }
+
+  if (typeof marked !== 'undefined') {
+      marked.setOptions({
+          highlight: function(code, lang) {
+              if (typeof hljs !== 'undefined' && hljs.getLanguage(lang)) {
+                  return hljs.highlight(code, { language: lang }).value;
+              }
+              return typeof hljs !== 'undefined' ? hljs.highlightAuto(code).value : code;
+          },
+          breaks: true,
+          gfm: true
+      });
   }
 
   const isLoginPage = window.location.pathname.includes("login.html") || window.location.pathname.endsWith("login");
@@ -126,6 +138,7 @@
           backendConversationId: null,
           isLoading: false,
           isRecording: false,
+          searchQuery: "" 
       };
 
       let speechRecognition = null;
@@ -161,25 +174,36 @@
               app: document.querySelector(".app"),
               sidebar: document.querySelector(".sidebar"),
               newChatBtn: document.querySelector(".new-chat-btn"),
-              chatHistoryList: document.querySelector(".chat-history-list"),
+              chatHistoryList: document.getElementById("chat-history-list") || document.querySelector(".chat-history-list"),
+              chatSearchInput: document.getElementById("chat-search-input"), 
               themeToggleBtn: document.querySelector(".theme-toggle-btn"),
               clearChatBtn: document.querySelector(".clear-chat-btn"),
-              logoutBtn: document.querySelector(".logout-btn"),
+              logoutBtn: document.getElementById("logout-btn") || document.querySelector(".logout-btn"),
               chatArea: document.querySelector(".chat-area"),
               welcomeScreen: document.querySelector(".welcome-screen"),
               chatMessages: document.querySelector(".chat-messages"),
               suggestionChips: document.querySelectorAll(".suggestion-chip"),
               typingIndicator: document.querySelector(".typing-indicator"),
               messageForm: document.querySelector(".message-form, form"),
-              messageTextarea: document.querySelector(".message-textarea, textarea"),
+              messageTextarea: document.getElementById("chat-message-input") || document.querySelector(".message-textarea, textarea"),
               sendBtn: document.querySelector(".send-btn, button[type='submit']"),
               fileUploadBtn: document.querySelector(".file-upload-btn, .attachment-btn"),
-              fileUploadInput: document.querySelector(".file-upload-input, input[type='file']"),
+              fileUploadInput: document.getElementById("file-upload-input") || document.querySelector(".file-upload-input, input[type='file']"),
               voiceInputBtn: document.querySelector(".voice-input-btn, .mic-btn"),
               sidebarUserName: document.getElementById("sidebar-user-name"),
               sidebarUserEmail: document.getElementById("sidebar-user-email"),
               memoryList: document.getElementById("memory-list"),
               clearAllMemoriesBtn: document.getElementById("clear-all-memories"),
+              
+              modelSelect: document.getElementById("ai-model-select"),
+              attachmentMenu: document.getElementById("attachment-menu"),
+              toggleAttachmentBtn: document.getElementById("toggle-attachment-btn"),
+              
+              settingsBtn: document.getElementById("open-settings-btn"),
+              settingsModal: document.getElementById("settings-modal"),
+              closeSettingsBtn: document.getElementById("close-settings-btn"),
+              sidebarToggleBtn: document.getElementById("sidebar-toggle-btn"),
+              appSidebar: document.getElementById("app-sidebar")
           };
       }
 
@@ -282,9 +306,14 @@
 
       function createConversation() {
           const id = generateId();
-          state.conversations[id] = { id, title: "New conversation", messages: [], isBackend: false };
+          state.conversations[id] = { id, title: "New conversation", messages: [], isBackend: false, isPinned: false };
           state.activeConversationId = id;
           state.backendConversationId = null; 
+          
+          if(dom.chatSearchInput) {
+              dom.chatSearchInput.value = "";
+              state.searchQuery = "";
+          }
 
           renderChatHistory();
           renderActiveConversation();
@@ -361,10 +390,37 @@
           saveChat();
       }
 
+      async function togglePinChatAPI(id) {
+          try {
+              const response = await fetch('/api/chat/pin', {
+                  method: 'POST',
+                  headers: getAuthHeaders(true),
+                  body: JSON.stringify({ conversation_id: id })
+              });
+              const data = await response.json();
+              if (response.ok) {
+                  showBroadcastToast(data.message);
+                  return data.is_pinned;
+              }
+          } catch (err) {
+              console.error("Isolde: Failed to pin chat", err);
+          }
+          return null;
+      }
+
       function renderChatHistory() {
           if (!dom.chatHistoryList) return;
 
-          const conversations = Object.values(state.conversations).sort((a, b) => {
+          let filteredConversations = Object.values(state.conversations);
+          if (state.searchQuery.trim() !== "") {
+              const q = state.searchQuery.toLowerCase();
+              filteredConversations = filteredConversations.filter(c => c.title.toLowerCase().includes(q));
+          }
+
+          filteredConversations.sort((a, b) => {
+              if (a.isPinned && !b.isPinned) return -1;
+              if (!a.isPinned && b.isPinned) return 1;
+
               const aLast = (a.messages && a.messages.length > 0) ? a.messages[a.messages.length - 1].time : (a.created_at || 0);
               const bLast = (b.messages && b.messages.length > 0) ? b.messages[b.messages.length - 1].time : (b.created_at || 0);
               return new Date(bLast) - new Date(aLast);
@@ -372,15 +428,30 @@
 
           dom.chatHistoryList.innerHTML = "";
 
-          conversations.forEach((conversation) => {
+          if (filteredConversations.length === 0) {
+              const emptyMsg = document.createElement("li");
+              emptyMsg.style.color = "#9ca3af";
+              emptyMsg.style.fontSize = "12px";
+              emptyMsg.style.textAlign = "center";
+              emptyMsg.style.padding = "10px";
+              emptyMsg.textContent = "No chats found.";
+              dom.chatHistoryList.appendChild(emptyMsg);
+              return;
+          }
+
+          filteredConversations.forEach((conversation) => {
               const item = document.createElement("li");
               item.className = "chat-history-item";
               item.style.display = "flex";
               item.style.justifyContent = "space-between";
               item.style.alignItems = "center";
+              item.style.padding = "8px 12px";
+              item.style.position = "relative";
 
               if (conversation.id === state.activeConversationId) {
                   item.classList.add("active");
+                  item.style.backgroundColor = "rgba(255, 255, 255, 0.1)";
+                  item.style.borderRadius = "8px";
               }
 
               const link = document.createElement("a");
@@ -397,6 +468,92 @@
                   await switchConversation(conversation.id);
               });
 
+              const actionsDiv = document.createElement("div");
+              actionsDiv.style.display = "flex";
+              actionsDiv.style.alignItems = "center";
+
+              const renameBtn = document.createElement("button");
+              renameBtn.type = "button";
+              renameBtn.textContent = "✏️";
+              renameBtn.title = "Rename chat";
+              renameBtn.style.background = "transparent";
+              renameBtn.style.border = "none";
+              renameBtn.style.cursor = "pointer";
+              renameBtn.style.fontSize = "12px";
+              renameBtn.style.padding = "2px 4px";
+              renameBtn.style.opacity = "0.5";
+              
+              renameBtn.addEventListener("mouseover", () => renameBtn.style.opacity = "1");
+              renameBtn.addEventListener("mouseout", () => renameBtn.style.opacity = "0.5");
+
+              renameBtn.addEventListener("click", (event) => {
+                  event.stopPropagation();
+                  link.style.display = "none";
+                  actionsDiv.style.display = "none";
+                  
+                  const input = document.createElement("input");
+                  input.type = "text";
+                  input.value = conversation.title;
+                  input.style.flex = "1";
+                  input.style.background = "transparent";
+                  input.style.border = "1px solid #6b7280";
+                  input.style.color = "inherit";
+                  input.style.borderRadius = "4px";
+                  input.style.padding = "4px 8px";
+                  input.style.marginRight = "8px";
+                  input.style.outline = "none";
+                  input.style.fontSize = "13px";
+
+                  const saveEdit = async () => {
+                      const newTitle = input.value.trim();
+                      if (newTitle && newTitle !== conversation.title) {
+                          conversation.title = newTitle;
+                          saveChat();
+                      }
+                      renderChatHistory();
+                  };
+
+                  input.addEventListener("blur", saveEdit);
+                  input.addEventListener("keydown", (e) => {
+                      if (e.key === "Enter") saveEdit();
+                      if (e.key === "Escape") renderChatHistory();
+                  });
+
+                  item.insertBefore(input, actionsDiv);
+                  input.focus();
+                  input.setSelectionRange(0, input.value.length); 
+              });
+
+              const pinBtn = document.createElement("button");
+              pinBtn.type = "button";
+              pinBtn.textContent = conversation.isPinned ? "📍" : "📌";
+              pinBtn.title = conversation.isPinned ? "Unpin chat" : "Pin chat";
+              pinBtn.style.background = "transparent";
+              pinBtn.style.border = "none";
+              pinBtn.style.cursor = "pointer";
+              pinBtn.style.fontSize = "12px";
+              pinBtn.style.padding = "2px 4px";
+              pinBtn.style.opacity = conversation.isPinned ? "1" : "0.5";
+              
+              pinBtn.addEventListener("mouseover", () => pinBtn.style.opacity = "1");
+              pinBtn.addEventListener("mouseout", () => pinBtn.style.opacity = conversation.isPinned ? "1" : "0.5");
+
+              pinBtn.addEventListener("click", async (event) => {
+                  event.stopPropagation();
+                  if (conversation.isBackend) {
+                      const isNowPinned = await togglePinChatAPI(conversation.id);
+                      if (isNowPinned !== null) {
+                          conversation.isPinned = isNowPinned;
+                          renderChatHistory(); 
+                          saveChat();
+                      }
+                  } else {
+                      conversation.isPinned = !conversation.isPinned;
+                      renderChatHistory();
+                      saveChat();
+                  }
+              });
+
               const deleteBtn = document.createElement("button");
               deleteBtn.type = "button";
               deleteBtn.textContent = "🗑️";
@@ -406,7 +563,10 @@
               deleteBtn.style.cursor = "pointer";
               deleteBtn.style.fontSize = "12px";
               deleteBtn.style.padding = "2px 4px";
-              deleteBtn.style.marginLeft = "6px";
+              deleteBtn.style.opacity = "0.5";
+
+              deleteBtn.addEventListener("mouseover", () => deleteBtn.style.opacity = "1");
+              deleteBtn.addEventListener("mouseout", () => deleteBtn.style.opacity = "0.5");
 
               deleteBtn.addEventListener("click", async (event) => {
                   event.stopPropagation();
@@ -435,8 +595,12 @@
                   saveChat();
               });
 
+              actionsDiv.appendChild(renameBtn);
+              actionsDiv.appendChild(pinBtn);
+              actionsDiv.appendChild(deleteBtn);
+
               item.appendChild(link);
-              item.appendChild(deleteBtn);
+              item.appendChild(actionsDiv);
               dom.chatHistoryList.appendChild(item);
           });
       }
@@ -696,62 +860,75 @@
           }, 8000);
       }
 
-      async function getBotResponse(userText) {
-          try {
-              const response = await fetch("/api/chat", {
-                  method: "POST",
-                  headers: getAuthHeaders(true),
-                  body: JSON.stringify({
-                      message: userText,
-                      conversation_id: state.backendConversationId
-                  })
-              });
+      async function streamBotResponse(userText, botMsgObj, textEl) {
+          const model = dom.modelSelect ? dom.modelSelect.value : "Flash-Lite Extended";
+          const isNewChat = !state.backendConversationId;
 
-              const data = await response.json().catch(() => ({}));
+          const response = await fetch("/api/chat/stream", {
+              method: "POST",
+              headers: getAuthHeaders(true),
+              body: JSON.stringify({
+                  message: userText,
+                  conversation_id: state.backendConversationId,
+                  model: model
+              })
+          });
 
-              if (!response.ok) {
-                  throw new Error(data.error || "Server Error / Network Error");
-              }
-
-              if (data.broadcast) {
-                  showBroadcastToast(data.broadcast);
-              }
-
-              const realId = data.conversation_id;
-
-              if (realId && state.activeConversationId !== realId) {
-                  const oldId = state.activeConversationId;
-                  
-                  if (state.conversations[oldId]) {
-                      if (!state.conversations[realId]) {
-                          state.conversations[realId] = state.conversations[oldId];
-                          state.conversations[realId].id = realId;
-                          state.conversations[realId].isBackend = true;
-                      } else {
-                          state.conversations[realId].messages = state.conversations[oldId].messages;
-                          state.conversations[realId].isBackend = true;
-                      }
-                      delete state.conversations[oldId];
-                  }
-
-                  state.activeConversationId = realId;
-                  state.backendConversationId = realId;
-                  
-                  renderChatHistory();
-                  saveChat();
-              } else if (realId) {
-                  state.backendConversationId = realId;
-                  if (state.conversations[realId]) {
-                      state.conversations[realId].isBackend = true;
-                  }
-              }
-
-              loadMemories();
-              return data.reply;
-          } catch (err) {
-              console.error("Isolde Network/Quota Error:", err);
-              throw new Error(err.message || "⚠ Connection Error. Please check your network.");
+          if (!response.ok) {
+              throw new Error("Server Error / Network Error");
           }
+
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let accumulatedText = "";
+
+          while (true) {
+              const { value, done } = await reader.read();
+              if (done) break;
+
+              const chunk = decoder.decode(value, { stream: true });
+              const lines = chunk.split("\n\n");
+
+              for (const line of lines) {
+                  if (line.startsWith("data: ")) {
+                      const dataText = line.replace("data: ", "").trim();
+                      if (dataText === "[DONE]") break;
+                      if (dataText === "[ERROR]") {
+                          throw new Error("Streaming encountered an error.");
+                      }
+
+                      accumulatedText += dataText + " ";
+                      botMsgObj.text = accumulatedText;
+
+                      if (typeof marked !== 'undefined') {
+                          textEl.innerHTML = marked.parse(accumulatedText);
+                      } else {
+                          textEl.innerHTML = escapeHtml(accumulatedText).replace(/\n/g, "<br>");
+                      }
+                      scrollToBottom();
+                  }
+              }
+          }
+
+          if (isNewChat) {
+              await loadHistory();
+              const backendConvos = Object.values(state.conversations).filter(c => c.isBackend);
+              if (backendConvos.length > 0) {
+                  backendConvos.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+                  const newestRealId = backendConvos[0].id;
+                  
+                  const oldId = state.activeConversationId;
+                  if (oldId !== newestRealId && state.conversations[oldId]) {
+                      state.conversations[newestRealId].messages = state.conversations[oldId].messages;
+                      state.conversations[newestRealId].isPinned = state.conversations[oldId].isPinned;
+                      delete state.conversations[oldId];
+                      state.activeConversationId = newestRealId;
+                      state.backendConversationId = newestRealId;
+                  }
+              }
+          }
+          
+          loadMemories();
       }
 
       async function sendMessage(rawText) {
@@ -762,16 +939,24 @@
           resetTextarea();
           setLoading(true);
 
+          const conversation = getActiveConversation();
+          const time = new Date();
+          
+          const botMsgObj = { role: "bot", text: "", time: time.toISOString() };
+          conversation.messages.push(botMsgObj);
+          
+          const botArticle = renderMessage("bot", "", time);
+          const textEl = botArticle.querySelector(".message-text");
+
           try {
-              const reply = await getBotResponse(text);
-              if (reply) {
-                  appendBotMessage(reply);
-              }
+              await streamBotResponse(text, botMsgObj, textEl);
           } catch (err) {
               console.error("Isolde: failed to get a bot response.", err);
-              appendBotMessage(`⚠ ${err.message}`);
+              botMsgObj.text = `⚠ ${err.message}`;
+              textEl.innerHTML = escapeHtml(botMsgObj.text);
           } finally {
               setLoading(false);
+              saveChat();
           }
       }
 
@@ -792,19 +977,25 @@
           const lastUserText = conversation.messages[lastUserMsgIndex].text;
 
           conversation.messages = conversation.messages.slice(0, lastUserMsgIndex + 1);
-          renderActiveConversation();
-          saveChat();
+          renderActiveConversation(); 
 
           setLoading(true);
+
+          const time = new Date();
+          const botMsgObj = { role: "bot", text: "", time: time.toISOString() };
+          conversation.messages.push(botMsgObj);
+          
+          const botArticle = renderMessage("bot", "", time);
+          const textEl = botArticle.querySelector(".message-text");
+
           try {
-              const reply = await getBotResponse(lastUserText);
-              if (reply) {
-                  appendBotMessage(reply);
-              }
+              await streamBotResponse(lastUserText, botMsgObj, textEl);
           } catch (err) {
-              appendBotMessage(`⚠ ${err.message || "Failed to regenerate response."}`);
+              botMsgObj.text = `⚠ ${err.message || "Failed to regenerate response."}`;
+              textEl.innerHTML = escapeHtml(botMsgObj.text);
           } finally {
               setLoading(false);
+              saveChat();
           }
       }
 
@@ -884,20 +1075,40 @@
           dom.fileUploadInput?.click();
       }
 
-      function handleFileSelected(event) {
+      async function handleFileSelected(event) {
           const file = event.target.files?.[0];
           if (!file) return;
 
-          const textarea = dom.messageTextarea;
-          if (textarea) {
-              const prefix = textarea.value.trim().length > 0 ? `${textarea.value.trim()}\n` : "";
-              textarea.value = `${prefix}📎 ${file.name}`;
-              autoResizeTextarea();
-              updateSendButtonState();
-              textarea.focus();
-          }
+          if (dom.attachmentMenu) dom.attachmentMenu.classList.remove("show");
 
-          event.target.value = "";
+          const formData = new FormData();
+          formData.append("file", file);
+
+          setLoading(true);
+          try {
+              appendBotMessage(`Uploading **${file.name}** for RAG document analysis...`);
+
+              const response = await fetch('/api/rag/upload', {
+                  method: 'POST',
+                  headers: {
+                      'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+                  },
+                  body: formData
+              });
+              const data = await response.json();
+
+              if (response.ok && data.status === 'success') {
+                  appendBotMessage(`✅ Document **${file.name}** Indexed successfully! You can now ask questions about this document.`);
+              } else {
+                  appendBotMessage(`⚠ Failed to upload document: ${data.message}`);
+              }
+          } catch (err) {
+              console.error("File upload error:", err);
+              appendBotMessage(`⚠ Network error during file upload.`);
+          } finally {
+              setLoading(false);
+              event.target.value = ""; 
+          }
       }
 
       async function copyMessage(text, buttonEl) {
@@ -945,6 +1156,13 @@
       }
 
       function bindEvents() {
+          if (dom.chatSearchInput) {
+              dom.chatSearchInput.addEventListener("input", (e) => {
+                  state.searchQuery = e.target.value;
+                  renderChatHistory();
+              });
+          }
+
           dom.messageForm?.addEventListener("submit", (event) => {
               event.preventDefault();
               sendMessage();
@@ -984,19 +1202,48 @@
               toggleVoiceRecording();
           });
 
-          dom.fileUploadBtn?.addEventListener("click", () => {
-              openFilePicker();
-          });
-          
+          // 🌟 Robust Toggle for Attachment Menu
+          if (dom.toggleAttachmentBtn && dom.attachmentMenu) {
+              dom.toggleAttachmentBtn.addEventListener("click", (e) => {
+                  e.stopPropagation();
+                  dom.attachmentMenu.classList.toggle("show");
+              });
+          }
+
           dom.fileUploadInput?.addEventListener("change", handleFileSelected);
 
-          dom.logoutBtn?.addEventListener("click", () => {
-              logout();
-          });
+          if (dom.logoutBtn) {
+              dom.logoutBtn.addEventListener("click", () => {
+                  logout();
+              });
+          }
 
           dom.clearAllMemoriesBtn?.addEventListener("click", () => {
               clearAllMemories();
           });
+
+          // 🌟 Sidebar Collapse Toggle
+          if (dom.sidebarToggleBtn && dom.sidebar) {
+              dom.sidebarToggleBtn.addEventListener("click", () => {
+                  dom.sidebar.classList.toggle("collapsed");
+              });
+          }
+
+          document.addEventListener('click', (event) => {
+              if (dom.attachmentMenu && dom.toggleAttachmentBtn) {
+                  const isClickInside = dom.attachmentMenu.contains(event.target) || dom.toggleAttachmentBtn.contains(event.target);
+                  if (!isClickInside) {
+                      dom.attachmentMenu.classList.remove("show");
+                  }
+              }
+          });
+
+          if (dom.settingsBtn && dom.settingsModal) {
+              dom.settingsBtn.addEventListener("click", () => dom.settingsModal.classList.add("show"));
+          }
+          if (dom.closeSettingsBtn && dom.settingsModal) {
+              dom.closeSettingsBtn.addEventListener("click", () => dom.settingsModal.classList.remove("show"));
+          }
       }
 
       async function loadProfile() {
@@ -1029,7 +1276,8 @@
                               id: convo.id,
                               title: convo.title,
                               created_at: convo.created_at, 
-                              isBackend: true, 
+                              isBackend: true,
+                              isPinned: convo.is_pinned || false, 
                               messages: []
                           };
                       }

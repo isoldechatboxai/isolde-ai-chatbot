@@ -1,10 +1,10 @@
-from flask import Blueprint, request, jsonify, current_app
+from flask import Blueprint, request, jsonify, current_app, Response, stream_with_context
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
 from app.extensions import db
 from app.models import Conversation, Message
 from app.models.user import User, Setting, Feedback, Broadcast
-from app.models.memory_model import UserMemory  # 🌟 NEW: Added UserMemory model
+from app.models.memory_model import UserMemory  # 🌟 Phase 2: Smart UserMemory model
 from app.services.gemini_service import generate_reply
 from app.services.rag_service import search as rag_search, build_context_block
 from app.services.feedback_service import find_relevant_corrections, build_correction_context
@@ -12,42 +12,85 @@ from app.services.language_service import detect_language, language_instruction
 from app.utils.validators import sanitize_text, is_non_empty
 from app.utils.logger import log_event
 
+import json
+import time
+
 chat_bp = Blueprint("chat", __name__)
 
 
 def _extract_and_save_memory(user_id: str, message: str):
-    """🌟 NEW: Smart helper to auto-extract and store user memories from chat"""
-    if not user_id:
+    """🌟 Phase 2: Smart helper to auto-extract and store structured user memories using universal generate_reply"""
+    if not user_id or len(message.strip()) < 3:
         return
-    
-    text_lower = message.lower()
-    memory_to_save = None
-    category = "Other"
 
-    # Simple smart extraction rules
-    if "my name is" in text_lower or "i am" in text_lower:
-        memory_to_save = message.strip()
-        category = "Personal"
-    elif "my business" in text_lower or "i have business" in text_lower or "company" in text_lower or "vilvarai" in text_lower or "chocolate" in text_lower or "cashews" in text_lower or "dry fruits" in text_lower:
-        memory_to_save = message.strip()
-        category = "Business"
-    elif "i like" in text_lower or "i prefer" in text_lower or "my favorite" in text_lower:
-        memory_to_save = message.strip()
-        category = "Preferences"
-
-    if memory_to_save:
-        try:
-            # Check if similar memory already exists
-            existing = UserMemory.query.filter_by(user_id=user_id).all()
-            exists = any(m.memory.lower() == memory_to_save.lower() for m in existing)
+    try:
+        prompt = f"""
+        Analyze the following user statement. If it contains personal facts, preferences, work details, business info, goals, or locations, extract it.
+        Return strictly a JSON object with keys:
+        "category" (e.g., Personal, Location, Work, Business, Preferences, Health),
+        "key" (e.g., Name, City, Company, Favorite Food, Business Type),
+        "value" (the actual fact),
+        "confidence" (float between 0.0 and 1.0).
+        If no clear personal fact is found, return {{"confidence": 0.0}}.
+        Statement: "{message}"
+        """
+        
+        response_text = generate_reply(prompt, system_context="You are a precise data extractor. Return only valid JSON.")
+        
+        text = response_text.strip()
+        if text.startswith("```"):
+            text = text.split("```")[1]
+            if text.startswith("json"):
+                text = text[4:].strip()
+                
+        data = json.loads(text)
+        confidence = float(data.get("confidence", 0.0))
+        
+        if confidence >= 0.75:
+            category = data.get("category", "Personal")
+            key = data.get("key", "Fact")
+            value = str(data.get("value", "")).strip()
             
-            if not exists:
-                new_mem = UserMemory(user_id=user_id, memory=memory_to_save, category=category)
+            if not key or not value:
+                return
+
+            existing = UserMemory.query.filter_by(user_id=user_id, key=key).first()
+            if existing:
+                if existing.value.lower() != value.lower():
+                    history = []
+                    try:
+                        if existing.version_history:
+                            history = json.loads(existing.version_history)
+                    except Exception:
+                        pass
+                    
+                    history.append({
+                        "value": existing.value, 
+                        "updated_at": existing.updated_at.isoformat() if existing.updated_at else ""
+                    })
+                    
+                    existing.version_history = json.dumps(history)
+                    existing.value = value
+                    existing.memory = f"{key}: {value}"
+                    existing.category = category
+                    existing.confidence_score = confidence
+                    db.session.commit()
+            else:
+                new_mem = UserMemory(
+                    user_id=user_id, 
+                    category=category, 
+                    key=key, 
+                    value=value, 
+                    memory=f"{key}: {value}",
+                    confidence_score=confidence,
+                    is_pinned=False
+                )
                 db.session.add(new_mem)
                 db.session.commit()
-        except Exception as e:
-            db.session.rollback()
-            current_app.logger.error(f"Error auto-saving memory: {e}")
+                
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Error in Smart Auto-Memory Extraction: {e}")
 
 
 def _get_or_create_conversation(user_id: str, conversation_id: str | None) -> Conversation:
@@ -99,30 +142,28 @@ def chat():
     message = sanitize_text(raw_message)
     user_id = get_jwt_identity()  # None for anonymous guests
 
-    # 🌟 NEW: Extract memory from user message
     if user_id:
         _extract_and_save_memory(user_id, message)
 
-    # 1. Language detection (multilingual support)
     lang_code = detect_language(message)
     lang_instruction = language_instruction(lang_code)
 
-    # 🌟 NEW: Fetch saved user memories to inject into system context
     memory_context = ""
     if user_id:
         try:
-            memories = UserMemory.query.filter_by(user_id=user_id).all()
+            memories = UserMemory.query.filter_by(user_id=user_id).order_by(UserMemory.is_pinned.desc(), UserMemory.updated_at.desc()).limit(30).all()
             if memories:
-                mem_texts = [f"- [{m.category}] {m.memory}" for m in memories]
-                memory_context = "User Memory / Profile Context:\n" + "\n".join(mem_texts)
-        except Exception:
-            pass
+                mem_texts = []
+                for m in memories:
+                    pin_tag = " [PINNED]" if m.is_pinned else ""
+                    mem_texts.append(f"- [{m.category}]{pin_tag} {m.key}: {m.value}")
+                memory_context = "User Profile & Context (Treat these as absolute facts):\n" + "\n".join(mem_texts)
+        except Exception as e:
+            current_app.logger.error(f"Error building memory context: {e}")
 
-    # 2. RAG: search uploaded documents / knowledge base
     rag_chunks = rag_search(message, top_k=4, user_id=user_id)
     rag_context = build_context_block(rag_chunks)
 
-    # 3. Self-correction pipeline: check past feedback corrections
     corrections = find_relevant_corrections(message)
     correction_context = build_correction_context(corrections)
 
@@ -130,7 +171,6 @@ def chat():
         part for part in [memory_context, rag_context, correction_context, lang_instruction] if part
     )
 
-    # 4. Conversation memory (only for authenticated users; guests are stateless)
     history = []
     convo = None
     if user_id:
@@ -140,7 +180,6 @@ def chat():
         except Exception:
             return jsonify({"error": "Database error while loading conversation."}), 500
 
-    # 5. Generate the answer
     try:
         reply_text = generate_reply(message, history=history, system_context=system_context)
     except RuntimeError as e:
@@ -150,7 +189,6 @@ def chat():
         current_app.logger.error(f"AI generation failed: {e}")
         return jsonify({"error": "The AI service is temporarily unavailable."}), 502
 
-    # 6. Persist conversation memory
     if user_id and convo:
         user_msg = Message(conversation_id=convo.id, role="user", content=message, language=lang_code)
         bot_msg = Message(conversation_id=convo.id, role="bot", content=reply_text, language=lang_code)
@@ -193,6 +231,74 @@ def chat():
     })
 
 
+@chat_bp.route("/chat/stream", methods=["POST"], strict_slashes=False)
+@jwt_required(optional=True)
+def stream_chat():
+    data = request.get_json(silent=True) or {}
+    raw_message = data.get("message", "")
+    conversation_id = data.get("conversation_id")
+    selected_model = data.get("model", "default-ai")
+
+    if not is_non_empty(raw_message):
+        return jsonify({"error": "Message cannot be empty."}), 400
+
+    message = sanitize_text(raw_message)
+    user_id = get_jwt_identity()
+
+    if user_id:
+        _extract_and_save_memory(user_id, message)
+
+    lang_code = detect_language(message)
+    lang_instruction = language_instruction(lang_code)
+
+    memory_context = ""
+    if user_id:
+        try:
+            memories = UserMemory.query.filter_by(user_id=user_id).order_by(UserMemory.is_pinned.desc(), UserMemory.updated_at.desc()).limit(30).all()
+            if memories:
+                mem_texts = [f"- [{m.category}]{' [PINNED]' if m.is_pinned else ''} {m.key}: {m.value}" for m in memories]
+                memory_context = "User Profile & Context (Treat these as absolute facts):\n" + "\n".join(mem_texts)
+        except Exception:
+            pass
+
+    rag_chunks = rag_search(message, top_k=4, user_id=user_id)
+    rag_context = build_context_block(rag_chunks)
+    system_context = "\n\n".join(part for part in [memory_context, rag_context, lang_instruction] if part)
+
+    history = []
+    convo = None
+    if user_id:
+        try:
+            convo = _get_or_create_conversation(user_id, conversation_id)
+            history = _history_for_gemini(convo)
+        except Exception:
+            pass
+
+    def generate():
+        try:
+            reply_text = generate_reply(message, history=history, system_context=system_context)
+            
+            words = reply_text.split(" ")
+            for word in words:
+                yield f"data: {word} \n\n"
+                time.sleep(0.02)
+            
+            yield "data: [DONE]\n\n"
+
+            if user_id and convo:
+                user_msg = Message(conversation_id=convo.id, role="user", content=message, language=lang_code)
+                bot_msg = Message(conversation_id=convo.id, role="bot", content=reply_text, language=lang_code)
+                db.session.add_all([user_msg, bot_msg])
+                if convo.title == "New Conversation":
+                    convo.title = message[:50]
+                db.session.commit()
+        except Exception as e:
+            current_app.logger.error(f"Streaming error: {e}")
+            yield f"data: [ERROR]\n\n"
+
+    return Response(stream_with_context(generate()), mimetype="text/event-stream")
+
+
 @chat_bp.route("/voice-chat", methods=["POST"], strict_slashes=False)
 @jwt_required(optional=True)
 def voice_chat():
@@ -220,10 +326,13 @@ def voice_chat():
     memory_context = ""
     if user_id:
         try:
-            memories = UserMemory.query.filter_by(user_id=user_id).all()
+            memories = UserMemory.query.filter_by(user_id=user_id).order_by(UserMemory.is_pinned.desc(), UserMemory.updated_at.desc()).limit(30).all()
             if memories:
-                mem_texts = [f"- [{m.category}] {m.memory}" for m in memories]
-                memory_context = "User Memory / Profile Context:\n" + "\n".join(mem_texts)
+                mem_texts = []
+                for m in memories:
+                    pin_tag = " [PINNED]" if m.is_pinned else ""
+                    mem_texts.append(f"- [{m.category}]{pin_tag} {m.key}: {m.value}")
+                memory_context = "User Profile & Context (Treat these as absolute facts):\n" + "\n".join(mem_texts)
         except Exception:
             pass
 
