@@ -14,7 +14,7 @@ import numpy as np
 from typing import Optional, List, Dict
 from flask import current_app
 
-from app.services.gemini_service import embed_text
+from app.services.provider_router import embed_text
 
 INDEX_FILENAME = "index.json"
 

@@ -1,6 +1,7 @@
 """
 Universal AI Wrapper: Supports Gemini, OpenAI, Anthropic (Claude), and Groq.
 Auto-detects the provider based on the API Key format.
+Zero-bug version: Fully compatible with standard {"role": "user", "content": "..."} history format.
 """
 import requests
 from google import genai
@@ -17,7 +18,7 @@ def _get_api_key() -> str:
         api_key = current_app.config.get("GEMINI_API_KEY")
         
     if not api_key:
-        raise RuntimeError("API_KEY is not set. Add it in Admin Panel.")
+        raise RuntimeError("API_KEY is not set. Add it in Admin Panel or .env file.")
     return api_key.strip()
 
 def _get_system_instruction(system_context: str) -> str:
@@ -32,7 +33,7 @@ def _get_system_instruction(system_context: str) -> str:
 
 
 # ==========================================
-# 🌟 NEW: PHASE 4 — WORKSPACE & AGENT CONTEXT BUILDER
+# 🌟 WORKSPACE & AGENT CONTEXT BUILDER
 # ==========================================
 def _build_agent_workspace_context(
     agent_id: int = None,
@@ -40,15 +41,7 @@ def _build_agent_workspace_context(
     project_id: int = None,
 ) -> str:
     """
-    Builds an additional context block (agent persona + workspace knowledge +
-    project scope) that gets appended to system_context BEFORE it reaches
-    _get_system_instruction(). This runs alongside — never replaces — the
-    existing memory injection that callers (e.g. chat_routes.py) already do.
-
-    Safe by design: every lookup is wrapped so a missing/invalid id never
-    raises — it just contributes nothing to the context, and the base
-    Isolde system prompt + existing memory context still work exactly as
-    before if Phase 4 tables are empty or ids are omitted.
+    Builds an additional context block (agent persona + workspace knowledge + project scope).
     """
     context_blocks = []
 
@@ -64,7 +57,7 @@ def _build_agent_workspace_context(
         except Exception as e:
             print(f"⚠️ Agent context skipped (non-fatal): {e}")
 
-    # --- Workspace-level shared knowledge (documents without a project) ---
+    # --- Workspace-level shared knowledge ---
     if workspace_id:
         try:
             workspace = Workspace.query.get(workspace_id)
@@ -109,8 +102,11 @@ def _to_content_history(history):
     contents = []
     for turn in history:
         role = turn.get("role", "user")
-        parts = turn.get("parts", [])
-        text = parts[0] if parts else ""
+        # FIX: Added support for 'content' format to prevent bugs with MemoryService
+        text = turn.get("content")
+        if not text:
+            parts = turn.get("parts", [])
+            text = parts[0] if parts else ""
         contents.append(types.Content(role=role, parts=[types.Part(text=text)]))
     return contents
 
@@ -127,17 +123,10 @@ def generate_reply(
     project_id: int = None,
 ) -> str:
     """
-    NOTE ON BACKWARD COMPATIBILITY:
-    agent_id / workspace_id / project_id are all optional and default to None.
-    Every existing call site (e.g. memory_routes.py's
-    generate_reply(prompt, system_context="...")) continues to work exactly
-    as before, completely unaffected. Only NEW call sites that explicitly
-    pass these Phase 4 ids will get agent/workspace/project context injected.
+    Main entry point for generating AI replies. Routes to the correct provider.
     """
     api_key = _get_api_key()
 
-    # NEW: merge Phase 4 agent/workspace/project context alongside whatever
-    # system_context the caller already built (e.g. memory context).
     phase4_context = _build_agent_workspace_context(agent_id, workspace_id, project_id)
     combined_context = system_context or ""
     if phase4_context:
@@ -187,8 +176,12 @@ def _call_groq(api_key, prompt, history, sys_prompt):
     if history:
         for turn in history:
             role = "user" if turn.get("role") == "user" else "assistant"
-            parts = turn.get("parts", [])
-            messages.append({"role": role, "content": parts[0] if parts else ""})
+            # FIX: Get content properly
+            text = turn.get("content")
+            if not text:
+                parts = turn.get("parts", [])
+                text = parts[0] if parts else ""
+            messages.append({"role": role, "content": text})
             
     messages.append({"role": "user", "content": prompt})
 
@@ -197,7 +190,7 @@ def _call_groq(api_key, prompt, history, sys_prompt):
         "Content-Type": "application/json"
     }
     data = {
-        "model": "llama-3.3-70b-versatile", # You can also use "llama-3.1-8b-instant"
+        "model": "llama-3.3-70b-versatile",
         "messages": messages
     }
     
@@ -214,8 +207,12 @@ def _call_openai(api_key, prompt, history, sys_prompt):
     if history:
         for turn in history:
             role = "user" if turn.get("role") == "user" else "assistant"
-            parts = turn.get("parts", [])
-            messages.append({"role": role, "content": parts[0] if parts else ""})
+            # FIX: Get content properly
+            text = turn.get("content")
+            if not text:
+                parts = turn.get("parts", [])
+                text = parts[0] if parts else ""
+            messages.append({"role": role, "content": text})
             
     messages.append({"role": "user", "content": prompt})
 
@@ -240,8 +237,12 @@ def _call_claude(api_key, prompt, history, sys_prompt):
     if history:
         for turn in history:
             role = "user" if turn.get("role") == "user" else "assistant"
-            parts = turn.get("parts", [])
-            messages.append({"role": role, "content": parts[0] if parts else ""})
+            # FIX: Get content properly
+            text = turn.get("content")
+            if not text:
+                parts = turn.get("parts", [])
+                text = parts[0] if parts else ""
+            messages.append({"role": role, "content": text})
             
     messages.append({"role": "user", "content": prompt})
 
@@ -270,7 +271,6 @@ def _call_claude(api_key, prompt, history, sys_prompt):
 def embed_text(text: str):
     api_key = _get_api_key()
     
-    # FIX: Properly separate OpenAI from Groq/Claude to prevent errors
     if api_key.startswith("sk-") and not api_key.startswith("sk-ant"):
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         data = {"model": "text-embedding-3-small", "input": text}

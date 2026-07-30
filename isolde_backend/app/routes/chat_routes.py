@@ -5,7 +5,7 @@ from app.extensions import db
 from app.models import Conversation, Message
 from app.models.user import User, Setting, Feedback, Broadcast
 from app.models.memory_model import UserMemory  # 🌟 Phase 2: Smart UserMemory model
-from app.services.gemini_service import generate_reply
+from app.services.provider_router import generate_reply
 from app.services.rag_service import search as rag_search, build_context_block
 from app.services.feedback_service import find_relevant_corrections, build_correction_context
 from app.services.language_service import detect_language, language_instruction

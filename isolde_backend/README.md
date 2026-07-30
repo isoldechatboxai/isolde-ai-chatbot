@@ -10,7 +10,7 @@ process on one origin — no CORS setup needed for normal use.
    `google-generativeai` package with model `gemini-1.5-flash`. Both are
    discontinued — Google shut down all Gemini 1.0/1.5 models and deprecated
    that whole SDK in favor of the new `google-genai` package. Every `/api/chat`
-   call would have failed. Rewrote `app/services/gemini_service.py` to use
+   call would have failed. Rewrote `app/services/provider_router.py` to use
    `google-genai` (`google.genai.Client`, `client.chats.create`,
    `client.models.embed_content`, `client.models.generate_content` for vision),
    updated `requirements.txt` (`google-genai` replaces `google-generativeai`),
@@ -130,7 +130,7 @@ isolde_backend/
 ├── app/
 │   ├── models/            User, Conversation, Message, Feedback, UploadedFile
 │   ├── routes/            auth, chat, upload, feedback, history, profile
-│   ├── services/          gemini_service, rag_service, feedback_service,
+│   ├── services/          provider_router, rag_service, feedback_service,
 │   │                      file_service, language_service
 │   ├── utils/             logger.py, validators.py
 │   └── __init__.py        Flask app factory (serves frontend + registers API)

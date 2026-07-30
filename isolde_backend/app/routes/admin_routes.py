@@ -3,7 +3,7 @@ from google.genai.errors import ClientError
 from app.extensions import db
 # 🌟 FIX: Added Feedback, Broadcast, Setting imports
 from app.models.user import User, Chat, Setting, Feedback, Broadcast
-from app.services.gemini_service import generate_reply
+from app.services.provider_router import generate_reply
 
 admin_bp = Blueprint('admin_bp', __name__)
 

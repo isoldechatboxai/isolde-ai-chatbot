@@ -82,7 +82,7 @@ class Agent(db.Model):
     """
     An AI Agent is a configured persona/system-prompt bound to a Workspace.
     Users can switch between Agents instantly; the active agent's system_prompt
-    is injected into the AI call context (see gemini_service.py integration).
+    is injected into the AI call context (see provider_router.py integration).
     """
     __tablename__ = "agents"
 

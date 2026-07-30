@@ -185,7 +185,7 @@
               suggestionChips: document.querySelectorAll(".suggestion-chip"),
               typingIndicator: document.querySelector(".typing-indicator"),
               messageForm: document.querySelector(".message-form, form"),
-              messageTextarea: document.getElementById("chat-message-input") || document.querySelector(".message-textarea, textarea"),
+              messageTextarea: document.getElementById("messageInput") || document.getElementById("chat-message-input") || document.querySelector(".message-textarea, textarea"),
               sendBtn: document.querySelector(".send-btn, button[type='submit']"),
               fileUploadBtn: document.querySelector(".file-upload-btn, .attachment-btn"),
               fileUploadInput: document.getElementById("file-upload-input") || document.querySelector(".file-upload-input, input[type='file']"),
@@ -203,7 +203,7 @@
               settingsModal: document.getElementById("settings-modal"),
               closeSettingsBtn: document.getElementById("close-settings-btn"),
               sidebarToggleBtn: document.getElementById("sidebar-toggle-btn"),
-              appSidebar: document.getElementById("app-sidebar")
+              appSidebar: document.getElementById("app-sidebar") || document.getElementById("sidebar")
           };
       }
 
@@ -268,6 +268,7 @@
       }
 
       function applyTheme(theme) {
+          if (!document.documentElement) return;
           document.documentElement.setAttribute("data-theme", theme);
           if (dom.themeToggleBtn) {
               dom.themeToggleBtn.setAttribute("data-theme", theme);
@@ -296,11 +297,19 @@
           if (dom.welcomeScreen) {
               dom.welcomeScreen.style.display = "none";
           }
+          if (dom.chatMessages) {
+              dom.chatMessages.style.display = "flex";
+              dom.chatMessages.removeAttribute("hidden");
+          }
       }
 
       function showWelcomeScreen() {
           if (dom.welcomeScreen) {
-              dom.welcomeScreen.style.display = "";
+              dom.welcomeScreen.style.display = "flex";
+          }
+          if (dom.chatMessages) {
+              dom.chatMessages.style.display = "none";
+              dom.chatMessages.setAttribute("hidden", "true");
           }
       }
 
@@ -905,7 +914,8 @@
                       } else {
                           textEl.innerHTML = escapeHtml(accumulatedText).replace(/\n/g, "<br>");
                       }
-                      scrollToBottom();
+                      
+                      requestAnimationFrame(() => scrollToBottom());
                   }
               }
           }
@@ -1156,6 +1166,7 @@
       }
 
       function bindEvents() {
+          // Input & Chat Logic
           if (dom.chatSearchInput) {
               dom.chatSearchInput.addEventListener("input", (e) => {
                   state.searchQuery = e.target.value;
@@ -1202,14 +1213,6 @@
               toggleVoiceRecording();
           });
 
-          // 🌟 Robust Toggle for Attachment Menu
-          if (dom.toggleAttachmentBtn && dom.attachmentMenu) {
-              dom.toggleAttachmentBtn.addEventListener("click", (e) => {
-                  e.stopPropagation();
-                  dom.attachmentMenu.classList.toggle("show");
-              });
-          }
-
           dom.fileUploadInput?.addEventListener("change", handleFileSelected);
 
           if (dom.logoutBtn) {
@@ -1222,27 +1225,68 @@
               clearAllMemories();
           });
 
-          // 🌟 Sidebar Collapse Toggle
-          if (dom.sidebarToggleBtn && dom.sidebar) {
-              dom.sidebarToggleBtn.addEventListener("click", () => {
-                  dom.sidebar.classList.toggle("collapsed");
+          // ==========================================
+          // 🌟 MASTER FIX: ATTACHMENT MENU 
+          // ==========================================
+          if (dom.toggleAttachmentBtn && dom.attachmentMenu) {
+              dom.toggleAttachmentBtn.addEventListener("click", (e) => {
+                  e.preventDefault();
+                  e.stopPropagation(); // 👈 இதுதான் Menu உடனே Close ஆகாமல் தடுக்கும்!
+                  dom.attachmentMenu.classList.toggle("show");
               });
           }
 
+          // Outside Click Detection
           document.addEventListener('click', (event) => {
-              if (dom.attachmentMenu && dom.toggleAttachmentBtn) {
-                  const isClickInside = dom.attachmentMenu.contains(event.target) || dom.toggleAttachmentBtn.contains(event.target);
-                  if (!isClickInside) {
+              if (dom.attachmentMenu && dom.attachmentMenu.classList.contains("show")) {
+                  // Click is not inside the wrapper -> Close Menu
+                  if (!event.target.closest('.attachment-wrapper')) {
                       dom.attachmentMenu.classList.remove("show");
                   }
               }
           });
-
-          if (dom.settingsBtn && dom.settingsModal) {
-              dom.settingsBtn.addEventListener("click", () => dom.settingsModal.classList.add("show"));
+          
+          // ==========================================
+          // 🌟 MASTER FIX: SIDEBAR COLLAPSE
+          // ==========================================
+          if (dom.sidebarToggleBtn && dom.appSidebar) {
+              dom.sidebarToggleBtn.addEventListener("click", (e) => {
+                  e.preventDefault();
+                  dom.appSidebar.classList.toggle("collapsed");
+              });
           }
+
+          // ==========================================
+          // 🌟 MASTER FIX: SETTINGS MODAL
+          // ==========================================
+          if (dom.settingsBtn && dom.settingsModal) {
+              dom.settingsBtn.addEventListener("click", (e) => {
+                  e.preventDefault();
+                  dom.settingsModal.classList.add("show");
+              });
+          }
+
           if (dom.closeSettingsBtn && dom.settingsModal) {
-              dom.closeSettingsBtn.addEventListener("click", () => dom.settingsModal.classList.remove("show"));
+              dom.closeSettingsBtn.addEventListener("click", (e) => {
+                  e.preventDefault();
+                  dom.settingsModal.classList.remove("show");
+              });
+          }
+
+          if (dom.settingsModal) {
+              dom.settingsModal.addEventListener('click', (e) => {
+                  if (e.target === dom.settingsModal) {
+                      dom.settingsModal.classList.remove("show");
+                  }
+              });
+          }
+
+          const saveSettingsBtn = document.getElementById("save-settings-btn");
+          if (saveSettingsBtn) {
+              saveSettingsBtn.addEventListener("click", () => {
+                  alert("Settings saved successfully!");
+                  if(dom.settingsModal) dom.settingsModal.classList.remove("show");
+              });
           }
       }
 

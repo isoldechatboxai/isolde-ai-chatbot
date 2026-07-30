@@ -171,3 +171,41 @@ WHERE user_memory.user_id = ? ORDER BY user_memory.is_pinned DESC, user_memory.u
 [SQL: INSERT INTO conversations (id, user_id, title, is_pinned, is_archived, created_at) VALUES (?, ?, ?, ?, ?, ?)]
 [parameters: ('b6a5d478-b44f-42f2-91ff-c278a4e11cc9', 'c10f9195-8304-49d5-8ddd-36d282f3707d', 'New Conversation', 0, 0, '2026-07-29 15:11:50.333154')]
 (Background on this error at: https://sqlalche.me/e/20/e3q8)
+[2026-07-29 21:00:15,824] INFO in logger: [LOGIN_SUCCESS] user=c10f9195-8304-49d5-8ddd-36d282f3707d | vilvarainaturals@gmail.com
+[2026-07-29 21:04:18,264] INFO in logger: [LOGIN_SUCCESS] user=c10f9195-8304-49d5-8ddd-36d282f3707d | vilvarainaturals@gmail.com
+[2026-07-29 21:11:26,209] INFO in logger: [LOGIN_SUCCESS] user=c10f9195-8304-49d5-8ddd-36d282f3707d | vilvarainaturals@gmail.com
+[2026-07-29 21:13:16,101] INFO in logger: [LOGIN_SUCCESS] user=c10f9195-8304-49d5-8ddd-36d282f3707d | vilvarainaturals@gmail.com
+[2026-07-29 21:18:34,286] INFO in logger: [LOGIN_SUCCESS] user=c10f9195-8304-49d5-8ddd-36d282f3707d | vilvarainaturals@gmail.com
+[2026-07-29 21:24:51,448] ERROR in chat_routes: Error creating conversation: (sqlite3.OperationalError) table conversations has no column named is_pinned
+[SQL: INSERT INTO conversations (id, user_id, title, is_pinned, is_archived, created_at) VALUES (?, ?, ?, ?, ?, ?)]
+[parameters: ('668049db-66dc-4132-80f7-780ec2e7cb54', 'c10f9195-8304-49d5-8ddd-36d282f3707d', 'New Conversation', 0, 0, '2026-07-29 15:54:51.448894')]
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+[2026-07-30 10:16:50,523] INFO in logger: [LOGIN_SUCCESS] user=c10f9195-8304-49d5-8ddd-36d282f3707d | vilvarainaturals@gmail.com
+[2026-07-30 10:44:58,917] INFO in logger: [LOGIN_SUCCESS] user=c10f9195-8304-49d5-8ddd-36d282f3707d | vilvarainaturals@gmail.com
+[2026-07-30 10:49:10,890] ERROR in chat_routes: Error creating conversation: (sqlite3.OperationalError) table conversations has no column named is_pinned
+[SQL: INSERT INTO conversations (id, user_id, title, is_pinned, is_archived, created_at) VALUES (?, ?, ?, ?, ?, ?)]
+[parameters: ('861b9659-3218-425d-8fe3-dcf748405d11', 'c10f9195-8304-49d5-8ddd-36d282f3707d', 'New Conversation', 0, 0, '2026-07-30 05:19:10.889233')]
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+[2026-07-30 10:52:04,713] INFO in logger: [LOGIN_SUCCESS] user=c10f9195-8304-49d5-8ddd-36d282f3707d | vilvarainaturals@gmail.com
+[2026-07-30 10:52:09,524] ERROR in chat_routes: Error creating conversation: (sqlite3.OperationalError) table conversations has no column named is_pinned
+[SQL: INSERT INTO conversations (id, user_id, title, is_pinned, is_archived, created_at) VALUES (?, ?, ?, ?, ?, ?)]
+[parameters: ('f310c329-8912-44c7-bcac-6f82ddec9e1b', 'c10f9195-8304-49d5-8ddd-36d282f3707d', 'New Conversation', 0, 0, '2026-07-30 05:22:09.522585')]
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+[2026-07-30 10:52:52,525] ERROR in chat_routes: Error creating conversation: (sqlite3.OperationalError) table conversations has no column named is_pinned
+[SQL: INSERT INTO conversations (id, user_id, title, is_pinned, is_archived, created_at) VALUES (?, ?, ?, ?, ?, ?)]
+[parameters: ('e21e1909-51e9-499d-ac6b-d88add563ccf', 'c10f9195-8304-49d5-8ddd-36d282f3707d', 'New Conversation', 0, 0, '2026-07-30 05:22:52.525104')]
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+[2026-07-30 10:54:34,569] ERROR in chat_routes: Error creating conversation: (sqlite3.OperationalError) table conversations has no column named is_pinned
+[SQL: INSERT INTO conversations (id, user_id, title, is_pinned, is_archived, created_at) VALUES (?, ?, ?, ?, ?, ?)]
+[parameters: ('745d7c53-733b-430f-bbd6-3e843e7da291', 'c10f9195-8304-49d5-8ddd-36d282f3707d', 'New Conversation', 0, 0, '2026-07-30 05:24:34.568030')]
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+[2026-07-30 11:12:48,747] INFO in logger: [LOGIN_SUCCESS] user=c10f9195-8304-49d5-8ddd-36d282f3707d | vilvarainaturals@gmail.com
+[2026-07-30 11:21:00,599] INFO in logger: [LOGIN_SUCCESS] user=c10f9195-8304-49d5-8ddd-36d282f3707d | vilvarainaturals@gmail.com
+[2026-07-30 17:03:48,681] INFO in logger: [LOGIN_SUCCESS] user=c10f9195-8304-49d5-8ddd-36d282f3707d | vilvarainaturals@gmail.com
+[2026-07-30 17:18:28,965] INFO in logger: [LOGIN_SUCCESS] user=c10f9195-8304-49d5-8ddd-36d282f3707d | vilvarainaturals@gmail.com
+[2026-07-30 17:30:31,051] INFO in logger: [LOGIN_SUCCESS] user=c10f9195-8304-49d5-8ddd-36d282f3707d | vilvarainaturals@gmail.com
+[2026-07-30 17:30:41,650] ERROR in chat_routes: Error creating conversation: (sqlite3.OperationalError) table conversations has no column named is_pinned
+[SQL: INSERT INTO conversations (id, user_id, title, is_pinned, is_archived, created_at) VALUES (?, ?, ?, ?, ?, ?)]
+[parameters: ('1e315265-f957-4548-8e94-7ef5f2e6341d', 'c10f9195-8304-49d5-8ddd-36d282f3707d', 'New Conversation', 0, 0, '2026-07-30 12:00:41.649432')]
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+[2026-07-30 20:03:06,244] INFO in logger: [LOGIN_SUCCESS] user=c10f9195-8304-49d5-8ddd-36d282f3707d | vilvarainaturals@gmail.com

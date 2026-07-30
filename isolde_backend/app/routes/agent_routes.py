@@ -126,7 +126,7 @@ def delete_agent(agent_id: int):
 def activate_agent(agent_id: int):
     """
     Instant Agent Switching: marks this agent as the 'active' one for the
-    current user session. gemini_service.py reads this to inject the
+    current user session. provider_router.py reads this to inject the
     correct system_prompt into the next AI call — no page reload needed.
     """
     try:

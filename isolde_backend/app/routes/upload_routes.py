@@ -1,3 +1,5 @@
+# app/routes/upload_routes.py
+
 import os
 import uuid
 from werkzeug.utils import secure_filename
@@ -7,10 +9,12 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.extensions import db
 from app.models import UploadedFile
 from app.services.file_service import extract_text
-from app.services.rag_service import index_document
-from app.services.gemini_service import analyze_image
+from app.services.provider_router import analyze_image
 from app.utils.validators import allowed_file
 from app.utils.logger import log_event
+
+# 🌟 Phase 4: Import the new Background Worker
+from app.workers.embedding_worker import start_embedding_worker
 
 upload_bp = Blueprint("upload", __name__)
 
@@ -89,7 +93,7 @@ def upload_file():
         log_event(current_app, "IMAGE_UPLOAD", filename, user_id)
         return jsonify({"message": "Image analyzed.", "file": record.to_dict(), "answer": answer}), 201
 
-    # --- Documents: extract text, chunk + embed into the RAG index ---
+    # --- Documents: extract text, start background embedding ---
     try:
         text = extract_text(save_path, file_type)
     except Exception as e:
@@ -99,11 +103,14 @@ def upload_file():
     record.extracted_chars = len(text)
 
     if text.strip():
-        try:
-            chunk_count = index_document(record.id, filename, text, user_id=user_id)
-            record.indexed = chunk_count > 0
-        except Exception as e:
-            current_app.logger.error(f"Indexing failed for {filename}: {e}")
+        # 🌟 Phase 4: Pass to the Background Worker instead of waiting synchronously
+        start_embedding_worker(
+            current_app._get_current_object(), 
+            text, 
+            filename, 
+            user_id
+        )
+        record.indexed = True
 
     # Handle second database commit with rollback
     try:
@@ -115,6 +122,6 @@ def upload_file():
     log_event(current_app, "FILE_UPLOAD", f"{filename} ({file_type})", user_id)
 
     return jsonify({
-        "message": "File uploaded and indexed for search.",
+        "message": "File uploaded successfully. Processing in background.",
         "file": record.to_dict(),
     }), 201

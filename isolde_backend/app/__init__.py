@@ -8,6 +8,11 @@ from config import Config, FRONTEND_DIR
 from app.extensions import db, jwt, cors
 from app.utils.logger import setup_logger
 
+# 🌟 Phase 3: Import Middleware
+from app.middleware.request_logger import setup_request_logger
+from app.middleware.security_headers import setup_security_headers
+from app.middleware.content_validator import setup_content_validator
+
 limiter = Limiter(key_func=get_remote_address, default_limits=["120 per minute"])
 
 def create_app(config_class=Config):
@@ -67,6 +72,11 @@ def create_app(config_class=Config):
 
     limiter.init_app(app)
     setup_logger(app)
+    
+    # 🌟 Phase 3: Register Middleware
+    setup_request_logger(app)
+    setup_security_headers(app)
+    setup_content_validator(app)
 
     # ---------------- Blueprints ----------------
     from app.routes.auth_routes import auth_bp
@@ -89,6 +99,8 @@ def create_app(config_class=Config):
     from app.routes.intelligence_routes import intelligence_bp
     # --- NEW: RAG File Upload Blueprint ---
     from app.routes.rag_routes import rag_bp
+    # --- NEW: Phase 5 API Key Management Blueprint ---
+    from app.routes.api_key_routes import api_key_bp
     
     # 🌟 NEW: Module 1 Chat Extended Features (Models & Blueprint)
     from app.models import chat_extended_models
@@ -117,6 +129,8 @@ def create_app(config_class=Config):
     app.register_blueprint(intelligence_bp, url_prefix="/api")
     # --- NEW: RAG Blueprint Registered ---
     app.register_blueprint(rag_bp)
+    # --- NEW: Phase 5 API Key Blueprint Registered ---
+    app.register_blueprint(api_key_bp, url_prefix="/api")
     
     # 🌟 NEW: Chat Extended Blueprint Registered 
     app.register_blueprint(chat_ext_bp)

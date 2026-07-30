@@ -3,7 +3,7 @@ from flask import Blueprint, request, jsonify, Response
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app import db
 from app.models.memory_model import UserMemory
-from app.services.gemini_service import generate_reply
+from app.services.provider_router import generate_reply
 import json
 import csv
 import io
