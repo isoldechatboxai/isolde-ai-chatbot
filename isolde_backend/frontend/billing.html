@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Isolde — Billing</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div style="max-width:720px;margin:40px auto;padding:24px;">
+  <h1>Billing &amp; Subscription</h1>
+  <section id="sub-card" style="border:1px solid var(--border-color,#333);border-radius:10px;padding:16px;margin-bottom:20px;">
+    <h2>Current Plan</h2>
+    <p id="plan-name">Loading...</p>
+    <p id="credits-left">Credits: --</p>
+    <select id="plan-select">
+      <option value="Free">Free</option>
+      <option value="Pro">Pro</option>
+      <option value="Enterprise">Enterprise</option>
+    </select>
+    <button id="subscribe-btn">Subscribe</button>
+  </section>
+
+  <section id="invoices-card" style="border:1px solid var(--border-color,#333);border-radius:10px;padding:16px;">
+    <h2>Invoices</h2>
+    <button id="generate-invoice-btn">Generate Test Invoice</button>
+    <ul id="invoice-list"></ul>
+  </section>
+</div>
+
+<script src="billing.js"></script>
+</body>
+</html>

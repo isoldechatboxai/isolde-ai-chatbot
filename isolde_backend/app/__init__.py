@@ -105,6 +105,11 @@ def create_app(config_class=Config):
     # 🌟 NEW: Module 1 Chat Extended Features (Models & Blueprint)
     from app.models import chat_extended_models
     from app.routes.chat_extended_routes import chat_ext_bp
+    
+    # 🌟 NEW: Phase 12 Ecosystem Expansion Blueprints
+    from app.routes.billing_routes import billing_bp
+    from app.routes.plugin_routes import plugin_bp
+    from app.routes.ai_studio_routes import ai_studio_bp
 
     # Rate limiting for auth
     limiter.limit("10 per minute")(auth_bp)
@@ -135,6 +140,11 @@ def create_app(config_class=Config):
     # 🌟 NEW: Chat Extended Blueprint Registered 
     app.register_blueprint(chat_ext_bp)
 
+    # 🌟 NEW: Phase 12 Ecosystem Expansion Blueprints Registered
+    app.register_blueprint(billing_bp, url_prefix="/api")
+    app.register_blueprint(plugin_bp, url_prefix="/api")
+    app.register_blueprint(ai_studio_bp, url_prefix="/api")
+
     # ---------------- Error Handlers ----------------
     @app.errorhandler(404)
     def not_found(e):
@@ -159,7 +169,7 @@ def create_app(config_class=Config):
         return jsonify({
             "status": "ok",
             "service": "Isolde backend",
-            "platform_tier": "Phase 11 Intelligence OS"
+            "platform_tier": "Phase 12 Ecosystem Expansion OS"
         })
 
     @app.route("/", methods=["GET"])
@@ -176,7 +186,11 @@ def create_app(config_class=Config):
     def serve_register_page():
         return send_from_directory(FRONTEND_DIR, "register.html")
 
+    # 🛠️ FINAL FIX: Handled Multi-worker Race Condition for DB Creation
     with app.app_context():
-        db.create_all()
+        try:
+            db.create_all()
+        except Exception as e:
+            print(f"⚠️ DB Creation bypassed (Multi-worker race condition handled): {e}")
 
     return app

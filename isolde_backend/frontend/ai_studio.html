@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Isolde — AI Studio</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div style="max-width:960px;margin:40px auto;padding:24px;">
+  <h1>AI Studio</h1>
+
+  <section style="border:1px solid var(--border-color,#333);border-radius:10px;padding:16px;margin-bottom:20px;">
+    <h2>Custom Models</h2>
+    <input id="model-name" placeholder="Model name">
+    <input id="base-model" placeholder="Base model (e.g. gemini-flash)">
+    <input id="dataset-uri" placeholder="Dataset URI">
+    <button id="create-model-btn">Create Model</button>
+    <ul id="model-list"></ul>
+  </section>
+
+  <section style="border:1px solid var(--border-color,#333);border-radius:10px;padding:16px;">
+    <h2>Playground</h2>
+    <input id="playground-model-id" placeholder="Model ID">
+    <textarea id="playground-prompt" placeholder="Enter prompt..." rows="4" style="width:100%;"></textarea>
+    <button id="run-prompt-btn">Run</button>
+    <pre id="playground-output"></pre>
+  </section>
+</div>
+
+<script src="ai_studio.js"></script>
+</body>
+</html>

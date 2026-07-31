@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Isolde — Marketplace</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div style="max-width:960px;margin:40px auto;padding:24px;">
+  <h1>Plugin Marketplace</h1>
+  <div>
+    <select id="category-filter">
+      <option value="All">All Categories</option>
+      <option value="Productivity">Productivity</option>
+      <option value="Coding">Coding</option>
+      <option value="Finance">Finance</option>
+    </select>
+    <button id="refresh-btn">Refresh</button>
+  </div>
+  <div id="plugin-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px;margin-top:20px;"></div>
+
+  <h2>Installed Plugins</h2>
+  <ul id="installed-list"></ul>
+</div>
+
+<script src="marketplace.js"></script>
+</body>
+</html>
