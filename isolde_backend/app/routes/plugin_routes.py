@@ -18,7 +18,7 @@ def list_registered_plugins():
 @jwt_required(optional=True)
 def load_plugins():
     try:
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
         directory = data.get("directory")
         count = plugin_manager.load_plugins_from_directory(directory)
         return jsonify({"status": "success", "loaded": count}), 200
@@ -30,7 +30,7 @@ def load_plugins():
 @jwt_required(optional=True)
 def execute_plugin(plugin_name):
     try:
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
         args = data.get("args", [])
         kwargs = data.get("kwargs", {})
         result = plugin_manager.execute_plugin(plugin_name, *args, **kwargs)

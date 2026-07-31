@@ -95,21 +95,17 @@ def create_app(config_class=Config):
     from app.routes.collaboration_routes import collaboration_bp
     from app.routes.marketplace_routes import marketplace_bp
     from app.routes.saas_cloud_routes import saas_cloud_bp
-    # --- NEW: Phase 11 — Isolde Intelligence Platform ---
     from app.routes.intelligence_routes import intelligence_bp
-    # --- NEW: RAG File Upload Blueprint ---
     from app.routes.rag_routes import rag_bp
-    # --- NEW: Phase 5 API Key Management Blueprint ---
     from app.routes.api_key_routes import api_key_bp
     
-    # 🌟 NEW: Module 1 Chat Extended Features (Models & Blueprint)
     from app.models import chat_extended_models
     from app.routes.chat_extended_routes import chat_ext_bp
     
-    # 🌟 NEW: Phase 12 Ecosystem Expansion Blueprints
     from app.routes.billing_routes import billing_bp
     from app.routes.plugin_routes import plugin_bp
     from app.routes.ai_studio_routes import ai_studio_bp
+    from app.routes.unified_chat_engine import unified_engine_bp
 
     # Rate limiting for auth
     limiter.limit("10 per minute")(auth_bp)
@@ -130,20 +126,15 @@ def create_app(config_class=Config):
     app.register_blueprint(collaboration_bp, url_prefix="/api")
     app.register_blueprint(marketplace_bp, url_prefix="/api")
     app.register_blueprint(saas_cloud_bp, url_prefix="/api")
-    # --- NEW: Phase 11 Intelligence blueprint registered under /api prefix ---
     app.register_blueprint(intelligence_bp, url_prefix="/api")
-    # --- NEW: RAG Blueprint Registered ---
     app.register_blueprint(rag_bp)
-    # --- NEW: Phase 5 API Key Blueprint Registered ---
     app.register_blueprint(api_key_bp, url_prefix="/api")
-    
-    # 🌟 NEW: Chat Extended Blueprint Registered 
     app.register_blueprint(chat_ext_bp)
 
-    # 🌟 NEW: Phase 12 Ecosystem Expansion Blueprints Registered
     app.register_blueprint(billing_bp, url_prefix="/api")
     app.register_blueprint(plugin_bp, url_prefix="/api")
     app.register_blueprint(ai_studio_bp, url_prefix="/api")
+    app.register_blueprint(unified_engine_bp, url_prefix="/api")
 
     # ---------------- Error Handlers ----------------
     @app.errorhandler(404)

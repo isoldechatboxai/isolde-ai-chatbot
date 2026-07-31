@@ -19,23 +19,23 @@ chat_bp = Blueprint("chat", __name__)
 
 
 def _extract_and_save_memory(user_id: str, message: str):
-    """🌟 Phase 2: Smart helper to auto-extract and store structured user memories using universal generate_reply"""
+    """🌟 Auto-extract and store structured user memories and auto-train context"""
     if not user_id or len(message.strip()) < 3:
         return
 
     try:
         prompt = f"""
-        Analyze the following user statement. If it contains personal facts, preferences, work details, business info, goals, or locations, extract it.
+        Analyze the following user statement. If it contains personal facts, preferences, work details, business info, goals, or corrections, extract it.
         Return strictly a JSON object with keys:
-        "category" (e.g., Personal, Location, Work, Business, Preferences, Health),
-        "key" (e.g., Name, City, Company, Favorite Food, Business Type),
+        "category" (e.g., Personal, Location, Work, Business, Preferences, Correction),
+        "key" (e.g., Name, City, Company, Business Type, Feedback Correction),
         "value" (the actual fact),
         "confidence" (float between 0.0 and 1.0).
         If no clear personal fact is found, return {{"confidence": 0.0}}.
         Statement: "{message}"
         """
         
-        response_text = generate_reply(prompt, system_context="You are a precise data extractor. Return only valid JSON.")
+        response_text = generate_reply(prompt, system_context="You are a precise data extractor and auto-trainer. Return only valid JSON.")
         
         text = response_text.strip()
         if text.startswith("```"):
@@ -90,7 +90,7 @@ def _extract_and_save_memory(user_id: str, message: str):
                 
     except Exception as e:
         db.session.rollback()
-        current_app.logger.error(f"Error in Smart Auto-Memory Extraction: {e}")
+        current_app.logger.error(f"Error in Auto-Training / Memory Extraction: {e}")
 
 
 def _get_or_create_conversation(user_id: str, conversation_id: str | None) -> Conversation:
@@ -100,7 +100,6 @@ def _get_or_create_conversation(user_id: str, conversation_id: str | None) -> Co
             return convo
             
     convo = Conversation(user_id=user_id, title="New Conversation")
-    
     try:
         db.session.add(convo)
         db.session.commit()
@@ -108,12 +107,10 @@ def _get_or_create_conversation(user_id: str, conversation_id: str | None) -> Co
         db.session.rollback()
         current_app.logger.error(f"Error creating conversation: {e}")
         raise
-        
     return convo
 
 
 def _history_for_gemini(convo: Conversation, limit: int = 20):
-    """Convert stored messages into Universal AI chat-history format."""
     recent = convo.messages[-limit:] if convo.messages else []
     history = []
     for m in recent:
@@ -140,7 +137,7 @@ def chat():
         return jsonify({"error": "Message cannot be empty."}), 400
 
     message = sanitize_text(raw_message)
-    user_id = get_jwt_identity()  # None for anonymous guests
+    user_id = get_jwt_identity() 
 
     if user_id:
         _extract_and_save_memory(user_id, message)
@@ -153,11 +150,8 @@ def chat():
         try:
             memories = UserMemory.query.filter_by(user_id=user_id).order_by(UserMemory.is_pinned.desc(), UserMemory.updated_at.desc()).limit(30).all()
             if memories:
-                mem_texts = []
-                for m in memories:
-                    pin_tag = " [PINNED]" if m.is_pinned else ""
-                    mem_texts.append(f"- [{m.category}]{pin_tag} {m.key}: {m.value}")
-                memory_context = "User Profile & Context (Treat these as absolute facts):\n" + "\n".join(mem_texts)
+                mem_texts = [f"- [{m.category}]{' [PINNED]' if m.is_pinned else ''} {m.key}: {m.value}" for m in memories]
+                memory_context = "User Profile & Context (Auto-learned facts):\n" + "\n".join(mem_texts)
         except Exception as e:
             current_app.logger.error(f"Error building memory context: {e}")
 
@@ -192,7 +186,6 @@ def chat():
     if user_id and convo:
         user_msg = Message(conversation_id=convo.id, role="user", content=message, language=lang_code)
         bot_msg = Message(conversation_id=convo.id, role="bot", content=reply_text, language=lang_code)
-        
         try:
             db.session.add_all([user_msg, bot_msg])
             if convo.title == "New Conversation":
@@ -257,7 +250,7 @@ def stream_chat():
             memories = UserMemory.query.filter_by(user_id=user_id).order_by(UserMemory.is_pinned.desc(), UserMemory.updated_at.desc()).limit(30).all()
             if memories:
                 mem_texts = [f"- [{m.category}]{' [PINNED]' if m.is_pinned else ''} {m.key}: {m.value}" for m in memories]
-                memory_context = "User Profile & Context (Treat these as absolute facts):\n" + "\n".join(mem_texts)
+                memory_context = "User Profile & Context:\n" + "\n".join(mem_texts)
         except Exception:
             pass
 
@@ -277,12 +270,10 @@ def stream_chat():
     def generate():
         try:
             reply_text = generate_reply(message, history=history, system_context=system_context)
-            
             words = reply_text.split(" ")
             for word in words:
                 yield f"data: {word} \n\n"
                 time.sleep(0.02)
-            
             yield "data: [DONE]\n\n"
 
             if user_id and convo:
@@ -297,73 +288,6 @@ def stream_chat():
             yield f"data: [ERROR]\n\n"
 
     return Response(stream_with_context(generate()), mimetype="text/event-stream")
-
-
-@chat_bp.route("/voice-chat", methods=["POST"], strict_slashes=False)
-@jwt_required(optional=True)
-def voice_chat():
-    try:
-        maintenance = Setting.query.filter_by(key="maintenance_mode").first()
-        if maintenance and maintenance.value == "True":
-            return jsonify({"error": "Site Under Maintenance. Voice Chat offline."}), 503
-    except Exception:
-        pass
-
-    data = request.get_json(silent=True) or {}
-    transcript = sanitize_text(data.get("transcript", ""))
-
-    if not is_non_empty(transcript):
-        return jsonify({"error": "No speech transcript received."}), 400
-
-    user_id = get_jwt_identity()
-
-    if user_id:
-        _extract_and_save_memory(user_id, transcript)
-
-    lang_code = detect_language(transcript)
-    lang_instruction = language_instruction(lang_code)
-    
-    memory_context = ""
-    if user_id:
-        try:
-            memories = UserMemory.query.filter_by(user_id=user_id).order_by(UserMemory.is_pinned.desc(), UserMemory.updated_at.desc()).limit(30).all()
-            if memories:
-                mem_texts = []
-                for m in memories:
-                    pin_tag = " [PINNED]" if m.is_pinned else ""
-                    mem_texts.append(f"- [{m.category}]{pin_tag} {m.key}: {m.value}")
-                memory_context = "User Profile & Context (Treat these as absolute facts):\n" + "\n".join(mem_texts)
-        except Exception:
-            pass
-
-    rag_chunks = rag_search(transcript, top_k=4, user_id=user_id)
-    rag_context = build_context_block(rag_chunks)
-
-    system_context = "\n\n".join(
-        part for part in [memory_context, rag_context, lang_instruction] if part
-    )
-
-    try:
-        reply_text = generate_reply(transcript, system_context=system_context)
-    except Exception as e:
-        current_app.logger.error(f"Voice chat generation failed: {e}")
-        return jsonify({"error": "The AI service is temporarily unavailable."}), 502
-
-    if user_id:
-        try:
-            user = User.query.get(user_id)
-            if user:
-                estimated_tokens = (len(transcript) + len(reply_text)) // 4
-                user.tokens_used = (user.tokens_used or 0) + estimated_tokens
-                db.session.commit()
-        except Exception as e:
-            db.session.rollback()
-
-    return jsonify({
-        "reply": reply_text,
-        "language": lang_code,
-        "speak": True,
-    })
 
 
 @chat_bp.route("/feedback", methods=["POST"], strict_slashes=False)
