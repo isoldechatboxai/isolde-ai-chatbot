@@ -209,3 +209,30 @@ WHERE user_memory.user_id = ? ORDER BY user_memory.is_pinned DESC, user_memory.u
 [parameters: ('1e315265-f957-4548-8e94-7ef5f2e6341d', 'c10f9195-8304-49d5-8ddd-36d282f3707d', 'New Conversation', 0, 0, '2026-07-30 12:00:41.649432')]
 (Background on this error at: https://sqlalche.me/e/20/e3q8)
 [2026-07-30 20:03:06,244] INFO in logger: [LOGIN_SUCCESS] user=c10f9195-8304-49d5-8ddd-36d282f3707d | vilvarainaturals@gmail.com
+[2026-07-30 21:34:38,137] INFO in request_logger: ReqID: 76fc2732-fa51-4c12-a8d5-3ec15367208d | Method: GET | Path: / | Status: 200 | IP: 127.0.0.1 | Duration: 0.1090s
+[2026-07-30 21:34:38,162] INFO in request_logger: ReqID: f18368b6-3bcf-4873-ae8d-db256cd706c0 | Method: GET | Path: /style.css | Status: 200 | IP: 127.0.0.1 | Duration: 0.0150s
+[2026-07-30 21:34:38,181] INFO in request_logger: ReqID: f6054d73-bdf4-4b9d-b29f-ccb5a44c177f | Method: GET | Path: /script.js | Status: 200 | IP: 127.0.0.1 | Duration: 0.0320s
+[2026-07-31 07:42:31,534] INFO in request_logger: ReqID: 4e501d69-14e8-43b4-a5f5-0f0aa8e42f78 | Method: GET | Path: / | Status: 200 | IP: 172.18.0.1 | Duration: 0.0065s
+[2026-07-31 07:42:31,547] INFO in request_logger: ReqID: e6548d79-c42b-48d8-b2c6-9240253602d5 | Method: GET | Path: /style.css | Status: 200 | IP: 172.18.0.1 | Duration: 0.0006s
+[2026-07-31 07:42:31,554] INFO in request_logger: ReqID: 172d983b-c5e4-40b6-8ea5-5eda60fa33e0 | Method: GET | Path: /script.js | Status: 200 | IP: 172.18.0.1 | Duration: 0.0018s
+[2026-07-31 07:42:31,941] WARNING in request_logger: ReqID: 936f7736-2d4d-4915-9569-da1b8458e68a | Method: GET | Path: /api/profile | Status: 401 | IP: 172.18.0.1 | Duration: 0.0006s
+[2026-07-31 07:42:31,948] WARNING in request_logger: ReqID: d9610922-253f-4ae1-bc89-4695441baa7a | Method: GET | Path: /api/history | Status: 404 | IP: 172.18.0.1 | Duration: 0.0012s
+[2026-07-31 07:42:32,011] INFO in request_logger: ReqID: e2694ee1-031f-4847-b9f7-5f22a1c143e5 | Method: GET | Path: /api/memory/list | Status: 200 | IP: 172.18.0.1 | Duration: 0.0545s
+[2026-07-31 07:42:32,148] WARNING in request_logger: ReqID: 26dbae75-e871-4677-bc0b-748c517a19cd | Method: GET | Path: /favicon.ico | Status: 404 | IP: 172.18.0.1 | Duration: 0.0003s
+[2026-07-31 07:42:33,570] WARNING in request_logger: ReqID: 611c7fe1-14d6-4fa3-bcf1-1d901828614a | Method: POST | Path: /api/logout | Status: 415 | IP: 172.18.0.1 | Duration: 0.0001s
+[2026-07-31 07:42:33,583] INFO in request_logger: ReqID: 8b74a018-210c-423b-a951-29009efd50ad | Method: GET | Path: /login.html | Status: 200 | IP: 172.18.0.1 | Duration: 0.0005s
+[2026-07-31 07:42:33,597] INFO in request_logger: ReqID: 7fc2e3e0-ce24-48f6-820e-5b78b71c285f | Method: GET | Path: /style.css | Status: 304 | IP: 172.18.0.1 | Duration: 0.0008s
+[2026-07-31 07:42:35,337] INFO in request_logger: ReqID: 9b38d4fc-9218-4277-ab51-0a4fcca5fd8c | Method: GET | Path: /login.html | Status: 200 | IP: 172.18.0.1 | Duration: 0.0005s
+[2026-07-31 07:42:35,348] INFO in request_logger: ReqID: 15f1ece5-3bee-4ef8-9836-9ebba2879e1b | Method: GET | Path: /style.css | Status: 200 | IP: 172.18.0.1 | Duration: 0.0006s
+[2026-07-31 07:42:35,535] INFO in request_logger: ReqID: ab755c7f-59de-4a96-b034-af3c35da8840 | Method: GET | Path: /login.html | Status: 200 | IP: 172.18.0.1 | Duration: 0.0008s
+[2026-07-31 07:42:35,536] WARNING in request_logger: ReqID: ecd68090-b0c1-4200-9378-a9454e413482 | Method: GET | Path: /favicon.ico | Status: 404 | IP: 172.18.0.1 | Duration: 0.0003s
+[2026-07-31 07:42:35,549] INFO in request_logger: ReqID: 1fa3e0b8-a1e1-4b2c-826f-703729519966 | Method: GET | Path: /style.css | Status: 200 | IP: 172.18.0.1 | Duration: 0.0008s
+[2026-07-31 07:42:35,749] WARNING in request_logger: ReqID: a8a30913-36ba-4034-ba3d-a20875d769cd | Method: GET | Path: /favicon.ico | Status: 404 | IP: 172.18.0.1 | Duration: 0.0003s
+[2026-07-31 07:42:40,993] INFO in logger: [LOGIN_SUCCESS] user=c10f9195-8304-49d5-8ddd-36d282f3707d | vilvarainaturals@gmail.com
+[2026-07-31 07:42:40,995] INFO in request_logger: ReqID: 8e3343dc-2a12-45a2-83d9-692646fc453a | Method: POST | Path: /api/login | Status: 200 | IP: 172.18.0.1 | Duration: 0.1392s
+[2026-07-31 07:42:42,013] INFO in request_logger: ReqID: 70f09eae-f856-4f5d-a37e-a20e52b6882a | Method: GET | Path: / | Status: 304 | IP: 172.18.0.1 | Duration: 0.0005s
+[2026-07-31 07:42:42,025] INFO in request_logger: ReqID: 3c9c65b8-39c8-4919-b3fb-e081ba257cd0 | Method: GET | Path: /style.css | Status: 304 | IP: 172.18.0.1 | Duration: 0.0022s
+[2026-07-31 07:42:42,026] INFO in request_logger: ReqID: 86f81166-3e9a-47b2-b96e-ffde952b3076 | Method: GET | Path: /script.js | Status: 304 | IP: 172.18.0.1 | Duration: 0.0014s
+[2026-07-31 07:42:42,071] INFO in request_logger: ReqID: 50347ce4-d111-48a9-85d0-89d5cf50c455 | Method: GET | Path: /api/profile | Status: 200 | IP: 172.18.0.1 | Duration: 0.0046s
+[2026-07-31 07:42:42,083] WARNING in request_logger: ReqID: 72e1d311-c601-4a7a-b784-945c2d50c77b | Method: GET | Path: /api/history | Status: 404 | IP: 172.18.0.1 | Duration: 0.0007s
+[2026-07-31 07:42:42,096] INFO in request_logger: ReqID: 164ac375-f4e9-484d-bc2d-378678717f76 | Method: GET | Path: /api/memory/list | Status: 200 | IP: 172.18.0.1 | Duration: 0.0041s

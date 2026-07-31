@@ -80,4 +80,4 @@ class ToolRegistry:
             return {"success": False, "result": None, "error": str(e)}
 
 # Singleton instance for application-wide use
-tool_registry = ToolRegistry()
+tool_registry = ToolRegistry()  
