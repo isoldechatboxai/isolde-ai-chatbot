@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify, current_app
-from flask_jwt_extended import jwt_required, get_jwt_identity
+# from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.services.provider_router import generate_reply
 from app.services.saas_engine import check_and_deduct_tokens, save_chat_history
 from app.utils.validators import sanitize_text, is_non_empty
@@ -7,9 +7,8 @@ from app.utils.validators import sanitize_text, is_non_empty
 unified_engine_bp = Blueprint("unified_engine_bp", __name__)
 
 @unified_engine_bp.route("/engine/chat", methods=["POST"])
-@jwt_required()
 def handle_unified_chat():
-    current_user_id = get_jwt_identity()
+    current_user_id = 1
     data = request.get_json(silent=True) or {}
     
     raw_message = data.get("message", "")
