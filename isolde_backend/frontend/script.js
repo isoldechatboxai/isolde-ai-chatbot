@@ -6,8 +6,48 @@
       localStorage.removeItem("access_token");
   }
 
+  // ============================================================
+  // FEATURE 1: ADVANCED CODE BLOCKS WITH COPY BUTTON
+  // Custom marked.Renderer that wraps <pre><code> in a modern
+  // dark-themed div with language label + copy button.
+  // ============================================================
   if (typeof marked !== 'undefined') {
+      const codeRenderer = new marked.Renderer();
+      codeRenderer.code = function(code, language) {
+          const validLang = (typeof hljs !== 'undefined' && language && hljs.getLanguage(language)) ? language : '';
+          let highlighted;
+          try {
+              if (validLang) {
+                  highlighted = hljs.highlight(code, { language: validLang }).value;
+              } else if (typeof hljs !== 'undefined') {
+                  highlighted = hljs.highlightAuto(code).value;
+              } else {
+                  highlighted = code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+              }
+          } catch (e) {
+              highlighted = code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+          }
+          const langLabel = language ? language.toUpperCase() : 'PLAINTEXT';
+          // Encode raw code so the copy button can retrieve it safely regardless of characters inside.
+          let encodedCode;
+          try {
+              encodedCode = btoa(unescape(encodeURIComponent(code)));
+          } catch (e) {
+              encodedCode = "";
+          }
+          return `
+              <div class="code-block-wrapper" style="background:#0d1117;border-radius:10px;overflow:hidden;margin:14px 0;border:1px solid #30363d;box-shadow:0 4px 12px rgba(0,0,0,0.25);">
+                  <div class="code-block-header" style="display:flex;justify-content:space-between;align-items:center;padding:8px 14px;background:#161b22;border-bottom:1px solid #30363d;font-size:12px;color:#c9d1d9;font-family:ui-monospace,'SF Mono',monospace;">
+                      <span class="code-block-lang" style="letter-spacing:0.5px;font-weight:700;color:#8b949e;">${langLabel}</span>
+                      <button type="button" class="code-copy-btn" data-code-b64="${encodedCode}" style="background:transparent;border:1px solid #30363d;color:#c9d1d9;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:11px;font-weight:600;transition:background 0.15s ease;">📋 Copy Code</button>
+                  </div>
+                  <pre style="margin:0;padding:14px;overflow-x:auto;background:#0d1117;color:#c9d1d9;font-size:13px;line-height:1.5;"><code class="hljs ${validLang}">${highlighted}</code></pre>
+              </div>
+          `;
+      };
+
       marked.setOptions({
+          renderer: codeRenderer,
           highlight: function(code, lang) {
               if (typeof hljs !== 'undefined' && hljs.getLanguage(lang)) {
                   return hljs.highlight(code, { language: lang }).value;
@@ -18,6 +58,55 @@
           gfm: true
       });
   }
+
+  // Global delegated handler for the "Copy Code" button that lives inside rendered code blocks.
+  document.addEventListener('click', (event) => {
+      const btn = event.target.closest && event.target.closest('.code-copy-btn');
+      if (!btn) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const b64 = btn.getAttribute('data-code-b64') || "";
+      let codeText = "";
+      try {
+          codeText = decodeURIComponent(escape(atob(b64)));
+      } catch (e) {
+          codeText = "";
+      }
+      const doCopy = () => {
+          const originalLabel = btn.dataset.originalLabel || btn.textContent;
+          btn.dataset.originalLabel = originalLabel;
+          btn.textContent = "✓ Copied!";
+          btn.style.color = "#4ade80";
+          clearTimeout(btn._codeCopyTimer);
+          btn._codeCopyTimer = setTimeout(() => {
+              btn.textContent = originalLabel;
+              btn.style.color = "#c9d1d9";
+          }, 1600);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(codeText).then(doCopy).catch(() => {
+              const ta = document.createElement('textarea');
+              ta.value = codeText;
+              ta.style.position = 'fixed';
+              ta.style.opacity = '0';
+              document.body.appendChild(ta);
+              ta.select();
+              try { document.execCommand('copy'); } catch (e) {}
+              document.body.removeChild(ta);
+              doCopy();
+          });
+      } else {
+          const ta = document.createElement('textarea');
+          ta.value = codeText;
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.select();
+          try { document.execCommand('copy'); } catch (e) {}
+          document.body.removeChild(ta);
+          doCopy();
+      }
+  });
 
   const isLoginPage = window.location.pathname.includes("login.html") || window.location.pathname.endsWith("login");
   
@@ -126,6 +215,7 @@
           THEME: "isolde-theme",
           CONVERSATIONS: "isolde-conversations",
           ACTIVE_CONVERSATION: "isolde-active-conversation",
+          PREFERENCES: "isolde-preferences"
       };
 
       const MAX_TEXTAREA_HEIGHT = 200; 
@@ -138,7 +228,19 @@
           backendConversationId: null,
           isLoading: false,
           isRecording: false,
-          searchQuery: "" 
+          searchQuery: "",
+          // FEATURE 3: Stop Generation state
+          abortController: null,
+          streamingBotMsgObj: null,
+          streamingTextEl: null,
+          // FEATURE 5: Web Search Toggle state
+          webSearchEnabled: false
+      };
+
+      let preferences = {
+          theme: "dark",
+          defaultModel: "Flash-Lite Extended",
+          systemPrompt: ""
       };
 
       let speechRecognition = null;
@@ -200,11 +302,100 @@
               toggleAttachmentBtn: document.getElementById("toggle-attachment-btn"),
               
               settingsBtn: document.getElementById("open-settings-btn"),
-              settingsModal: document.getElementById("settings-modal"),
-              closeSettingsBtn: document.getElementById("close-settings-btn"),
               sidebarToggleBtn: document.getElementById("sidebar-toggle-btn"),
-              appSidebar: document.getElementById("app-sidebar") || document.getElementById("sidebar")
+              appSidebar: document.getElementById("app-sidebar") || document.getElementById("sidebar"),
+
+              // FEATURE 3 + 5: dynamically created buttons (assigned in injectDynamicButtons)
+              stopGenerationBtn: null,
+              webSearchToggleBtn: null
           };
+      }
+
+      // ============================================================
+      // FEATURE 3 + 5: Inject the Stop Generation button (floats
+      // above the chat input) and the Web Search toggle button
+      // (placed next to the voice input / mic button).
+      // ============================================================
+      function injectDynamicButtons() {
+          // --- FEATURE 5: Web Search Toggle Button ---
+          if (dom.voiceInputBtn && !document.getElementById("web-search-toggle-btn")) {
+              const webBtn = document.createElement("button");
+              webBtn.type = "button";
+              webBtn.id = "web-search-toggle-btn";
+              webBtn.className = "web-search-toggle-btn";
+              webBtn.textContent = "🌐 Web: OFF";
+              webBtn.title = "Toggle web search";
+              webBtn.style.cssText = "background:transparent;border:1px solid rgba(148,163,184,0.4);color:#94a3b8;padding:6px 12px;border-radius:20px;cursor:pointer;font-size:12px;font-weight:600;transition:all 0.2s ease;margin:0 6px;white-space:nowrap;";
+
+              webBtn.addEventListener("click", (e) => {
+                  e.preventDefault();
+                  state.webSearchEnabled = !state.webSearchEnabled;
+                  if (state.webSearchEnabled) {
+                      webBtn.textContent = "🌐 Web: ON";
+                      webBtn.style.background = "rgba(34,197,94,0.15)";
+                      webBtn.style.borderColor = "#22c55e";
+                      webBtn.style.color = "#22c55e";
+                  } else {
+                      webBtn.textContent = "🌐 Web: OFF";
+                      webBtn.style.background = "transparent";
+                      webBtn.style.borderColor = "rgba(148,163,184,0.4)";
+                      webBtn.style.color = "#94a3b8";
+                  }
+              });
+
+              // Place it directly next to the mic/voice input button.
+              if (dom.voiceInputBtn.parentNode) {
+                  dom.voiceInputBtn.parentNode.insertBefore(webBtn, dom.voiceInputBtn.nextSibling);
+              }
+              dom.webSearchToggleBtn = webBtn;
+          }
+
+          // --- FEATURE 3: Stop Generation Button (floating above input) ---
+          if (!document.getElementById("stop-generation-btn")) {
+              const stopBtn = document.createElement("button");
+              stopBtn.type = "button";
+              stopBtn.id = "stop-generation-btn";
+              stopBtn.className = "stop-generation-btn";
+              stopBtn.textContent = "⏹ Stop Generating";
+              stopBtn.style.cssText = "position:absolute;left:50%;transform:translateX(-50%);bottom:calc(100% + 12px);background:#1f2937;color:#f87171;border:1px solid #f87171;padding:8px 18px;border-radius:22px;cursor:pointer;font-size:13px;font-weight:600;box-shadow:0 6px 18px rgba(0,0,0,0.35);z-index:50;display:none;transition:all 0.15s ease;";
+
+              stopBtn.addEventListener("mouseover", () => {
+                  stopBtn.style.background = "#f87171";
+                  stopBtn.style.color = "#111827";
+              });
+              stopBtn.addEventListener("mouseout", () => {
+                  stopBtn.style.background = "#1f2937";
+                  stopBtn.style.color = "#f87171";
+              });
+
+              stopBtn.addEventListener("click", (e) => {
+                  e.preventDefault();
+                  if (state.abortController) {
+                      try { state.abortController.abort(); } catch (err) {}
+                  }
+              });
+
+              // Attach the button to the message form (positioned absolutely above the input).
+              const host = dom.messageForm || (dom.messageTextarea && dom.messageTextarea.parentNode);
+              if (host) {
+                  const cs = window.getComputedStyle(host);
+                  if (cs.position === "static") {
+                      host.style.position = "relative";
+                  }
+                  host.appendChild(stopBtn);
+              } else {
+                  document.body.appendChild(stopBtn);
+                  stopBtn.style.position = "fixed";
+                  stopBtn.style.bottom = "90px";
+              }
+              dom.stopGenerationBtn = stopBtn;
+          }
+      }
+
+      function updateStopButtonVisibility() {
+          if (dom.stopGenerationBtn) {
+              dom.stopGenerationBtn.style.display = state.isLoading ? "inline-block" : "none";
+          }
       }
 
       function generateId() {
@@ -284,6 +475,8 @@
           const next = current === "dark" ? "light" : "dark";
           applyTheme(next);
           saveTheme(next);
+          preferences.theme = next;
+          savePreferences();
       }
 
       function restoreTheme() {
@@ -291,6 +484,28 @@
           const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches;
           const theme = saved || (prefersDark ? "dark" : "light");
           applyTheme(theme);
+      }
+
+      function savePreferences() {
+          try {
+              localStorage.setItem(STORAGE_KEYS.PREFERENCES, JSON.stringify(preferences));
+          } catch (err) {
+              console.error("Isolde: failed to save preferences.", err);
+          }
+      }
+
+      function loadPreferences() {
+          try {
+              const raw = localStorage.getItem(STORAGE_KEYS.PREFERENCES);
+              if (raw) {
+                  const parsed = JSON.parse(raw);
+                  preferences = { ...preferences, ...parsed };
+              }
+          } catch (err) {
+              console.error("Isolde: failed to load preferences.", err);
+          }
+          const savedTheme = loadTheme();
+          if (savedTheme) preferences.theme = savedTheme;
       }
 
       function hideWelcomeScreen() {
@@ -686,6 +901,72 @@
           }
       }
 
+      // ============================================================
+      // FEATURE 2: AI VOICE OUTPUT (TTS)
+      // Uses window.speechSynthesis to read a bot response aloud.
+      // While speaking, the trigger button shows "🔊 Speaking...".
+      // Clicking the same button while speaking cancels playback.
+      // ============================================================
+      function speakText(text, btnEl) {
+          if (!('speechSynthesis' in window)) {
+              alert("Your browser does not support Text-to-Speech.");
+              return;
+          }
+
+          // Toggle: if this button is currently the one speaking, stop it.
+          if (btnEl && btnEl.dataset.speaking === "true") {
+              window.speechSynthesis.cancel();
+              const originalLabel = btnEl.dataset.originalLabel || "🔊 Read";
+              btnEl.textContent = originalLabel;
+              btnEl.dataset.speaking = "false";
+              return;
+          }
+
+          // Cancel any other in-flight speech first.
+          window.speechSynthesis.cancel();
+
+          // Reset any other buttons that might still be marked as speaking.
+          document.querySelectorAll('[data-speaking="true"]').forEach(el => {
+              el.dataset.speaking = "false";
+              if (el.dataset.originalLabel) el.textContent = el.dataset.originalLabel;
+          });
+
+          const utterance = new SpeechSynthesisUtterance(text);
+          utterance.rate = 1.0;
+          utterance.pitch = 1.0;
+          utterance.volume = 1.0;
+
+          if (btnEl) {
+              const originalLabel = btnEl.dataset.originalLabel || btnEl.textContent;
+              btnEl.dataset.originalLabel = originalLabel;
+              btnEl.textContent = "🔊 Speaking...";
+              btnEl.dataset.speaking = "true";
+          }
+
+          utterance.onend = () => {
+              if (btnEl) {
+                  btnEl.textContent = btnEl.dataset.originalLabel || "🔊 Read";
+                  btnEl.dataset.speaking = "false";
+              }
+          };
+          utterance.onerror = () => {
+              if (btnEl) {
+                  btnEl.textContent = btnEl.dataset.originalLabel || "🔊 Read";
+                  btnEl.dataset.speaking = "false";
+              }
+          };
+
+          try {
+              window.speechSynthesis.speak(utterance);
+          } catch (err) {
+              console.error("TTS failed:", err);
+              if (btnEl) {
+                  btnEl.textContent = btnEl.dataset.originalLabel || "🔊 Read";
+                  btnEl.dataset.speaking = "false";
+              }
+          }
+      }
+
       function renderMessage(role, text, time) {
           const isUser = role === "user";
 
@@ -737,6 +1018,20 @@
               copyBtn.addEventListener("click", () => copyMessage(text, copyBtn));
               actionsDiv.appendChild(copyBtn);
 
+              // FEATURE 2: Read (TTS) button — placed right next to Copy.
+              const readBtn = document.createElement("button");
+              readBtn.className = "read-message-btn";
+              readBtn.type = "button";
+              readBtn.title = "Read aloud";
+              readBtn.textContent = "🔊 Read";
+              readBtn.style.cursor = "pointer";
+              readBtn.addEventListener("click", () => {
+                  // Read whatever text is currently on the message (may include streamed updates).
+                  const currentText = article.querySelector(".message-text")?.innerText || text;
+                  speakText(currentText, readBtn);
+              });
+              actionsDiv.appendChild(readBtn);
+
               const regenBtn = document.createElement("button");
               regenBtn.className = "regenerate-message-btn";
               regenBtn.type = "button";
@@ -779,6 +1074,48 @@
               actionsDiv.appendChild(dislikeBtn);
 
               content.appendChild(actionsDiv);
+          } else {
+              // FEATURE 4: EDIT USER MESSAGE
+              // Grab the user's text, put it back into the textarea and focus it
+              // so the user can edit and resend it.
+              const userActionsDiv = document.createElement("div");
+              userActionsDiv.className = "message-actions message-actions-user";
+              userActionsDiv.style.display = "flex";
+              userActionsDiv.style.gap = "8px";
+              userActionsDiv.style.marginTop = "6px";
+              userActionsDiv.style.alignItems = "center";
+              userActionsDiv.style.justifyContent = "flex-end";
+
+              const editBtn = document.createElement("button");
+              editBtn.className = "edit-user-msg-btn";
+              editBtn.type = "button";
+              editBtn.title = "Edit and resend this message";
+              editBtn.textContent = "✏️ Edit";
+              editBtn.style.cssText = "background:transparent;border:1px solid rgba(148,163,184,0.35);color:#94a3b8;padding:4px 10px;border-radius:14px;cursor:pointer;font-size:12px;font-weight:500;";
+              editBtn.addEventListener("mouseover", () => {
+                  editBtn.style.background = "rgba(59,130,246,0.15)";
+                  editBtn.style.borderColor = "#3b82f6";
+                  editBtn.style.color = "#3b82f6";
+              });
+              editBtn.addEventListener("mouseout", () => {
+                  editBtn.style.background = "transparent";
+                  editBtn.style.borderColor = "rgba(148,163,184,0.35)";
+                  editBtn.style.color = "#94a3b8";
+              });
+              editBtn.addEventListener("click", () => {
+                  if (dom.messageTextarea) {
+                      dom.messageTextarea.value = text;
+                      dom.messageTextarea.focus();
+                      // Move caret to end so the user can immediately continue typing.
+                      const len = dom.messageTextarea.value.length;
+                      try { dom.messageTextarea.setSelectionRange(len, len); } catch (e) {}
+                      autoResizeTextarea();
+                      updateSendButtonState();
+                  }
+              });
+
+              userActionsDiv.appendChild(editBtn);
+              content.appendChild(userActionsDiv);
           }
 
           article.appendChild(avatar);
@@ -843,6 +1180,8 @@
           } else {
               hideTyping();
           }
+          // FEATURE 3: Show/hide the floating Stop Generating button.
+          updateStopButtonVisibility();
       }
 
       function showBroadcastToast(message) {
@@ -873,51 +1212,114 @@
           const model = dom.modelSelect ? dom.modelSelect.value : "Flash-Lite Extended";
           const isNewChat = !state.backendConversationId;
 
-          const response = await fetch("/api/chat/stream", {
-              method: "POST",
-              headers: getAuthHeaders(true),
-              body: JSON.stringify({
-                  message: userText,
-                  conversation_id: state.backendConversationId,
-                  model: model
-              })
-          });
+          // FEATURE 3: Wire up an AbortController so we can cancel the stream.
+          const controller = new AbortController();
+          state.abortController = controller;
+          state.streamingBotMsgObj = botMsgObj;
+          state.streamingTextEl = textEl;
+
+          let response;
+          try {
+              response = await fetch("/api/chat/stream", {
+                  method: "POST",
+                  headers: getAuthHeaders(true),
+                  body: JSON.stringify({
+                      message: userText,
+                      conversation_id: state.backendConversationId,
+                      model: model,
+                      // FEATURE 5: Pass the web-search toggle to the backend.
+                      web_search: state.webSearchEnabled
+                  }),
+                  signal: controller.signal
+              });
+          } catch (err) {
+              if (err.name === "AbortError") {
+                  // Aborted before the response even started.
+                  botMsgObj.text = (botMsgObj.text || "") + "\n\n[Generation Stopped by User]";
+                  if (typeof marked !== 'undefined') {
+                      textEl.innerHTML = marked.parse(botMsgObj.text);
+                  } else {
+                      textEl.innerHTML = escapeHtml(botMsgObj.text).replace(/\n/g, "<br>");
+                  }
+                  state.abortController = null;
+                  state.streamingBotMsgObj = null;
+                  state.streamingTextEl = null;
+                  return;
+              }
+              throw err;
+          }
 
           if (!response.ok) {
+              state.abortController = null;
               throw new Error("Server Error / Network Error");
           }
 
           const reader = response.body.getReader();
           const decoder = new TextDecoder();
           let accumulatedText = "";
+          let wasAborted = false;
 
-          while (true) {
-              const { value, done } = await reader.read();
-              if (done) break;
-
-              const chunk = decoder.decode(value, { stream: true });
-              const lines = chunk.split("\n\n");
-
-              for (const line of lines) {
-                  if (line.startsWith("data: ")) {
-                      const dataText = line.replace("data: ", "").trim();
-                      if (dataText === "[DONE]") break;
-                      if (dataText === "[ERROR]") {
-                          throw new Error("Streaming encountered an error.");
+          try {
+              while (true) {
+                  let readResult;
+                  try {
+                      readResult = await reader.read();
+                  } catch (err) {
+                      if (err.name === "AbortError" || controller.signal.aborted) {
+                          wasAborted = true;
+                          break;
                       }
+                      throw err;
+                  }
 
-                      accumulatedText += dataText + " ";
-                      botMsgObj.text = accumulatedText;
+                  const { value, done } = readResult;
+                  if (done) break;
 
-                      if (typeof marked !== 'undefined') {
-                          textEl.innerHTML = marked.parse(accumulatedText);
-                      } else {
-                          textEl.innerHTML = escapeHtml(accumulatedText).replace(/\n/g, "<br>");
+                  const chunk = decoder.decode(value, { stream: true });
+                  const lines = chunk.split("\n\n");
+
+                  for (const line of lines) {
+                      if (line.startsWith("data: ")) {
+                          const dataText = line.replace("data: ", "").trim();
+                          if (dataText === "[DONE]") break;
+                          if (dataText === "[ERROR]") {
+                              throw new Error("Streaming encountered an error.");
+                          }
+
+                          accumulatedText += dataText + " ";
+                          botMsgObj.text = accumulatedText;
+
+                          if (typeof marked !== 'undefined') {
+                              textEl.innerHTML = marked.parse(accumulatedText);
+                          } else {
+                              textEl.innerHTML = escapeHtml(accumulatedText).replace(/\n/g, "<br>");
+                          }
+                          
+                          requestAnimationFrame(() => scrollToBottom());
                       }
-                      
-                      requestAnimationFrame(() => scrollToBottom());
+                  }
+
+                  if (controller.signal.aborted) {
+                      wasAborted = true;
+                      break;
                   }
               }
+          } finally {
+              try { reader.cancel(); } catch (e) {}
+              state.abortController = null;
+              state.streamingBotMsgObj = null;
+              state.streamingTextEl = null;
+          }
+
+          if (wasAborted) {
+              accumulatedText += "\n\n[Generation Stopped by User]";
+              botMsgObj.text = accumulatedText;
+              if (typeof marked !== 'undefined') {
+                  textEl.innerHTML = marked.parse(accumulatedText);
+              } else {
+                  textEl.innerHTML = escapeHtml(accumulatedText).replace(/\n/g, "<br>");
+              }
+              return;
           }
 
           if (isNewChat) {
@@ -1081,10 +1483,6 @@
           }
       }
 
-      function openFilePicker() {
-          dom.fileUploadInput?.click();
-      }
-
       async function handleFileSelected(event) {
           const file = event.target.files?.[0];
           if (!file) return;
@@ -1166,7 +1564,6 @@
       }
 
       function bindEvents() {
-          // Input & Chat Logic
           if (dom.chatSearchInput) {
               dom.chatSearchInput.addEventListener("input", (e) => {
                   state.searchQuery = e.target.value;
@@ -1225,67 +1622,26 @@
               clearAllMemories();
           });
 
-          // ==========================================
-          // 🌟 MASTER FIX: ATTACHMENT MENU 
-          // ==========================================
           if (dom.toggleAttachmentBtn && dom.attachmentMenu) {
               dom.toggleAttachmentBtn.addEventListener("click", (e) => {
                   e.preventDefault();
-                  e.stopPropagation(); // 👈 இதுதான் Menu உடனே Close ஆகாமல் தடுக்கும்!
+                  e.stopPropagation();
                   dom.attachmentMenu.classList.toggle("show");
               });
           }
 
-          // Outside Click Detection
           document.addEventListener('click', (event) => {
               if (dom.attachmentMenu && dom.attachmentMenu.classList.contains("show")) {
-                  // Click is not inside the wrapper -> Close Menu
                   if (!event.target.closest('.attachment-wrapper')) {
                       dom.attachmentMenu.classList.remove("show");
                   }
               }
           });
           
-          // ==========================================
-          // 🌟 MASTER FIX: SIDEBAR COLLAPSE
-          // ==========================================
           if (dom.sidebarToggleBtn && dom.appSidebar) {
               dom.sidebarToggleBtn.addEventListener("click", (e) => {
                   e.preventDefault();
                   dom.appSidebar.classList.toggle("collapsed");
-              });
-          }
-
-          // ==========================================
-          // 🌟 MASTER FIX: SETTINGS MODAL
-          // ==========================================
-          if (dom.settingsBtn && dom.settingsModal) {
-              dom.settingsBtn.addEventListener("click", (e) => {
-                  e.preventDefault();
-                  dom.settingsModal.classList.add("show");
-              });
-          }
-
-          if (dom.closeSettingsBtn && dom.settingsModal) {
-              dom.closeSettingsBtn.addEventListener("click", (e) => {
-                  e.preventDefault();
-                  dom.settingsModal.classList.remove("show");
-              });
-          }
-
-          if (dom.settingsModal) {
-              dom.settingsModal.addEventListener('click', (e) => {
-                  if (e.target === dom.settingsModal) {
-                      dom.settingsModal.classList.remove("show");
-                  }
-              });
-          }
-
-          const saveSettingsBtn = document.getElementById("save-settings-btn");
-          if (saveSettingsBtn) {
-              saveSettingsBtn.addEventListener("click", () => {
-                  alert("Settings saved successfully!");
-                  if(dom.settingsModal) dom.settingsModal.classList.remove("show");
               });
           }
       }
@@ -1305,6 +1661,48 @@
                   }
               }
           } catch (e) {}
+      }
+
+      // User Profile Modal Click Logic
+      const userProfileEl = document.querySelector(".user-profile");
+      if (userProfileEl) {
+          userProfileEl.style.cursor = "pointer";
+          userProfileEl.addEventListener("click", () => {
+              const userName = dom.sidebarUserName?.textContent || "Vikraman";
+              const userEmail = dom.sidebarUserEmail?.textContent || "user@example.com";
+              
+              let profileModal = document.getElementById("user-profile-modal");
+              if (!profileModal) {
+                  profileModal = document.createElement("div");
+                  profileModal.id = "user-profile-modal";
+                  profileModal.style.cssText = "position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); backdrop-filter:blur(5px); display:flex; justify-content:center; align-items:center; z-index:9999;";
+                  profileModal.innerHTML = `
+                      <div style="background:var(--bg-surface, #1e293b); color:var(--text-primary, #fff); padding:30px; border-radius:16px; width:100%; max-width:380px; box-shadow:0 20px 25px -5px rgba(0,0,0,0.3); border:1px solid var(--border-default, rgba(255,255,255,0.1)); text-align:center;">
+                          <div style="font-size:48px; margin-bottom:10px;">👤</div>
+                          <h3 style="margin:0 0 5px; font-size:20px; font-weight:700;">${userName}</h3>
+                          <p style="color:var(--text-secondary, #94a3b8); font-size:13px; margin:0 0 20px;">${userEmail}</p>
+                          <div style="background:rgba(59,130,246,0.1); border:1px solid rgba(59,130,246,0.3); padding:10px; border-radius:8px; font-size:12px; color:#60A5FA; margin-bottom:20px;">
+                              🚀 Plan: Pro Glass Workspace (Active)
+                          </div>
+                          <button id="close-profile-modal" style="width:100%; padding:10px; background:#3B82F6; color:white; border:none; border-radius:8px; font-weight:600; cursor:pointer; margin-bottom:8px;">Close</button>
+                          <button id="modal-logout-btn" style="width:100%; padding:10px; background:transparent; color:#EF4444; border:1px solid rgba(239,68,68,0.3); border-radius:8px; font-weight:600; cursor:pointer;">Logout</button>
+                      </div>
+                  `;
+                  document.body.appendChild(profileModal);
+
+                  profileModal.querySelector("#close-profile-modal").addEventListener("click", () => {
+                      profileModal.style.display = "none";
+                  });
+                  profileModal.querySelector("#modal-logout-btn").addEventListener("click", () => {
+                      logout();
+                  });
+                  profileModal.addEventListener("click", (e) => {
+                      if (e.target === profileModal) profileModal.style.display = "none";
+                  });
+              } else {
+                  profileModal.style.display = "flex";
+              }
+          });
       }
 
       async function loadHistory() {
@@ -1333,6 +1731,7 @@
 
       async function initializeApp() {
           bindDomElements();
+          loadPreferences();
           restoreTheme();
           loadChat();
 
@@ -1357,10 +1756,292 @@
               renderActiveConversation();
           }
 
+          if (dom.modelSelect && preferences.defaultModel) {
+              const optionExists = Array.from(dom.modelSelect.options).some(o => o.value === preferences.defaultModel);
+              if (optionExists) dom.modelSelect.value = preferences.defaultModel;
+          }
+
           updateSendButtonState();
           bindEvents();
+
+          // FEATURES 3 + 5: inject dynamic Stop Generating + Web Search Toggle buttons.
+          injectDynamicButtons();
+          updateStopButtonVisibility();
       }
 
       document.addEventListener("DOMContentLoaded", initializeApp);
-  }
-})();
+  } 
+
+})(); 
+
+// 🚀 MASTER FIX: BULLETPROOF STUDIO WORKSPACE
+document.addEventListener("DOMContentLoaded", () => {
+    const imgStudioBtn = document.getElementById("images-studio-btn");
+    const vidGenBtn = document.getElementById("videos-gen-btn");
+    const modal = document.getElementById("ai-studio-workspace-modal");
+    const title = document.getElementById("studio-modal-title");
+    const desc = document.getElementById("studio-modal-desc");
+    const input = document.getElementById("studio-prompt-input");
+    const closeBtn = document.getElementById("close-studio-modal");
+    const runBtn = document.getElementById("run-generation-btn");
+    const resultContainer = document.getElementById("studio-result-container");
+    const loader = document.getElementById("studio-loader");
+    const imgOutput = document.getElementById("generated-image-output");
+
+    if (input) {
+        ['keydown', 'keyup', 'keypress', 'input'].forEach(evt => {
+            input.addEventListener(evt, (e) => e.stopPropagation());
+        });
+    }
+
+    function openWorkspace(type, e) {
+        if (e) { e.preventDefault(); e.stopPropagation(); }
+        if (!modal) return;
+
+        if (type === "image") {
+            title.textContent = "🎨 Images Studio Workspace";
+            desc.textContent = "Transform text prompts into stunning high-definition AI artworks instantly.";
+            if(input) input.placeholder = "e.g., A futuristic cyberpunk city in neon lights, 4k...";
+        } else {
+            title.textContent = "🎬 Videos Generation Suite";
+            desc.textContent = "Synthesize high-framerate dynamic videos from textual descriptions.";
+            if(input) input.placeholder = "e.g., Drone shot flying across snow-capped mountains at sunrise...";
+        }
+
+        if(input) input.value = "";
+        if(resultContainer) resultContainer.style.display = "none";
+        modal.style.display = "flex";
+        
+        setTimeout(() => { if(input) input.focus() }, 100);
+    }
+
+    if (imgStudioBtn) imgStudioBtn.addEventListener("click", (e) => openWorkspace("image", e));
+    if (vidGenBtn) vidGenBtn.addEventListener("click", (e) => openWorkspace("video", e));
+
+    if (closeBtn && modal) {
+        closeBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            modal.style.display = "none";
+        });
+        modal.addEventListener("click", (e) => {
+            if (e.target === modal) modal.style.display = "none";
+        });
+    }
+
+    if (runBtn) {
+        runBtn.addEventListener("click", async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            const promptText = input ? input.value.trim() : "";
+            if (!promptText) return alert("Please enter a prompt description first!");
+
+            if(resultContainer) resultContainer.style.display = "block";
+            if(loader) loader.style.display = "block";
+            if (imgOutput) imgOutput.style.display = "none";
+
+            try {
+                const isImage = title && title.textContent.includes("Images");
+                const endpoint = isImage ? "/api/studio/generate-image" : "/api/studio/generate-video";
+                
+                const res = await fetch(endpoint, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ prompt: promptText })
+                });
+                const data = await res.json();
+
+                if (res.ok && data.status === 'success') {
+                    if(loader) loader.style.display = "none";
+                    if (isImage && imgOutput) {
+                        imgOutput.src = data.image_url;
+                        imgOutput.style.display = "block";
+                    } else {
+                        if(loader) {
+                            loader.style.display = "block";
+                            loader.textContent = "✅ Job Completed Successfully! Pipeline output ready.";
+                        }
+                    }
+                } else {
+                    if(loader) loader.textContent = "⚠ Generation failed: " + (data.message || "Unknown error");
+                }
+            } catch (err) {
+                if(loader) loader.textContent = "⚠ Network connection error during generation.";
+            }
+        });
+    }
+});
+
+// 🌟 SAFE ATTACHMENT MENU FIX
+document.addEventListener("click", (e) => {
+    const attachMenu = document.getElementById("attachment-menu");
+    if (attachMenu && attachMenu.contains(e.target)) {
+        const target = e.target.closest("li, a, button, span, div");
+        if (!target) return;
+        
+        const text = target.textContent || "";
+        
+        if (text.includes("Create image") || text.includes("Create video")) {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            attachMenu.classList.remove("show");
+
+            if (text.includes("Create image")) {
+                const imgBtn = document.getElementById("images-studio-btn");
+                if (imgBtn) imgBtn.click();
+            } else if (text.includes("Create video")) {
+                const vidBtn = document.getElementById("videos-gen-btn");
+                if (vidBtn) vidBtn.click();
+            }
+        }
+    }
+});
+
+// 🔥 PERFECT CHATGPT SETTINGS MODAL (Fixed Layout & Full Functionality)
+document.addEventListener("click", (e) => {
+    const target = e.target.closest("button, a, div, span, li");
+    if (!target) return;
+    
+    const text = target.textContent ? target.textContent.trim().toLowerCase() : "";
+    const id = target.id ? target.id.toLowerCase() : "";
+    
+    if (text === "settings" || id.includes("setting") || text.includes("settings")) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        
+        // Remove old modals
+        document.querySelectorAll("#settings-modal, .settings-modal-overlay, div[id*='pref'], div[id*='global']").forEach(m => m.remove());
+        
+        const overlay = document.createElement("div");
+        overlay.id = "settings-modal";
+        overlay.className = "settings-modal-overlay show";
+        overlay.style.cssText = "position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.75);backdrop-filter:blur(8px);display:flex;justify-content:center;align-items:center;z-index:999999;";
+        
+        overlay.innerHTML = `
+            <div style="width:850px;height:580px;background:#212121;color:#ececec;border-radius:14px;display:flex;flex-direction:row;box-shadow:0 24px 48px rgba(0,0,0,0.6);border:1px solid rgba(255,255,255,0.1);overflow:hidden;position:relative;">
+                
+                <!-- Left Sidebar -->
+                <div style="width:240px;min-width:240px;height:100%;background:#171717;border-right:1px solid #2f2f2f;display:flex;flex-direction:column;padding:16px 12px;gap:6px;box-sizing:border-box;overflow-y:auto;">
+                    <div style="display:flex;justify-content:flex-end;margin-bottom:8px;">
+                        <button id="modal-close-x" style="background:transparent;border:none;color:#aaa;font-size:18px;cursor:pointer;padding:4px 8px;border-radius:4px;">✕</button>
+                    </div>
+                    <button class="s-tab is-active" data-tab="general" style="text-align:left;padding:10px 12px;background:#2f2f2f;border:none;color:#fff;border-radius:8px;cursor:pointer;font-weight:600;font-size:14px;">General</button>
+                    <button class="s-tab" data-tab="notifications" style="text-align:left;padding:10px 12px;background:transparent;border:none;color:#b4b4b4;border-radius:8px;cursor:pointer;font-size:14px;">Notifications</button>
+                    <button class="s-tab" data-tab="personalization" style="text-align:left;padding:10px 12px;background:transparent;border:none;color:#b4b4b4;border-radius:8px;cursor:pointer;font-size:14px;">Personalization</button>
+                    <button class="s-tab" data-tab="security" style="text-align:left;padding:10px 12px;background:transparent;border:none;color:#b4b4b4;border-radius:8px;cursor:pointer;font-size:14px;">Security and login</button>
+                    <button class="s-tab" data-tab="account" style="text-align:left;padding:10px 12px;background:transparent;border:none;color:#b4b4b4;border-radius:8px;cursor:pointer;font-size:14px;">Account</button>
+                </div>
+
+                <!-- Right Content Area -->
+                <div style="flex:1;height:100%;background:#212121;padding:32px;overflow-y:auto;display:flex;flex-direction:column;box-sizing:border-box;">
+                    
+                    <!-- General Panel -->
+                    <div class="s-panel" data-panel="general" style="display:block;">
+                        <h2 style="margin:0 0 24px 0;font-size:20px;font-weight:600;color:#fff;">General Preferences</h2>
+                        
+                        <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 0;border-bottom:1px solid #2f2f2f;">
+                            <span style="font-size:14px;">Appearance Theme</span>
+                            <select id="set-appearance" style="padding:8px 12px;border-radius:6px;background:#2f2f2f;color:#fff;border:1px solid #444;font-size:13px;outline:none;">
+                                <option value="dark">Dark Glass</option>
+                                <option value="light">Light Clean</option>
+                            </select>
+                        </div>
+
+                        <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 0;border-bottom:1px solid #2f2f2f;">
+                            <span style="font-size:14px;">Workspace Language</span>
+                            <select id="set-lang" style="padding:8px 12px;border-radius:6px;background:#2f2f2f;color:#fff;border:1px solid #444;font-size:13px;outline:none;">
+                                <option value="en">English (US)</option>
+                                <option value="ta">Tamil (தமிழ்)</option>
+                            </select>
+                        </div>
+
+                        <div style="margin-top:32px;display:flex;gap:12px;">
+                            <button id="export-json-btn" style="background:#3B82F6;color:#fff;border:none;padding:10px 18px;border-radius:8px;cursor:pointer;font-weight:600;font-size:13px;">Export Conversation Data (JSON)</button>
+                            <button id="delete-chats-btn" style="background:#EF4444;color:#fff;border:none;padding:10px 18px;border-radius:8px;cursor:pointer;font-weight:600;font-size:13px;">Delete All Chats</button>
+                        </div>
+                    </div>
+
+                    <!-- Notifications Panel -->
+                    <div class="s-panel" data-panel="notifications" style="display:none;">
+                        <h2 style="margin:0 0 12px 0;font-size:20px;font-weight:600;color:#fff;">Notifications</h2>
+                        <p style="color:#9ca3af;font-size:14px;">Configure how you receive push and email alerts across your enterprise workspace.</p>
+                    </div>
+
+                    <!-- Personalization Panel -->
+                    <div class="s-panel" data-panel="personalization" style="display:none;">
+                        <h2 style="margin:0 0 12px 0;font-size:20px;font-weight:600;color:#fff;">Personalization</h2>
+                        <p style="color:#9ca3af;font-size:14px;">Manage custom instructions and context memory behavior for Isolde AI.</p>
+                    </div>
+
+                    <!-- Security Panel -->
+                    <div class="s-panel" data-panel="security" style="display:none;">
+                        <h2 style="margin:0 0 12px 0;font-size:20px;font-weight:600;color:#fff;">Security and Login</h2>
+                        <p style="color:#9ca3af;font-size:14px;">Manage multi-factor authentication (MFA) and active session tokens.</p>
+                    </div>
+
+                    <!-- Account Panel -->
+                    <div class="s-panel" data-panel="account" style="display:none;">
+                        <h2 style="margin:0 0 12px 0;font-size:20px;font-weight:600;color:#fff;">Account Information</h2>
+                        <p style="color:#9ca3af;font-size:14px;">Workspace Owner: Vikraman (Vilvarai Naturals)</p>
+                        <p style="color:#9ca3af;font-size:14px;margin-top:8px;">Plan: Enterprise Pro Unlimited</p>
+                    </div>
+
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(overlay);
+        
+        const closeModal = () => overlay.remove();
+        overlay.querySelector("#modal-close-x").addEventListener("click", closeModal);
+        overlay.addEventListener("click", (ev) => {
+            if (ev.target === overlay) closeModal();
+        });
+        
+        const tabs = overlay.querySelectorAll(".s-tab");
+        const panels = overlay.querySelectorAll(".s-panel");
+        
+        tabs.forEach(tab => {
+            tab.addEventListener("click", () => {
+                const targetPanel = tab.getAttribute("data-tab");
+                
+                tabs.forEach(t => {
+                    t.style.background = "transparent";
+                    t.style.color = "#b4b4b4";
+                    t.style.fontWeight = "normal";
+                });
+                tab.style.background = "#2f2f2f";
+                tab.style.color = "#fff";
+                tab.style.fontWeight = "600";
+                
+                panels.forEach(p => {
+                    p.style.display = p.getAttribute("data-panel") === targetPanel ? "block" : "none";
+                });
+            });
+        });
+
+        overlay.querySelector("#export-json-btn").addEventListener("click", () => {
+            const rawConvos = localStorage.getItem("isolde-conversations") || "{}";
+            const exportData = { conversations: JSON.parse(rawConvos), exportDate: new Date().toISOString() };
+            const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: "application/json" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `isolde-backup-${new Date().toISOString().split('T')[0]}.json`;
+            a.click();
+            alert("✅ Conversation history exported successfully!");
+        });
+
+        overlay.querySelector("#delete-chats-btn").addEventListener("click", () => {
+            if (confirm("⚠️ Are you sure you want to delete all chat histories? This cannot be undone.")) {
+                localStorage.removeItem("isolde-conversations");
+                localStorage.removeItem("isolde-active-conversation");
+                alert("🗑️ All chats cleared successfully.");
+                window.location.reload(); 
+            }
+        });
+    }
+}, true);
+

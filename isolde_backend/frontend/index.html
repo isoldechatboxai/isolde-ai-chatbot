@@ -14,103 +14,105 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
 
 <style>
-    /* Component Specific Styles added to Master CSS */
+    /* Glassmorphism Base Styles overrides */
+    body, html { width: 100%; height: 100%; overflow: hidden; background: linear-gradient(135deg, #0B132B 0%, #1C2541 50%, #0B132B 100%); color: #F8FAFC; font-family: 'Inter', sans-serif; margin: 0; }
+    .app { display: flex; width: 100vw; height: 100vh; overflow: hidden; }
+
+    /* Glass Sidebar Styling */
+    .sidebar { width: 260px; background: rgba(28, 37, 65, 0.65); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border-right: 1px solid rgba(255, 255, 255, 0.1); display: flex; flex-direction: column; padding: 20px 16px; flex-shrink: 0; transition: width 0.3s ease; }
+    .sidebar.collapsed { width: 80px; overflow: hidden; }
+    .sidebar.collapsed .brand-name, .sidebar.collapsed .new-chat-label, .sidebar.collapsed .chat-history-title, .sidebar.collapsed .chat-search-container, .sidebar.collapsed .nav-links-item span:not(:first-child), .sidebar.collapsed .user-info, .sidebar.collapsed .memory-section h4, .sidebar.collapsed #memory-list, .sidebar.collapsed #clear-all-memories, .sidebar.collapsed .settings-label, .sidebar.collapsed .logout-label { display: none; }
+
+    .brand-logo { width: 36px; height: 36px; background: linear-gradient(135deg, #3B82F6, #06B6D4); border-radius: 50%; box-shadow: 0 0 15px rgba(6,182,212,0.5); display: flex; justify-content: center; align-items: center; }
+    .brand-logo::after { content: '🔮'; font-size: 18px; }
+    .brand-name { font-size: 18px; font-weight: 700; letter-spacing: 0.5px; color: #fff; }
+
+    .new-chat-btn { width: 100%; padding: 12px 16px; background: linear-gradient(135deg, rgba(59, 130, 246, 0.3), rgba(6, 182, 212, 0.2)); border: 1px solid rgba(59, 130, 246, 0.4); border-radius: 14px; color: #fff; font-weight: 600; display: flex; align-items: center; gap: 10px; cursor: pointer; margin: 20px 0; box-shadow: 0 4px 15px rgba(59, 130, 246, 0.2); justify-content: center; }
+    .new-chat-icon::after { content: '✨'; font-size: 16px; }
+
+    .nav-links-list { list-style: none; padding: 0; margin: 0 0 15px 0; }
+    .nav-links-item { display: flex; align-items: center; gap: 12px; padding: 10px 12px; font-size: 13.5px; font-weight: 600; cursor: pointer; border-radius: 10px; color: #94A3B8; transition: all 0.2s; border: 1px solid transparent; }
+    .nav-links-item:hover { background: rgba(59, 130, 246, 0.25); color: #60A5FA; border-color: rgba(59, 130, 246, 0.4); }
+
+    .chat-history { flex: 1; overflow-y: auto; display: flex; flex-direction: column; margin-bottom: 10px; }
+    .chat-history-title { font-size: 11px; font-weight: 700; color: #94A3B8; margin-bottom: 10px; padding-left: 5px; text-transform: uppercase; letter-spacing: 0.5px; }
+    
+    .chat-search-input { width: 100%; background: rgba(15, 23, 42, 0.4); border: 1px solid rgba(255, 255, 255, 0.1); color: #fff; padding: 10px 12px 10px 32px; border-radius: 10px; font-size: 13px; outline: none; margin-bottom: 15px; }
+    .chat-search-input::placeholder { color: #64748B; }
+
+    .memory-section { background: rgba(15, 23, 42, 0.4); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 12px; padding: 12px; margin-bottom: 15px; }
+    
+    .user-profile { padding: 12px; border-top: 1px solid rgba(255, 255, 255, 0.1); display: flex; align-items: center; gap: 10px; background: rgba(15, 23, 42, 0.3); border-radius: 14px; margin-bottom: 10px; }
+    .user-avatar { width: 32px; height: 32px; background: linear-gradient(135deg, #3B82F6, #8B5CF6); border-radius: 50%; }
+    .user-info { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+    .user-name { font-size: 12px; font-weight: 600; color: #fff; }
+    .user-email { font-size: 10px; color: #10B981; }
+
+    .settings-btn { width: 100%; display: flex; align-items: center; gap: 10px; padding: 10px; background: transparent; border: none; color: #94A3B8; cursor: pointer; border-radius: 10px; font-size: 13px; font-weight: 600; transition: 0.2s; }
+    .settings-btn:hover { background: rgba(255, 255, 255, 0.05); color: #fff; }
+
+    /* Main Area Styling */
+    .main-content { flex: 1; display: flex; flex-direction: column; position: relative; }
+    .app-header { padding: 18px 32px; border-bottom: 1px solid rgba(255, 255, 255, 0.1); display: flex; justify-content: space-between; align-items: center; background: rgba(28, 37, 65, 0.4); backdrop-filter: blur(20px); }
+    .app-title { font-size: 18px; font-weight: 700; background: linear-gradient(135deg, #F8FAFC 0%, #94A3B8 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    
+    .chat-area { flex: 1; overflow-y: auto; padding: 40px; display: flex; flex-direction: column; align-items: center; }
+    
+    .welcome-screen { text-align: center; margin-top: 5vh; display: flex; flex-direction: column; align-items: center; }
+    .welcome-logo { width: 80px; height: 80px; background: radial-gradient(circle at 30% 30%, #38BDF8, #3B82F6, #8B5CF6); border-radius: 50%; box-shadow: 0 0 50px rgba(56,189,248,0.7); margin-bottom: 20px; animation: floatOrb 4s ease-in-out infinite; }
+    @keyframes floatOrb { 0% { transform: translateY(0px) scale(1); } 50% { transform: translateY(-8px) scale(1.03); } 100% { transform: translateY(0px) scale(1); } }
+    .welcome-title { font-size: 32px; font-weight: 800; margin-bottom: 8px; color: #F8FAFC; }
+    .welcome-subtitle { font-size: 15px; color: #94A3B8; margin-bottom: 30px; }
+    
+    .suggestions { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+    .suggestion-chip { padding: 10px 18px; background: rgba(33, 44, 76, 0.55); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 20px; font-size: 13px; cursor: pointer; color: #CBD5E1; transition: 0.2s; font-weight: 500; }
+    .suggestion-chip:hover { background: rgba(59, 130, 246, 0.3); color: #fff; border-color: rgba(59, 130, 246, 0.5); }
+
+    /* Glass Input Area */
+    .input-area { padding: 0 40px 20px 40px; display: flex; flex-direction: column; align-items: center; }
+    .message-form { width: 100%; max-width: 800px; background: rgba(33, 44, 76, 0.65); backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 20px; padding: 12px 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.4); display: flex; align-items: center; gap: 12px; position: relative; }
+    
+    .message-textarea { flex: 1; background: transparent; border: none; outline: none; color: #fff; font-size: 15px; padding: 10px 0; resize: none; max-height: 150px; }
+    .message-textarea::placeholder { color: #64748B; }
+    
+    .send-btn, .file-upload-btn, .voice-input-btn { background: transparent; border: none; color: #94A3B8; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 8px; border-radius: 10px; transition: 0.2s; }
+    .send-btn { background: linear-gradient(135deg, #3B82F6, #2563EB); color: #fff; box-shadow: 0 4px 15px rgba(59,130,246,0.4); }
+    .file-upload-btn:hover, .voice-input-btn:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
+
+    /* Exact Attachment Menu Overrides for Glassmorphism */
     .attachment-menu { display: none; }
     .attachment-menu.show { display: block; }
-    
-    /* Professional Attachment Menu Styling matching the screenshot */
-    .attachment-menu-item {
-        display: flex; align-items: center; padding: 10px 16px; cursor: pointer; 
-        font-size: 14.5px; color: var(--text-primary); gap: 14px; margin: 0;
-        transition: background 0.2s;
-        text-decoration: none;
-    }
-    .attachment-menu-item:hover { background-color: var(--bg-hover); }
-    
-    .menu-item-icon {
-        display: flex; align-items: center; justify-content: center;
-        color: var(--text-secondary);
-    }
-    .menu-item-text { flex: 1; font-weight: 500; }
-    
-    .badge-new {
-        background-color: var(--bg-chip);
-        color: var(--text-primary);
-        font-size: 11px;
-        font-weight: 600;
-        padding: 4px 8px;
-        border-radius: 12px;
-        margin-left: auto;
-    }
-    
-    .attachment-divider {
-        height: 1px;
-        background-color: var(--border-subtle);
-        margin: 8px 0;
-    }
-    
-    .menu-item-arrow {
-        color: var(--text-tertiary);
-        display: flex; align-items: center;
-    }
+    #attachment-menu { background: rgba(28, 37, 65, 0.95) !important; backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.1) !important; color: #F8FAFC; }
+    .attachment-menu-item { color: #F8FAFC !important; }
+    .attachment-menu-item:hover { background-color: rgba(59, 130, 246, 0.2) !important; }
+    .attachment-divider { background-color: rgba(255,255,255,0.1) !important; }
+    .badge-new { background-color: rgba(59, 130, 246, 0.3) !important; color: #60A5FA !important; }
 
-    .chat-search-container { padding: 0 var(--space-4) var(--space-3); }
-    .chat-search-input {
-        width: 100%; background: var(--bg-surface); border: 1px solid var(--border-default);
-        color: var(--text-primary); padding: 8px 12px 8px 32px; border-radius: var(--radius-sm);
-        font-size: 13px; outline: none; transition: all 0.2s ease;
-        background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="%238b869c" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>');
-        background-repeat: no-repeat; background-position: 10px center;
-    }
-    .chat-search-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-    .chat-search-input::placeholder { color: var(--text-placeholder); }
-    
-    .nav-links-list { list-style: none; padding: 0 var(--space-2); margin: 0 0 var(--space-4) 0; }
-    .nav-links-item {
-        display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-3);
-        font-size: 13.5px; font-weight: 500; cursor: pointer; border-radius: var(--radius-sm); 
-        color: var(--text-secondary); transition: background 0.2s, color 0.2s;
-    }
-    .nav-links-item:hover { background: var(--bg-hover); color: var(--text-primary); }
-
-    .modal-overlay { 
-        display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
-        background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); z-index: 2000; 
-        justify-content: center; align-items: center; 
-    }
+    /* Glass Modal Styling */
+    .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); backdrop-filter: blur(8px); z-index: 2000; justify-content: center; align-items: center; }
     .modal-overlay.show { display: flex; }
-    .modal-content { 
-        background: var(--bg-elevated); color: var(--text-primary); padding: var(--space-6); 
-        border-radius: var(--radius-lg); width: 420px; max-width: 90%; 
-        border: 1px solid var(--border-subtle); box-shadow: var(--shadow-lg);
-        animation: fade-in-up var(--transition-fast) both;
-    }
-    .modal-close { float: right; cursor: pointer; font-size: 20px; color: var(--text-tertiary); transition: color 0.2s; background: transparent; border: none; }
-    .modal-close:hover { color: var(--text-primary); }
+    .modal-content { background: rgba(28, 37, 65, 0.85); color: #F8FAFC; padding: 30px; border-radius: 20px; width: 420px; max-width: 90%; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 20px 50px rgba(0,0,0,0.5); backdrop-filter: blur(20px); }
+    .modal-close { float: right; cursor: pointer; font-size: 24px; color: #94A3B8; background: transparent; border: none; }
+    .modal-close:hover { color: #fff; }
 
-    /* Sidebar Collapsed State */
-    .sidebar.collapsed { width: var(--sidebar-width-collapsed); overflow: hidden; }
-    .sidebar.collapsed .brand-name, .sidebar.collapsed .new-chat-label, 
-    .sidebar.collapsed .chat-history-title, .sidebar.collapsed .chat-search-container, 
-    .sidebar.collapsed .nav-links-item span:not(:first-child), .sidebar.collapsed .user-info, 
-    .sidebar.collapsed .memory-section, .sidebar.collapsed .settings-label, 
-    .sidebar.collapsed .logout-label { display: none; }
-    .sidebar.collapsed .sidebar-brand { padding-right: 0; justify-content: center; }
-    .sidebar.collapsed .nav-links-item { justify-content: center; padding-left: 0; padding-right: 0; }
-    .sidebar.collapsed .settings-btn { justify-content: center; }
+    /* Footer Disclaimer */
+    .app-footer { text-align: center; font-size: 11px; color: #64748B; padding-bottom: 10px; }
+    
+    /* Utility */
+    [hidden] { display: none !important; }
 </style>
 </head>
-<body class="app" data-theme="light">
+<body class="app" data-theme="dark">
 
   <!-- ================= SIDEBAR ================= -->
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-brand" style="display: flex; justify-content: space-between; align-items: center; padding-right: 8px;">
-      <div style="display: flex; align-items: center; gap: var(--space-3);">
+      <div style="display: flex; align-items: center; gap: 12px;">
         <div class="brand-logo" aria-hidden="true"></div>
-        <span class="brand-name">Isolde</span>
+        <span class="brand-name">Isolde AI</span>
       </div>
-      <button id="sidebar-toggle-btn" type="button" title="Toggle sidebar" style="color: var(--text-tertiary); padding: 4px; border-radius: 4px; background: transparent; border: none; cursor: pointer;">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"></rect><line x1="9" x2="9" y1="3" y2="21"></line></svg>
+      <button id="sidebar-toggle-btn" type="button" title="Toggle sidebar" style="color: #94A3B8; padding: 4px; background: transparent; border: none; cursor: pointer;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"></rect><line x1="9" x2="9" y1="3" y2="21"></line></svg>
       </button>
     </div>
 
@@ -120,15 +122,15 @@
     </button>
 
     <ul class="nav-links-list">
-        <li class="nav-links-item" onclick="alert('Images feature coming soon!')">
-            <span style="font-size: 16px;">🖼️</span> <span>Images</span>
-        </li>
-        <li class="nav-links-item" onclick="alert('Videos feature coming soon!')">
-            <span style="font-size: 16px;">🎬</span> <span>Videos</span>
-        </li>
-        <li class="nav-links-item" onclick="alert('Library feature coming soon!')">
-            <span style="font-size: 16px;">📚</span> <span>Library</span>
-        </li>
+        <li class="nav-links-item" id="images-studio-btn" style="cursor: pointer;">
+              <span style="font-size: 16px;">🎨</span> <span>Images Studio</span>
+          </li>
+          <li class="nav-links-item" id="videos-gen-btn" style="cursor: pointer;">
+              <span style="font-size: 16px;">🎬</span> <span>Videos Gen</span>
+          </li>
+          <li class="nav-links-item" style="cursor: pointer;">
+              <span style="font-size: 16px;">📚</span> <span>Smart Library</span>
+          </li>
     </ul>
 
     <nav class="chat-history" aria-label="Chat history">
@@ -138,18 +140,18 @@
           <input type="text" id="chat-search-input" class="chat-search-input" placeholder="Search chats..." autocomplete="off">
       </div>
 
-      <ul class="chat-history-list" id="chat-history-list">
+      <ul class="chat-history-list" id="chat-history-list" style="list-style: none; padding: 0; margin: 0; color: #94A3B8; font-size: 13px;">
         <!-- Dynamic chat history injects here -->
       </ul>
     </nav>
 
     <div class="sidebar-footer">
-      <section class="memory-section" style="margin: 0 var(--space-2) var(--space-3); padding: var(--space-3); background: var(--bg-surface); border-radius: var(--radius-md); border: 1px solid var(--border-default);">
-        <h4 style="margin: 0 0 8px 0; font-size: 12px; font-weight: 600; color: var(--text-secondary);">🧠 AI Memory System</h4>
-        <ul id="memory-list" style="list-style: none; padding: 0; margin: 0 0 10px 0; max-height: 100px; overflow-y: auto; font-size: 11.5px; color: var(--text-tertiary);">
+      <section class="memory-section">
+        <h4 style="margin: 0 0 8px 0; font-size: 12px; font-weight: 600; color: #38BDF8;">🧠 AI Memory System</h4>
+        <ul id="memory-list" style="list-style: none; padding: 0; margin: 0 0 10px 0; max-height: 100px; overflow-y: auto; font-size: 11.5px; color: #94A3B8;">
           <li style="font-style: italic;">No memories saved yet.</li>
         </ul>
-        <button id="clear-all-memories" type="button" style="width: 100%; padding: 6px; background: var(--danger-soft); color: var(--danger); border: 1px solid rgba(229, 72, 77, 0.2); border-radius: var(--radius-sm); font-size: 11.5px; cursor: pointer; font-weight: 600; transition: background 0.2s;">
+        <button id="clear-all-memories" type="button" style="width: 100%; padding: 8px; background: rgba(239, 68, 68, 0.15); color: #F87171; border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 8px; font-size: 11.5px; cursor: pointer; font-weight: 600; transition: background 0.2s;">
             Clear All Memories
         </button>
       </section>
@@ -157,18 +159,18 @@
       <div class="user-profile">
         <div class="user-avatar" aria-hidden="true"></div>
         <div class="user-info">
-          <span class="user-name" id="sidebar-user-name">User Name</span>
-          <span class="user-email" id="sidebar-user-email">user@example.com</span>
+          <span class="user-name" id="sidebar-user-name">Vikraman</span>
+          <span class="user-email" id="sidebar-user-email">Pro Glass Tier</span>
         </div>
       </div>
       
       <button class="settings-btn" type="button" id="open-settings-btn">
-        <span class="settings-icon" aria-hidden="true"></span>
+        <span class="settings-icon">⚙️</span>
         <span class="settings-label">Settings</span>
       </button>
 
-      <button class="settings-btn" type="button" id="logout-btn" style="color: var(--danger); margin-top: 2px;">
-        <svg class="settings-icon" style="background: currentColor; -webkit-mask: none; mask: none; width: 17px; height: 17px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+      <button class="settings-btn" type="button" id="logout-btn" style="color: #F87171;">
+        <span class="settings-icon">🚪</span>
         <span class="logout-label">Logout</span>
       </button>
     </div>
@@ -178,13 +180,13 @@
   <div class="main-content">
 
     <header class="app-header">
-      <span class="app-title">New conversation</span>
-      <div class="header-actions">
-        <button class="theme-toggle-btn" id="themeToggle" type="button" aria-label="Toggle theme">
-          <span class="theme-toggle-icon" aria-hidden="true"></span>
+      <span class="app-title">Aetheris Workspace</span>
+      <div class="header-actions" style="display: flex; gap: 15px;">
+        <button class="theme-toggle-btn" id="themeToggle" type="button" aria-label="Toggle theme" style="background: transparent; border: none; color: #94A3B8; cursor: pointer; font-size: 16px;">
+          <span class="theme-toggle-icon">🌓</span>
         </button>
-        <button class="clear-chat-btn" type="button" aria-label="Clear chat">
-          <span class="clear-chat-icon" aria-hidden="true"></span>
+        <button class="clear-chat-btn" type="button" aria-label="Clear chat" style="background: transparent; border: none; color: #94A3B8; cursor: pointer; font-size: 16px;">
+          <span class="clear-chat-icon">🧹</span>
         </button>
       </div>
     </header>
@@ -193,8 +195,8 @@
       <!-- Welcome screen -->
       <section class="welcome-screen" id="welcome-screen">
         <div class="welcome-logo" aria-hidden="true"></div>
-        <h1 class="welcome-title">Hello, I'm Isolde</h1>
-        <p class="welcome-subtitle">What would you like to work on today?</p>
+        <h1 class="welcome-title">Good Morning, Vikraman</h1>
+        <p class="welcome-subtitle">How can Aetheris AI help you architect your vision today?</p>
         <div class="suggestions">
           <button class="suggestion-chip" type="button">Draft a project brief</button>
           <button class="suggestion-chip" type="button">Explain a complex topic</button>
@@ -204,18 +206,13 @@
       </section>
 
       <!-- Message thread -->
-      <div class="chat-messages" id="chat-messages" hidden>
+      <div class="chat-messages" id="chat-messages" hidden style="width: 100%; max-width: 800px; color: #fff;">
         <!-- Messages will be injected here -->
       </div>
 
       <!-- Typing indicator -->
-      <div class="typing-indicator" id="typingIndicator">
-        <div class="typing-avatar" aria-hidden="true"></div>
-        <div class="typing-dots">
-          <span class="typing-dot"></span>
-          <span class="typing-dot"></span>
-          <span class="typing-dot"></span>
-        </div>
+      <div class="typing-indicator" id="typingIndicator" hidden>
+        <div style="color: #38BDF8; font-size: 14px; font-weight: 600;">Aetheris is thinking...</div>
       </div>
     </div>
 
@@ -225,62 +222,62 @@
         
         <div class="attachment-wrapper" style="position: relative;">
             <button class="file-upload-btn" id="toggle-attachment-btn" type="button" aria-label="Attach file">
-              <span class="file-upload-icon" aria-hidden="true"></span>
+              <span class="file-upload-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg></span>
             </button>
             
-            <!-- 🌟 EXACT REPLICA OF THE UPLOAD MENU FROM SCREENSHOT 🌟 -->
+            <!-- 🌟 EXACT REPLICA OF THE UPLOAD MENU 🌟 -->
             <div id="attachment-menu" class="attachment-menu" style="position: absolute; bottom: 56px; left: 0; background: var(--bg-elevated); border-radius: 16px; box-shadow: 0 4px 24px rgba(0,0,0,0.15); padding: 12px 0; width: 280px; z-index: 9999; border: 1px solid var(--border-default);">
               
               <label class="attachment-menu-item">
-                <span class="menu-item-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg></span>
+                <span class="menu-item-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg></span>
                 <span class="menu-item-text">Upload files</span>
                 <input class="file-upload-input" id="file-upload-input" type="file" hidden />
               </label>
               
               <div class="attachment-menu-item" onclick="alert('Drive integration coming soon!'); document.getElementById('attachment-menu').classList.remove('show');">
-                <span class="menu-item-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 22h20L12 2z"></path></svg></span>
+                <span class="menu-item-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 22h20L12 2z"></path></svg></span>
                 <span class="menu-item-text">Add from Drive</span>
               </div>
 
               <div class="attachment-menu-item" onclick="alert('More uploads coming soon!'); document.getElementById('attachment-menu').classList.remove('show');">
-                <span class="menu-item-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.5"></circle><circle cx="12" cy="12" r="1.5"></circle><circle cx="19" cy="12" r="1.5"></circle></svg></span>
+                <span class="menu-item-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="1.5"></circle><circle cx="12" cy="12" r="1.5"></circle><circle cx="19" cy="12" r="1.5"></circle></svg></span>
                 <span class="menu-item-text">More uploads</span>
-                <span class="menu-item-arrow"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg></span>
+                <span class="menu-item-arrow"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg></span>
               </div>
 
               <div class="attachment-divider"></div>
 
               <div class="attachment-menu-item" onclick="alert('Image generation coming soon!'); document.getElementById('attachment-menu').classList.remove('show');">
-                <span class="menu-item-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg></span>
+                <span class="menu-item-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg></span>
                 <span class="menu-item-text">Create image</span>
                 <span class="badge-new">New</span>
               </div>
 
               <div class="attachment-menu-item" onclick="alert('Video generation coming soon!'); document.getElementById('attachment-menu').classList.remove('show');">
-                <span class="menu-item-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"></rect><line x1="7" y1="2" x2="7" y2="22"></line><line x1="17" y1="2" x2="17" y2="22"></line><line x1="2" y1="12" x2="22" y2="12"></line><line x1="2" y1="7" x2="7" y2="7"></line><line x1="2" y1="17" x2="7" y2="17"></line><line x1="17" y1="17" x2="22" y2="17"></line><line x1="17" y1="7" x2="22" y2="7"></line></svg></span>
+                <span class="menu-item-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"></rect><line x1="7" y1="2" x2="7" y2="22"></line><line x1="17" y1="2" x2="17" y2="22"></line><line x1="2" y1="12" x2="22" y2="12"></line><line x1="2" y1="7" x2="7" y2="7"></line><line x1="2" y1="17" x2="7" y2="17"></line><line x1="17" y1="17" x2="22" y2="17"></line><line x1="17" y1="7" x2="22" y2="7"></line></svg></span>
                 <span class="menu-item-text">Create video</span>
               </div>
 
               <div class="attachment-menu-item" onclick="alert('Music generation coming soon!'); document.getElementById('attachment-menu').classList.remove('show');">
-                <span class="menu-item-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg></span>
+                <span class="menu-item-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg></span>
                 <span class="menu-item-text">Create music</span>
                 <span class="badge-new">New</span>
               </div>
 
               <div class="attachment-menu-item" onclick="alert('Canvas coming soon!'); document.getElementById('attachment-menu').classList.remove('show');">
-                <span class="menu-item-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="12" y1="8" x2="12" y2="16"></line><line x1="8" y1="12" x2="16" y2="12"></line></svg></span>
+                <span class="menu-item-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="12" y1="8" x2="12" y2="16"></line><line x1="8" y1="12" x2="16" y2="12"></line></svg></span>
                 <span class="menu-item-text">Canvas</span>
               </div>
 
               <div class="attachment-menu-item" onclick="alert('Deep research coming soon!'); document.getElementById('attachment-menu').classList.remove('show');">
-                <span class="menu-item-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg></span>
+                <span class="menu-item-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg></span>
                 <span class="menu-item-text">Deep research</span>
               </div>
 
               <div class="attachment-menu-item" onclick="alert('More tools coming soon!'); document.getElementById('attachment-menu').classList.remove('show');">
-                <span class="menu-item-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.5"></circle><circle cx="12" cy="12" r="1.5"></circle><circle cx="19" cy="12" r="1.5"></circle></svg></span>
+                <span class="menu-item-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="1.5"></circle><circle cx="12" cy="12" r="1.5"></circle><circle cx="19" cy="12" r="1.5"></circle></svg></span>
                 <span class="menu-item-text">More tools</span>
-                <span class="menu-item-arrow"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg></span>
+                <span class="menu-item-arrow"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg></span>
               </div>
 
             </div>
@@ -291,35 +288,35 @@
           class="message-textarea"
           id="messageInput"
           rows="1"
-          placeholder="Ask Isolde..."
+          placeholder="Ask Aetheris anything..."
           aria-label="Message"
         ></textarea>
 
-        <div class="model-switcher-wrapper" style="padding: 0 10px; border-left: 1px solid var(--border-default); display: flex; align-items: center;">
-            <select id="ai-model-select" style="border: none; background: transparent; font-size: 13px; font-weight: 500; color: var(--text-secondary); outline: none; cursor: pointer; font-family: var(--font-body);">
+        <div class="model-switcher-wrapper" style="padding: 0 15px; border-left: 1px solid rgba(255,255,255,0.1); display: flex; align-items: center;">
+            <select id="ai-model-select" style="border: none; background: transparent; font-size: 13px; font-weight: 600; color: #60A5FA; outline: none; cursor: pointer; appearance: none;">
               <option value="Flash-Lite">3.5 Flash-Lite (Fastest)</option>
               <option value="3.6 Flash">3.6 Flash</option>
               <option value="3.1 Pro">3.1 Pro</option>
               <option value="Extended thinking">Extended thinking</option>
-              <option value="Flash-Lite Extended" selected>Flash-Lite Extended</option>
+              <option value="Flash-Lite Extended" selected>Aetheris Omni v4.2</option>
             </select>
         </div>
 
         <button class="voice-input-btn" id="voice-input-btn" type="button" aria-label="Voice input">
-          <span class="voice-input-icon" aria-hidden="true"></span>
+          <span class="voice-input-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg></span>
         </button>
 
-        <button class="send-btn" type="submit" aria-label="Send message" disabled>
-          <span class="send-icon" aria-hidden="true"></span>
+        <button class="send-btn" type="submit" aria-label="Send message" style="padding: 8px 12px; border-radius: 12px;">
+          <span class="send-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg></span>
         </button>
       </form>
     </div>
 
-  </div>
+    <footer class="app-footer">
+      <span class="disclaimer">Aetheris AI can make mistakes. Please verify important information.</span>
+    </footer>
 
-  <footer class="app-footer">
-    <span class="disclaimer">Isolde can make mistakes. Please verify important information.</span>
-  </footer>
+  </div>
 
 </div>
 
@@ -327,22 +324,154 @@
 <div class="modal-overlay" id="settings-modal">
     <div class="modal-content">
         <button class="modal-close" id="close-settings-btn" type="button">&times;</button>
-        <h3 style="font-size: 18px; font-weight: 600; margin-bottom: 4px;">⚙️ Settings & Options</h3>
-        <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 16px;">Customize your Isolde AI experience.</p>
-        <hr style="border: 0; border-top: 1px solid var(--border-subtle); margin-bottom: 16px;">
+        <h3 style="font-size: 20px; font-weight: 700; margin-bottom: 6px;">⚙️ Global Preferences</h3>
+        <p style="font-size: 13px; color: #94A3B8; margin-bottom: 20px;">Customize your Aetheris AI experience.</p>
+        <hr style="border: 0; border-top: 1px solid rgba(255,255,255,0.1); margin-bottom: 20px;">
         
-        <div style="margin-bottom: 20px;">
-            <label style="font-size: 13.5px; font-weight: 500; display: block; margin-bottom: 8px;">System Prompt</label>
-            <textarea id="settings-sys-prompt" rows="3" style="width: 100%; padding: 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-default); background: var(--bg-input); color: var(--text-primary); font-family: var(--font-body); font-size: 13px; outline: none; resize: vertical;"></textarea>
+        <div style="margin-bottom: 24px;">
+            <label style="font-size: 13.5px; font-weight: 600; display: block; margin-bottom: 10px; color: #CBD5E1;">System Instructions (Core Prompt)</label>
+            <textarea id="settings-sys-prompt" rows="4" style="width: 100%; padding: 14px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.2); background: rgba(15,23,42,0.6); color: #fff; font-size: 14px; outline: none; resize: vertical; box-sizing: border-box;"></textarea>
         </div>
-        <button id="save-settings-btn" type="button" style="width: 100%; padding: 10px; background: var(--accent); color: var(--accent-contrast); border: none; border-radius: var(--radius-sm); cursor: pointer; font-weight: 600; transition: background 0.2s;">
-            Save Preferences
+        <button id="save-settings-btn" type="button" style="width: 100%; padding: 14px; background: linear-gradient(135deg, #3B82F6, #2563EB); color: #fff; border: none; border-radius: 12px; cursor: pointer; font-weight: 600; font-size: 14px; box-shadow: 0 4px 15px rgba(59,130,246,0.4);">
+            Save & Update Configuration
         </button>
     </div>
 </div>
 
-<!-- ================= CLEANED JAVASCRIPT ================= -->
-<!-- இந்த HTML-ல் உள்ள பட்டன்களை உங்களது script.js இயக்குவதால் இங்கு எந்த script-ம் தேவை இல்லை! -->
 <script src="script.js"></script>
+<!-- 🌟 PERMANENT AI STUDIO MODAL -->
+<div id="ai-studio-workspace-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); backdrop-filter:blur(8px); justify-content:center; align-items:center; z-index:99999;">
+    <div style="background:var(--bg-surface, #1e293b); color:var(--text-primary, #fff); padding:35px; border-radius:20px; width:100%; max-width:550px; box-shadow:0 25px 50px -12px rgba(0,0,0,0.5); border:1px solid rgba(255,255,255,0.1);">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+            <h2 id="studio-modal-title" style="margin:0; font-size:22px; font-weight:700;">🎨 Images Studio Workspace</h2>
+            <button id="close-studio-modal" style="background:transparent; border:none; color:inherit; font-size:20px; cursor:pointer;">✕</button>
+        </div>
+        <p id="studio-modal-desc" style="color:var(--text-secondary, #94a3b8); font-size:13px; margin-bottom:20px;">
+            Transform text prompts into stunning high-definition AI artworks instantly.
+        </p>
+        <textarea id="studio-prompt-input" placeholder="e.g., A futuristic cyberpunk city in neon lights, 4k..." style="width:100%; height:110px; background:var(--bg-canvas, #0f172a); color:inherit; border:1px solid rgba(255,255,255,0.15); border-radius:12px; padding:12px; resize:none; font-family:inherit; font-size:14px; outline:none; margin-bottom:20px;"></textarea>
+        
+        <div id="studio-result-container" style="margin-bottom:20px; display:none; text-align:center;">
+            <div id="studio-loader" style="color:#60A5FA; font-size:14px; font-weight:600;">Generating high-performance asset... Please wait.</div>
+            <img id="generated-image-output" src="" alt="Generated AI Asset" style="max-width:100%; border-radius:12px; margin-top:10px; display:none; border:1px solid rgba(255,255,255,0.2);" />
+        </div>
+
+        <button id="run-generation-btn" style="width:100%; padding:14px; background:linear-gradient(135deg, #3B82F6 0%, #1D4ED8 100%); color:white; border:none; border-radius:12px; font-weight:600; font-size:15px; cursor:pointer; box-shadow:0 4px 12px rgba(59,130,246,0.4);">
+            Generate Now 🚀
+        </button>
+    </div>
+</div>
+
+<div id="settings-modal" class="settings-modal-overlay">
+    <div class="settings-modal-container">
+        <div class="settings-modal-header">
+            <h2>⚙️ Settings & Preferences</h2>
+            <button id="close-settings-btn" class="settings-close-icon">✕</button>
+        </div>
+
+        <div class="settings-modal-body">
+            <div class="settings-sidebar-tabs">
+                <button class="settings-tab-btn is-active" data-tab="general">general</button>
+                <button class="settings-tab-btn" data-tab="appearance">Appearance</button>
+                <button class="settings-tab-btn" data-tab="ai-model">AI & Models</button>
+                <button class="settings-tab-btn" data-tab="security">API Keys & Security</button>
+            </div>
+
+            <div class="settings-content-area">
+                
+                <div class="settings-panel is-active" data-tab-panel="general">
+                    <h3>General Preferences</h3>
+                    <p class="settings-desc">Manage your workspace behavior and localization.</p>
+                    
+                    <div class="setting-group">
+                        <label>Default Workspace Language</label>
+                        <select id="settings-language" class="setting-select">
+                            <option value="en">English (US)</option>
+                            <option value="ta">Tamil (தமிழ்)</option>
+                            <option value="es">Spanish</option>
+                        </select>
+                    </div>
+
+                    <div class="setting-group">
+                        <label>Auto-save Conversations</label>
+                        <div class="setting-toggle-row">
+                            <span>Automatically save chat history to cloud/local storage</span>
+                            <input type="checkbox" id="setting-autosave" checked>
+                        </div>
+                    </div>
+
+                    <div class="setting-group">
+                        <label>Auto-rename Chat Titles</label>
+                        <div class="setting-toggle-row">
+                            <span>AI generates smart titles for new conversations</span>
+                            <input type="checkbox" id="setting-autorename" checked>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="settings-panel" data-tab-panel="appearance">
+                    <h3>Appearance & Theme</h3>
+                    <p class="settings-desc">Customize how Isolde AI looks on your screen.</p>
+                    
+                    <div class="setting-group">
+                        <label>Color Theme</label>
+                        <div class="theme-swatches-grid">
+                            <button class="theme-swatch-btn is-active" data-theme-value="dark" style="background:#0f172a; color:#fff;">Dark Glass</button>
+                            <button class="theme-swatch-btn" data-theme-value="light" style="background:#f8fafc; color:#0f172a; border:1px solid #cbd5e1;">Light Clean</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="settings-panel" data-tab-panel="ai-model">
+                    <h3>AI Generation Parameters</h3>
+                    <p class="settings-desc">Configure default system prompts and model intelligence.</p>
+                    
+                    <div class="setting-group">
+                        <label>Default AI Model</label>
+                        <select id="settings-default-model" class="setting-select">
+                            <option value="Flash-Lite Extended">Flash-Lite Extended (Fast & Smart)</option>
+                            <option value="Flash 2.5">Flash 2.5 (High Performance)</option>
+                            <option value="Pro Vision">Pro Vision (Advanced Reasoning)</option>
+                        </select>
+                    </div>
+
+                    <div class="setting-group">
+                        <label>Custom System Instructions (Persona)</label>
+                        <textarea id="settings-sys-prompt" class="setting-textarea" placeholder="e.g., You are a senior software architect. Provide direct and production-ready code..."></textarea>
+                    </div>
+                </div>
+
+                <div class="settings-panel" data-tab-panel="security">
+                    <h3>Security & External API Keys</h3>
+                    <p class="settings-desc">Manage your custom API credentials for provider routing.</p>
+                    
+                    <div class="setting-group">
+                        <label>Groq API Key</label>
+                        <input type="password" id="api-key-groq" class="setting-input" placeholder="gsk_************************************">
+                    </div>
+
+                    <div class="setting-group">
+                        <label>OpenAI API Key</label>
+                        <input type="password" id="api-key-openai" class="setting-input" placeholder="sk-****************************************">
+                    </div>
+
+                    <div class="setting-group">
+                        <label>Gemini API Key</label>
+                        <input type="password" id="api-key-gemini" class="setting-input" placeholder="AIzaSy**********************************">
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <div class="settings-modal-footer">
+            <div id="settings-saved-toast" class="settings-toast">✅ Settings saved successfully!</div>
+            <div class="footer-buttons">
+                <button id="cancel-settings-btn" class="btn-secondary">Cancel</button>
+                <button id="save-settings-btn" class="btn-primary">Save Changes</button>
+            </div>
+        </div>
+    </div>
+</div>
 </body>
 </html>
