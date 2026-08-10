@@ -3,11 +3,13 @@ from app import create_app
 from app.extensions import db
 from app.plugin_manager import plugin_manager, IPlugin
 from config import Config
+from flask_jwt_extended import create_access_token
 
 
 class TestConfig(Config):
     TESTING = True
     SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
+    JWT_SECRET_KEY = "test-secret-key-for-testing"
 
 
 class DummyPlugin(IPlugin):
@@ -34,35 +36,47 @@ def client():
     app = create_app(TestConfig)
     with app.app_context():
         db.create_all()
-        yield app.test_client()
+        # Create a valid test token with string identity
+        with app.test_request_context():
+            token = create_access_token(identity="test_user")
+        yield app.test_client(), token
         db.session.remove()
         db.drop_all()
     for name in [p["name"] for p in plugin_manager.list_plugins()]:
         plugin_manager.unregister_plugin(name)
 
 
+def get_auth_headers(token):
+    """Helper to create auth headers for tests"""
+    return {"Authorization": f"Bearer {token}"}
+
+
 def test_list_registered_plugins_empty(client):
-    res = client.get("/api/plugins/registry")
+    test_client, token = client
+    res = test_client.get("/api/plugins/registry")
     assert res.status_code == 200
     assert isinstance(res.get_json()["plugins"], list)
 
 
 def test_execute_registered_plugin(client):
+    test_client, token = client
     plugin_manager.register_plugin(DummyPlugin())
-    res = client.post("/api/plugins/registry/dummy-plugin/execute", json={"args": [], "kwargs": {}})
+    res = test_client.post("/api/plugins/registry/dummy-plugin/execute", json={"args": [], "kwargs": {}}, headers=get_auth_headers(token))
     assert res.status_code == 200
     assert res.get_json()["result"] == "executed"
 
 
 def test_execute_unknown_plugin(client):
-    res = client.post("/api/plugins/registry/does-not-exist/execute", json={})
+    test_client, token = client
+    res = test_client.post("/api/plugins/registry/does-not-exist/execute", json={}, headers=get_auth_headers(token))
     assert res.status_code == 404
 
 
 def test_unregister_plugin(client):
+    test_client, token = client
     plugin_manager.register_plugin(DummyPlugin())
-    res = client.delete("/api/plugins/registry/dummy-plugin")
+    res = test_client.delete("/api/plugins/registry/dummy-plugin", headers=get_auth_headers(token))
     assert res.status_code == 200
 
-    res = client.delete("/api/plugins/registry/dummy-plugin")
+    res = test_client.delete("/api/plugins/registry/dummy-plugin", headers=get_auth_headers(token))
     assert res.status_code == 404
