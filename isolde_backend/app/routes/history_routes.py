@@ -10,149 +10,223 @@ from app.models import Conversation
 history_bp = Blueprint("history", __name__)
 
 
-@history_bp.route("/history", methods=["GET"], strict_slashes=False)
-@jwt_required(optional=True)
-def get_history():
+def _get_authenticated_user_id():
     user_id = get_jwt_identity()
 
+    if user_id is None:
+        return None
+
+    return str(user_id)
+
+
+def _to_bool(value):
+    if isinstance(value, bool):
+        return value
+
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+
+    return bool(value)
+
+
+def _escape_like(value):
+    return (
+        value
+        .replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+    )
+
+
+def _get_owned_conversation(conversation_id, user_id):
+    if not conversation_id or not user_id:
+        return None
+
+    return Conversation.query.filter_by(
+        id=conversation_id,
+        user_id=user_id
+    ).first()
+
+
+@history_bp.route("/history", methods=["GET"], strict_slashes=False)
+@history_bp.route("/api/history", methods=["GET"], strict_slashes=False)
+@jwt_required(optional=True)
+def get_history():
+    user_id = _get_authenticated_user_id()
+
     if not user_id:
-        return jsonify({"status": "success", "conversations": []}), 200
+        return jsonify({
+            "status": "success",
+            "conversations": []
+        }), 200
 
-    q = request.args.get("q", "").strip()
-
-    query = Conversation.query.filter_by(user_id=user_id)
-
-    if q:
-        query = query.filter(Conversation.title.ilike(f"%{q}%"))
+    search_query = (
+        request.args.get("q")
+        or request.args.get("search")
+        or request.args.get("query")
+        or ""
+    ).strip()
 
     try:
+        query = Conversation.query.filter_by(user_id=user_id)
+
+        if search_query:
+            escaped_query = _escape_like(search_query)
+            query = query.filter(
+                Conversation.title.ilike(f"%{escaped_query}%", escape="\\")
+            )
+
         conversations = (
-            query.order_by(
+            query
+            .order_by(
                 Conversation.is_pinned.desc(),
-                Conversation.created_at.desc(),
-            ).all()
+                Conversation.created_at.desc()
+            )
+            .all()
         )
 
-        return jsonify(
-            {
-                "status": "success",
-                "conversations": [conversation.to_dict() for conversation in conversations],
-            }
-        ), 200
+        return jsonify({
+            "status": "success",
+            "conversations": [conversation.to_dict() for conversation in conversations]
+        }), 200
     except Exception as e:
-        current_app.logger.error(f"Error fetching history: {e}")
-        return jsonify(
-            {
-                "status": "error",
-                "message": "Failed to load chat history.",
-            }
-        ), 500
+        current_app.logger.error(f"Error fetching history for user {user_id}: {e}")
+
+        return jsonify({
+            "status": "error",
+            "message": "Failed to load chat history due to a server error."
+        }), 500
 
 
 @history_bp.route("/history/<conversation_id>", methods=["GET"], strict_slashes=False)
+@history_bp.route("/api/history/<conversation_id>", methods=["GET"], strict_slashes=False)
 @jwt_required(optional=True)
 def get_conversation(conversation_id):
-    user_id = get_jwt_identity()
+    user_id = _get_authenticated_user_id()
 
     if not user_id:
-        return jsonify({"status": "error", "message": "Conversation not found."}), 404
+        return jsonify({
+            "status": "error",
+            "message": "Conversation not found."
+        }), 404
 
-    conversation = Conversation.query.filter_by(
-        id=conversation_id,
-        user_id=user_id,
-    ).first()
+    try:
+        conversation = _get_owned_conversation(conversation_id, user_id)
+    except Exception as e:
+        current_app.logger.error(f"Error loading conversation {conversation_id}: {e}")
+
+        return jsonify({
+            "status": "error",
+            "message": "Failed to load conversation due to a server error."
+        }), 500
 
     if not conversation:
-        return jsonify({"status": "error", "message": "Conversation not found."}), 404
+        return jsonify({
+            "status": "error",
+            "message": "Conversation not found."
+        }), 404
 
-    return jsonify(
-        {
-            "status": "success",
-            "conversation": conversation.to_dict(include_messages=True),
-        }
-    ), 200
+    return jsonify({
+        "status": "success",
+        "conversation": conversation.to_dict(include_messages=True)
+    }), 200
 
 
 @history_bp.route(
     "/history/<conversation_id>/update",
     methods=["PATCH"],
-    strict_slashes=False,
+    strict_slashes=False
+)
+@history_bp.route(
+    "/api/history/<conversation_id>/update",
+    methods=["PATCH"],
+    strict_slashes=False
 )
 @jwt_required(optional=True)
 def update_conversation(conversation_id):
-    user_id = get_jwt_identity()
+    user_id = _get_authenticated_user_id()
 
     if not user_id:
-        return jsonify({"status": "error", "message": "Conversation not found."}), 404
+        return jsonify({
+            "status": "error",
+            "message": "Conversation not found."
+        }), 404
 
     data = request.get_json(silent=True) or {}
 
-    conversation = Conversation.query.filter_by(
-        id=conversation_id,
-        user_id=user_id,
-    ).first()
+    try:
+        conversation = _get_owned_conversation(conversation_id, user_id)
+    except Exception as e:
+        current_app.logger.error(f"Error finding conversation {conversation_id}: {e}")
+
+        return jsonify({
+            "status": "error",
+            "message": "Failed to update conversation due to a server error."
+        }), 500
 
     if not conversation:
-        return jsonify({"status": "error", "message": "Conversation not found."}), 404
+        return jsonify({
+            "status": "error",
+            "message": "Conversation not found."
+        }), 404
 
     try:
         if "title" in data:
             title = str(data.get("title") or "").strip()
 
-            if not title:
-                return jsonify(
-                    {
-                        "status": "error",
-                        "message": "Conversation title cannot be empty.",
-                    }
-                ), 400
-
-            if len(title) > 200:
-                title = title[:200]
-
-            conversation.title = title
+            if title:
+                conversation.title = title[:200]
 
         if "is_pinned" in data:
-            conversation.is_pinned = bool(data.get("is_pinned"))
+            conversation.is_pinned = _to_bool(data.get("is_pinned"))
 
         if "is_archived" in data:
-            conversation.is_archived = bool(data.get("is_archived"))
+            conversation.is_archived = _to_bool(data.get("is_archived"))
 
         db.session.commit()
     except Exception as e:
         db.session.rollback()
         current_app.logger.error(f"Error updating conversation {conversation_id}: {e}")
-        return jsonify(
-            {
-                "status": "error",
-                "message": "Failed to update conversation due to a server error.",
-            }
-        ), 500
 
-    return jsonify(
-        {
-            "status": "success",
-            "message": "Conversation updated.",
-            "conversation": conversation.to_dict(),
-        }
-    ), 200
+        return jsonify({
+            "status": "error",
+            "message": "Failed to update conversation due to a server error."
+        }), 500
+
+    return jsonify({
+        "status": "success",
+        "message": "Conversation updated.",
+        "conversation": conversation.to_dict()
+    }), 200
 
 
 @history_bp.route("/history/<conversation_id>", methods=["DELETE"], strict_slashes=False)
+@history_bp.route("/api/history/<conversation_id>", methods=["DELETE"], strict_slashes=False)
 @jwt_required(optional=True)
 def delete_conversation(conversation_id):
-    user_id = get_jwt_identity()
+    user_id = _get_authenticated_user_id()
 
     if not user_id:
-        return jsonify({"status": "error", "message": "Conversation not found."}), 404
+        return jsonify({
+            "status": "error",
+            "message": "Conversation not found."
+        }), 404
 
-    conversation = Conversation.query.filter_by(
-        id=conversation_id,
-        user_id=user_id,
-    ).first()
+    try:
+        conversation = _get_owned_conversation(conversation_id, user_id)
+    except Exception as e:
+        current_app.logger.error(f"Error finding conversation {conversation_id}: {e}")
+
+        return jsonify({
+            "status": "error",
+            "message": "Failed to delete conversation due to a server error."
+        }), 500
 
     if not conversation:
-        return jsonify({"status": "error", "message": "Conversation not found."}), 404
+        return jsonify({
+            "status": "error",
+            "message": "Conversation not found."
+        }), 404
 
     try:
         db.session.delete(conversation)
@@ -160,25 +234,29 @@ def delete_conversation(conversation_id):
     except Exception as e:
         db.session.rollback()
         current_app.logger.error(f"Error deleting conversation {conversation_id}: {e}")
-        return jsonify(
-            {
-                "status": "error",
-                "message": "Failed to delete conversation due to a server error.",
-            }
-        ), 500
 
-    return jsonify(
-        {
-            "status": "success",
-            "message": "Conversation deleted.",
-        }
-    ), 200
+        return jsonify({
+            "status": "error",
+            "message": "Failed to delete conversation due to a server error."
+        }), 500
+
+    return jsonify({
+        "status": "success",
+        "message": "Conversation deleted."
+    }), 200
 
 
 @history_bp.route("/history", methods=["DELETE"], strict_slashes=False)
+@history_bp.route("/api/history", methods=["DELETE"], strict_slashes=False)
 @jwt_required()
 def delete_all_history():
-    user_id = get_jwt_identity()
+    user_id = _get_authenticated_user_id()
+
+    if not user_id:
+        return jsonify({
+            "status": "error",
+            "message": "Conversation history not found."
+        }), 404
 
     try:
         conversations = Conversation.query.filter_by(user_id=user_id).all()
@@ -190,45 +268,64 @@ def delete_all_history():
     except Exception as e:
         db.session.rollback()
         current_app.logger.error(f"Error deleting all history for user {user_id}: {e}")
-        return jsonify(
-            {
-                "status": "error",
-                "message": "Failed to clear history due to a server error.",
-            }
-        ), 500
 
-    return jsonify(
-        {
-            "status": "success",
-            "message": "All conversation history deleted.",
-        }
-    ), 200
+        return jsonify({
+            "status": "error",
+            "message": "Failed to clear history due to a server error."
+        }), 500
+
+    return jsonify({
+        "status": "success",
+        "message": "All conversation history deleted."
+    }), 200
 
 
 @history_bp.route(
     "/history/<conversation_id>/export",
     methods=["GET"],
-    strict_slashes=False,
+    strict_slashes=False
+)
+@history_bp.route(
+    "/api/history/<conversation_id>/export",
+    methods=["GET"],
+    strict_slashes=False
 )
 @jwt_required(optional=True)
 def export_conversation(conversation_id):
-    user_id = get_jwt_identity()
+    user_id = _get_authenticated_user_id()
 
     if not user_id:
-        return jsonify({"status": "error", "message": "Conversation not found."}), 404
+        return jsonify({
+            "status": "error",
+            "message": "Conversation not found."
+        }), 404
 
-    conversation = Conversation.query.filter_by(
-        id=conversation_id,
-        user_id=user_id,
-    ).first()
+    try:
+        conversation = _get_owned_conversation(conversation_id, user_id)
+    except Exception as e:
+        current_app.logger.error(f"Error exporting conversation {conversation_id}: {e}")
+
+        return jsonify({
+            "status": "error",
+            "message": "Failed to export conversation due to a server error."
+        }), 500
 
     if not conversation:
-        return jsonify({"status": "error", "message": "Conversation not found."}), 404
+        return jsonify({
+            "status": "error",
+            "message": "Conversation not found."
+        }), 404
 
     payload = {
+        "status": "success",
         "export_version": 1,
         "exported_at": datetime.now(timezone.utc).isoformat(),
-        "conversation": conversation.to_dict(include_messages=True),
+        "conversation": conversation.to_dict(include_messages=True)
     }
 
-    return jsonify(payload), 200
+    response = jsonify(payload)
+    response.headers["Content-Disposition"] = (
+        f'attachment; filename="conversation-{conversation.id}.json"'
+    )
+
+    return response, 200

@@ -41,7 +41,7 @@ def register():
 
     name = sanitize_text(str(data.get("name", ""))).strip()
     email = str(data.get("email") or "").strip().lower()
-    password = str(data.get("password", ""))
+    password = str(data.get("password") or "")
 
     if not name or not is_valid_email(email):
         return jsonify({"error": "Valid name and email are required."}), 400

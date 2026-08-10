@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Library</title>
+    <style>
+        :root {
+            --sl-bg-color: #f3f4f6;
+            --sl-surface-color: #ffffff;
+            --sl-text-primary: #1f2937;
+            --sl-text-secondary: #6b7280;
+            --sl-primary-color: #3b82f6;
+            --sl-primary-hover: #2563eb;
+            --sl-danger-color: #ef4444;
+            --sl-danger-hover: #dc2626;
+            --sl-border-color: #e5e7eb;
+            --sl-success-color: #10b981;
+        }
+
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--sl-bg-color);
+            color: var(--sl-text-primary);
+        }
+
+        .smart-library-page {
+            max-width: 900px;
+            margin: 40px auto;
+            padding: 24px;
+            background: var(--sl-surface-color);
+            border-radius: 12px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+
+        .sl-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--sl-border-color);
+        }
+
+        .sl-header h1 {
+            margin: 0;
+            font-size: 24px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .sl-upload-section {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-bottom: 32px;
+        }
+
+        .sl-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background-color 0.2s, transform 0.1s;
+        }
+
+        .sl-btn:active {
+            transform: scale(0.98);
+        }
+
+        .sl-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .sl-btn-primary {
+            background-color: var(--sl-primary-color);
+            color: white;
+        }
+
+        .sl-btn-primary:hover:not(:disabled) {
+            background-color: var(--sl-primary-hover);
+        }
+
+        .sl-btn-danger {
+            background-color: var(--sl-danger-color);
+            color: white;
+            padding: 6px 12px;
+            font-size: 13px;
+        }
+
+        .sl-btn-danger:hover:not(:disabled) {
+            background-color: var(--sl-danger-hover);
+        }
+
+        .sl-status {
+            padding: 12px;
+            border-radius: 6px;
+            font-size: 14px;
+            display: none;
+        }
+
+        .sl-status.show {
+            display: block;
+        }
+
+        .sl-status.error {
+            background-color: #fef2f2;
+            color: #991b1b;
+            border: 1px solid #f87171;
+        }
+
+        .sl-status.success {
+            background-color: #ecfdf5;
+            color: #065f46;
+            border: 1px solid #34d399;
+        }
+
+        .sl-documents-header {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 16px;
+        }
+
+        .sl-documents-container {
+            position: relative;
+            min-height: 150px;
+        }
+
+        .sl-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 16px;
+        }
+
+        .sl-card {
+            background: #f9fafb;
+            border: 1px solid var(--sl-border-color);
+            border-radius: 8px;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            gap: 16px;
+            transition: box-shadow 0.2s;
+        }
+
+        .sl-card:hover {
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+
+        .sl-card-title {
+            font-size: 14px;
+            font-weight: 500;
+            word-break: break-all;
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+        }
+
+        .sl-card-icon {
+            font-size: 18px;
+            flex-shrink: 0;
+        }
+
+        .sl-card-actions {
+            display: flex;
+            justify-content: flex-end;
+        }
+
+        .sl-empty-state {
+            display: none;
+            text-align: center;
+            padding: 40px 20px;
+            background: #f9fafb;
+            border: 2px dashed var(--sl-border-color);
+            border-radius: 8px;
+            color: var(--sl-text-secondary);
+        }
+
+        .sl-empty-state.show {
+            display: block;
+        }
+
+        .sl-spinner-container {
+            display: none;
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(255, 255, 255, 0.8);
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+            border-radius: 8px;
+        }
+
+        .sl-spinner-container.show {
+            display: flex;
+        }
+
+        .sl-spinner {
+            width: 32px;
+            height: 32px;
+            border: 3px solid var(--sl-border-color);
+            border-top-color: var(--sl-primary-color);
+            border-radius: 50%;
+            animation: sl-spin 1s linear infinite;
+        }
+
+        @keyframes sl-spin {
+            to { transform: rotate(360deg); }
+        }
+
+        @media (max-width: 600px) {
+            .sl-header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 16px;
+            }
+            .sl-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="smart-library-page" id="smart-library-app">
+        
+        <div class="sl-header">
+            <h1><span>📚</span> Smart Library</h1>
+        </div>
+
+        <div class="sl-upload-section">
+            <div>
+                <button type="button" class="sl-btn sl-btn-primary" id="upload-document-btn">
+                    <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path>
+                    </svg>
+                    Upload Document
+                </button>
+            </div>
+            
+            <input 
+                type="file" 
+                id="document-file" 
+                accept=".pdf,.docx,.txt,.csv,.xlsx" 
+                style="display:none;"
+            >
+            
+            <div id="sl-status-message" class="sl-status"></div>
+        </div>
+
+        <h3 class="sl-documents-header">Uploaded Documents</h3>
+
+        <div class="sl-documents-container">
+            <div id="sl-spinner" class="sl-spinner-container">
+                <div class="sl-spinner"></div>
+            </div>
+
+            <div id="sl-empty-state" class="sl-empty-state">
+                <div style="font-size: 32px; margin-bottom: 12px;">📄</div>
+                <p style="margin: 0; font-weight: 500;">No documents uploaded yet.</p>
+                <p style="margin: 8px 0 0 0; font-size: 13px;">Upload your first document to get started.</p>
+            </div>
+
+            <div id="documents-list" class="sl-grid">
+                <!-- Document cards injected here -->
+            </div>
+        </div>
+
+    </div>
+
+    <script src="smart_library.js"></script>
+</body>
+</html>

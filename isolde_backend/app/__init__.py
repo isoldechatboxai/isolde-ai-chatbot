@@ -106,6 +106,8 @@ def create_app(config_class=Config):
     from app.routes.plugin_routes import plugin_bp
     from app.routes.ai_studio_routes import ai_studio_bp
     from app.routes.unified_chat_engine import unified_engine_bp
+    from app.routes.settings_routes import settings_bp
+     
     
     # 🔥 AI Studio Blueprint Registered
     from app.studio_routes import studio_bp
@@ -138,6 +140,8 @@ def create_app(config_class=Config):
     app.register_blueprint(plugin_bp, url_prefix="/api")
     app.register_blueprint(ai_studio_bp, url_prefix="/api")
     app.register_blueprint(unified_engine_bp, url_prefix="/api")
+    app.register_blueprint(settings_bp, url_prefix="/api")
+
     
     # 🔥 AI Studio API Route Registered
     app.register_blueprint(studio_bp)
