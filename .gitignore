@@ -1,25 +1,9 @@
 ```
-# Database
-isolde_backend/isolde.db
-
 # Logs
-isolde_backend/logs/
+*.log
 
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
-env/
-venv/
-.venv/
-.ENV
+# Environment
 .env
-*.env
 .env.local
-.env.*
-.venv/
-venv/
-ENV/
+*.env.*
 ```
