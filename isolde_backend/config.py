@@ -24,17 +24,23 @@ class Config:
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     
     # Critical fix for serverless PostgreSQL (Neon/Render): connection pooling & SSL stability
-    SQLALCHEMY_ENGINE_OPTIONS = {
-        "pool_pre_ping": True,           # Verify connection before use - prevents "SSL closed" errors
-        "pool_recycle": 3600,            # Recycle connections after 1 hour
-        "pool_size": 10,                 # Connection pool size
-        "max_overflow": 20,              # Max connections beyond pool_size
-        "connect_args": {
-            "sslmode": "require",        # Enforce SSL for Neon
-            "connect_timeout": 10,       # Timeout rather than hang
-            "application_name": "isolde-ai-chatbot"
+    # Only apply pooling options for PostgreSQL databases to avoid SQLite errors
+    _db_uri = os.getenv("DATABASE_URL", f"sqlite:///{os.path.join(BASE_DIR, 'isolde.db')}")
+    _is_postgresql = _db_uri.startswith("postgresql")
+    if _is_postgresql:
+        SQLALCHEMY_ENGINE_OPTIONS = {
+            "pool_pre_ping": True,
+            "pool_recycle": 3600,
+            "pool_size": 10,
+            "max_overflow": 20,
+            "connect_args": {
+                "sslmode": "require",
+                "connect_timeout": 10,
+                "application_name": "isolde-ai-chatbot"
+            }
         }
-    }
+    else:
+        SQLALCHEMY_ENGINE_OPTIONS = {}
 
     # --- JWT ---
     JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dev-jwt-secret-change-me")

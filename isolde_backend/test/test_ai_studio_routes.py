@@ -7,6 +7,9 @@ from config import Config
 class TestConfig(Config):
     TESTING = True
     SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
+    # Override engine options for SQLite in-memory compatibility
+    # Must exclude pool_size/max_overflow entirely for SQLite StaticPool
+    SQLALCHEMY_ENGINE_OPTIONS = {}
 
 
 @pytest.fixture
