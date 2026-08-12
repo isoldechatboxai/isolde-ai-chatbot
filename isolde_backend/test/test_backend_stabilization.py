@@ -16,10 +16,12 @@ class TestConfig(Config):
     UPLOAD_FOLDER = "/tmp/test-uploads"
     LOG_DIR = "/tmp/test-logs"
     VECTOR_STORE_DIR = "/tmp/test-vector-store"
+    # Override engine options for SQLite in-memory compatibility
+    SQLALCHEMY_ENGINE_OPTIONS = {}
 
 
 @pytest.fixture
-def app_context():
+def app():
     """Create app context with database."""
     app = create_app(TestConfig)
     with app.app_context():
@@ -30,17 +32,17 @@ def app_context():
 
 
 @pytest.fixture
-def auth_token(app_context):
+def auth_token(app):
     """Create a valid JWT token for testing."""
-    with app_context.test_request_context():
+    with app.test_request_context():
         token = create_access_token(identity="test_user_123")
     return token
 
 
 @pytest.fixture
-def client(auth_token):
+def client(auth_token, app):
     """Create test client with auth token."""
-    return app_context.test_client(), auth_token
+    return app.test_client(), auth_token
 
 
 def get_auth_headers(token):
@@ -94,7 +96,7 @@ class TestMarketplaceRoutes:
     def test_install_plugin_requires_auth(self, client):
         """Test that installing a plugin requires authentication."""
         test_client, token = client
-        res = test_client.post("/api/marketplace/install/1")
+        res = test_client.post("/api/marketplace/install/1", headers={"Content-Type": "application/json"})
         assert res.status_code == 401
     
     def test_get_installed_plugins_requires_auth(self, client):
@@ -166,7 +168,7 @@ class TestWorkflowRoutes:
     def test_execute_workflow_requires_auth(self, client):
         """Test that executing a workflow requires authentication."""
         test_client, token = client
-        res = test_client.post("/api/workflows/1/execute")
+        res = test_client.post("/api/workflows/1/execute", headers={"Content-Type": "application/json"})
         assert res.status_code == 401
     
     def test_get_workflow_analytics_requires_auth(self, client):

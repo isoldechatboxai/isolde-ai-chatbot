@@ -1,47 +1,45 @@
 ```
-# Compressed archives
-*.tar.gz
-
-# Logs and temp files
-*.log
-*.tmp
-
-# Environment
-.env
-.env.local
-.env.*
-
-# Editors
-.vscode/
-.idea/
-
-# Dependencies
-.venv/
-venv/
-node_modules/
-
 # Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+.Python
+env/
+venv/
+.venv/
+.ENV
+.env
+.env.local
+.env.*
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
 
-# Build artifacts
+# Build and distribution artifacts
 dist/
 build/
-target/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Testing
+.coverage*
+coverage.xml
+htmlcov/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*.tmp
 
 # OS generated files
 .DS_Store
 Thumbs.db
 
-# Coverage reports
-coverage/
-htmlcov/
-.coverage
-
-# IDE specific
-.gradle/
-.mypy_cache/
-.pytest_cache/
+# Logs
+*.log
 ```
