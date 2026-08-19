@@ -32,13 +32,260 @@ def app_context():
 @pytest.fixture
 def auth_token(app_context):
     """Create a valid JWT token for testing."""
+    from app.models.user import User
+    
+    with app_context.app_context():
+        # Create a real test user with Active status
+        test_user = User(name="Test User", email="testuser@example.com", status="Active")
+        test_user.set_password("TestPassword123")
+        db.session.add(test_user)
+        db.session.commit()
+        user_id = test_user.id
+    
     with app_context.test_request_context():
-        token = create_access_token(identity="test_user_123")
+        token = create_access_token(identity=user_id)
     return token
 
 
+class TestProductionConfigValidation:
+    """Regression tests for Unit 2A production configuration security."""
+
+    @staticmethod
+    def _make_production_config(**overrides):
+        class ProductionConfig(Config):
+            IS_PRODUCTION = True
+            SECRET_KEY = "a" * 32
+            JWT_SECRET_KEY = "b" * 32
+            DEBUG = False
+            GEMINI_API_KEY = "test-gemini-api-key"
+            GEMINI_MODEL = "gemini-1.5-flash"
+            CORS_ORIGINS = ["https://example.com"]
+
+        for key, value in overrides.items():
+            setattr(ProductionConfig, key, value)
+
+        return ProductionConfig
+
+    def test_development_configuration_loads(self):
+        class DevelopmentConfig(Config):
+            IS_PRODUCTION = False
+            SECRET_KEY = "dev-secret"
+            JWT_SECRET_KEY = "dev-jwt-secret"
+            DEBUG = False
+            GEMINI_API_KEY = "dev-gemini-key"
+            GEMINI_MODEL = "gemini-1.5-flash"
+            CORS_ORIGINS = ["*"]
+
+        DevelopmentConfig.validate()
+
+    def test_valid_production_configuration_passes(self):
+        production_config = self._make_production_config()
+        production_config.validate()
+
+    def test_missing_flask_secret_key_fails(self):
+        production_config = self._make_production_config(SECRET_KEY="")
+        with pytest.raises(RuntimeError, match="FLASK_SECRET_KEY"):
+            production_config.validate()
+
+    def test_missing_jwt_secret_key_fails(self):
+        production_config = self._make_production_config(JWT_SECRET_KEY="")
+        with pytest.raises(RuntimeError, match="JWT_SECRET_KEY"):
+            production_config.validate()
+
+    def test_placeholder_flask_secret_key_fails(self):
+        production_config = self._make_production_config(SECRET_KEY="change_me")
+        with pytest.raises(RuntimeError, match="FLASK_SECRET_KEY"):
+            production_config.validate()
+
+    def test_placeholder_jwt_secret_key_fails(self):
+        production_config = self._make_production_config(JWT_SECRET_KEY="your-jwt-secret")
+        with pytest.raises(RuntimeError, match="JWT_SECRET_KEY"):
+            production_config.validate()
+
+    def test_production_debug_true_fails(self):
+        production_config = self._make_production_config(DEBUG=True)
+        with pytest.raises(RuntimeError, match="FLASK_DEBUG"):
+            production_config.validate()
+
+    def test_production_wildcard_cors_fails(self):
+        production_config = self._make_production_config(CORS_ORIGINS=["*"])
+        with pytest.raises(RuntimeError, match="CORS_ORIGINS"):
+            production_config.validate()
+
+
+class TestAccountStatusEnforcement:
+    """Unit 2B regression tests for account status enforcement."""
+
+    @staticmethod
+    def _create_test_user(app_context, email, status="Active"):
+        """Helper to create a test user with specified status."""
+        from app.models.user import User
+        with app_context.app_context():
+            user = User(name="Test User", email=email, status=status)
+            user.set_password("ValidPassword123")
+            db.session.add(user)
+            db.session.commit()
+            return user.id
+
+    def test_valid_login_succeeds(self, app_context):
+        """Valid credentials with Active status should allow login."""
+        client = app_context.test_client()
+        user_id = self._create_test_user(app_context, "active@example.com", status="Active")
+
+        res = client.post("/api/login", json={
+            "email": "active@example.com",
+            "password": "ValidPassword123"
+        })
+
+        assert res.status_code == 200
+        data = res.get_json()
+        assert "access_token" in data
+        assert data["user"]["status"] == "Active"
+
+    def test_invalid_password_fails(self, app_context):
+        """Invalid password should return 401."""
+        client = app_context.test_client()
+        self._create_test_user(app_context, "user@example.com", status="Active")
+
+        res = client.post("/api/login", json={
+            "email": "user@example.com",
+            "password": "WrongPassword"
+        })
+
+        assert res.status_code == 401
+        assert "Invalid email or password" in res.get_json()["error"]
+
+    def test_disabled_user_cannot_login(self, app_context):
+        """Disabled user cannot login, even with correct password."""
+        client = app_context.test_client()
+        self._create_test_user(app_context, "disabled@example.com", status="Disabled")
+
+        res = client.post("/api/login", json={
+            "email": "disabled@example.com",
+            "password": "ValidPassword123"
+        })
+
+        assert res.status_code == 401
+        assert "Invalid email or password" in res.get_json()["error"]
+
+    def test_deleted_user_cannot_login(self, app_context):
+        """Deleted user cannot login, even with correct password."""
+        client = app_context.test_client()
+        self._create_test_user(app_context, "deleted@example.com", status="Deleted")
+
+        res = client.post("/api/login", json={
+            "email": "deleted@example.com",
+            "password": "ValidPassword123"
+        })
+
+        assert res.status_code == 401
+        assert "Invalid email or password" in res.get_json()["error"]
+
+    def test_disabled_user_jwt_rejected(self, app_context, auth_token):
+        """Disabled user's existing JWT should be rejected on protected routes."""
+        from app.models.user import User
+        
+        # Create a test user with Active status initially
+        with app_context.app_context():
+            user = User(name="Active User", email="jwt_test@example.com", status="Active")
+            user.set_password("ValidPassword123")
+            db.session.add(user)
+            db.session.commit()
+            user_id = user.id
+
+            # Create a valid JWT for this user
+            from flask_jwt_extended import create_access_token
+            with app_context.test_request_context():
+                token = create_access_token(identity=user_id)
+
+            # Now disable the user
+            user = db.session.get(User, user_id)
+            user.status = "Disabled"
+            db.session.commit()
+
+        # Try to use the JWT on a protected route
+        client = app_context.test_client()
+        headers = {"Authorization": f"Bearer {token}"}
+        
+        # Use marketplace endpoint which requires auth
+        res = client.get("/api/marketplace/installed", headers=headers)
+        
+        # Should be rejected because user is now disabled
+        assert res.status_code == 401
+
+    def test_deleted_user_jwt_rejected(self, app_context):
+        """Deleted user's existing JWT should be rejected on protected routes."""
+        from app.models.user import User
+        
+        # Create a test user with Active status initially
+        with app_context.app_context():
+            user = User(name="Delete Test User", email="delete_jwt_test@example.com", status="Active")
+            user.set_password("ValidPassword123")
+            db.session.add(user)
+            db.session.commit()
+            user_id = user.id
+
+            # Create a valid JWT for this user
+            from flask_jwt_extended import create_access_token
+            with app_context.test_request_context():
+                token = create_access_token(identity=user_id)
+
+            # Now delete the user (mark as Deleted)
+            user = db.session.get(User, user_id)
+            user.status = "Deleted"
+            db.session.commit()
+
+        # Try to use the JWT on a protected route
+        client = app_context.test_client()
+        headers = {"Authorization": f"Bearer {token}"}
+        
+        # Use marketplace endpoint which requires auth
+        res = client.get("/api/marketplace/installed", headers=headers)
+        
+        # Should be rejected because user is now deleted
+        assert res.status_code == 401
+
+    def test_client_cannot_access_admin_endpoint(self, app_context, auth_token):
+        """Client user should not access admin endpoints."""
+        client = app_context.test_client()
+        test_client, token = (client, auth_token)
+        
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        res = test_client.get("/api/admin/dashboard", headers=headers)
+        
+        # Client role should be rejected
+        assert res.status_code == 403
+
+    def test_admin_can_access_allowed_endpoint(self, app_context):
+        """Admin user should access allowed admin endpoints."""
+        from app.models.user import User
+        
+        with app_context.app_context():
+            # Create an admin user
+            admin = User(name="Admin User", email="admin@example.com", role="Admin", status="Active")
+            admin.set_password("ValidPassword123")
+            db.session.add(admin)
+            db.session.commit()
+            admin_id = admin.id
+
+            # Create JWT for admin
+            from flask_jwt_extended import create_access_token
+            with app_context.test_request_context():
+                token = create_access_token(identity=admin_id)
+
+        # Access admin endpoint
+        client = app_context.test_client()
+        headers = {"Authorization": f"Bearer {token}"}
+        res = client.get("/api/admin/dashboard", headers=headers)
+        
+        # Admin should access successfully
+        assert res.status_code == 200
+        data = res.get_json()
+        assert "dashboard" in data
+
+
 @pytest.fixture
-def client(auth_token):
+def client(app_context, auth_token):
     """Create test client with auth token."""
     return app_context.test_client(), auth_token
 
@@ -46,6 +293,25 @@ def client(auth_token):
 def get_auth_headers(token):
     """Helper to create auth headers."""
     return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+
+class TestVersionedApiCompatibility:
+
+    def test_api_v1_health_and_ready_endpoints(self, app_context):
+        """The platform must expose the target /api/v1 namespace for health checks."""
+        client = app_context.test_client()
+
+        health_response = client.get("/api/v1/health")
+        assert health_response.status_code == 200
+        health_data = health_response.get_json()
+        assert "success" in health_data
+        assert "data" in health_data
+
+        ready_response = client.get("/api/v1/ready")
+        assert ready_response.status_code in {200, 503}
+        ready_data = ready_response.get_json()
+        assert "status" in ready_data
+        assert "checks" in ready_data
 
 
 # =============================================================================

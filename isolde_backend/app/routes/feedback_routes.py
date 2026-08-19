@@ -3,7 +3,9 @@ from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
 from app.extensions import db
-from app.models import Feedback, Message, User
+from app.models.feedback import Feedback
+from app.models.conversation import Message
+from app.models.user import User
 from app.utils.validators import sanitize_text, is_non_empty
 from app.utils.logger import log_event
 

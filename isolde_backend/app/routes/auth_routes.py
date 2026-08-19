@@ -92,6 +92,10 @@ def login():
         log_event(current_app, "LOGIN_FAILED", f"attempt for {email}")
         return jsonify({"error": "Invalid email or password."}), 401
 
+    if user.status != "Active":
+        log_event(current_app, "LOGIN_FAILED", f"inactive account {email}", user.id)
+        return jsonify({"error": "Invalid email or password."}), 401
+
     token = create_access_token(identity=user.id)
 
     log_event(current_app, "LOGIN_SUCCESS", email, user.id)

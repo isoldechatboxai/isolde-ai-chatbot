@@ -1,89 +1,131 @@
-# app/services/ai_orchestrator.py
+"""
+AI Orchestrator compatibility layer.
+
+Part 1 rules preserved:
+- do NOT create a second provider router
+- do NOT create a second AI engine
+- keep provider_router.py as the canonical AI provider layer
+- delegate all real generation work to the existing provider_router.py
+"""
 
 import time
 import logging
+
 from typing import Dict, Any, List, Optional
+
 from flask import current_app
 
-# Import existing provider router or fallback handlers if available
-try:
-    from app.services.provider_router import route_request, get_provider_health
-except ImportError:
-    # Fallback mock references for architectural isolation
-    def route_request(prompt, provider=None, **kwargs):
-        return {"response": "Mock AI Response", "provider": provider or "default", "tokens": len(prompt.split())}
-    def get_provider_health():
-        return {"primary": True, "fallback": True}
+from app.services.provider_router import get_provider_manager
+
 
 class AIOrchestrator:
     """
-    Central AI Orchestrator for managing multi-provider LLM requests,
-    context assembly, prompt optimization, health tracking, and automatic fallback.
+    Compatibility orchestrator for managing multi-provider LLM requests.
+
+    The actual provider selection, retry, fallback, circuit breaker,
+    health-cache, and provider-call logic remains in provider_router.py.
     """
-    
-    def __init__(self, primary_provider: str = "gemini", fallback_providers: Optional[List[str]] = None):
+
+    def __init__(
+        self,
+        primary_provider: str = "gemini",
+        fallback_providers: Optional[List[str]] = None,
+    ):
         self.primary_provider = primary_provider
-        self.fallback_providers = fallback_providers or ["openai", "anthropic"]
+        self.fallback_providers = fallback_providers or ["groq", "openai", "claude"]
         self.health_status = {}
 
     def check_health(self) -> Dict[str, bool]:
-        """Tracks and returns provider health status."""
+        """
+        Return provider health status from the existing provider manager.
+        """
         try:
-            if callable(get_provider_health):
-                self.health_status = get_provider_health()
-            else:
-                self.health_status = {self.primary_provider: True}
+            manager = get_provider_manager()
+            self.health_status = manager.get_provider_health()
         except Exception as e:
-            if current_app:
-                current_app.logger.error(f"Health check failed: {e}")
-            self.health_status = {self.primary_provider: False}
-        return self.health_status
-
-    def generate_response(self, assembled_prompt: str, user_id: str, **kwargs) -> Dict[str, Any]:
-        """
-        Executes prompt generation with automatic fallback, health tracking, and latency monitoring.
-        """
-        start_time = time.time()
-        providers_to_try = [self.primary_provider] + self.fallback_providers
-        
-        last_error = None
-        for provider in providers_to_try:
             try:
                 if current_app:
-                    current_app.logger.info(f"[Orchestrator] Attempting generation with provider: {provider}")
-                
-                # Route request to provider
-                result = route_request(assembled_prompt, provider=provider, user_id=user_id, **kwargs)
-                
-                latency = time.time() - start_time
-                if current_app:
-                    current_app.logger.info(f"[Orchestrator] Success using {provider} in {latency:.4f}s")
-                
+                    current_app.logger.error(f"Health check failed: {e}")
+            except Exception:
+                logging.getLogger(__name__).error(f"Health check failed: {e}")
+
+            self.health_status = {self.primary_provider: False}
+
+        return self.health_status
+
+    def generate_response(
+        self,
+        assembled_prompt: str,
+        user_id: str,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """
+        Execute generation using the existing provider router.
+
+        This preserves the orchestrator response contract while delegating
+        all real provider work to provider_router.ProviderManager.
+        """
+        start_time = time.time()
+
+        try:
+            manager = get_provider_manager()
+
+            history = kwargs.get("history")
+            system_context = kwargs.get("system_context", "")
+            timeout = kwargs.get("timeout")
+
+            result = manager.generate(
+                assembled_prompt,
+                history=history,
+                system_context=system_context,
+                timeout=timeout,
+            )
+
+            latency = time.time() - start_time
+
+            if result.success:
                 return {
                     "success": True,
-                    "provider": provider,
-                    "result": result,
+                    "provider": result.provider,
+                    "result": {
+                        "text": result.text,
+                        "model": result.model,
+                        "tokens_used": result.tokens_used,
+                        "latency_ms": result.latency_ms,
+                    },
                     "latency": latency,
-                    "error": None
+                    "error": None,
                 }
-            except Exception as e:
-                last_error = e
+
+            return {
+                "success": False,
+                "provider": result.provider,
+                "result": None,
+                "latency": latency,
+                "error": result.error or "AI generation failed.",
+            }
+
+        except Exception as e:
+            latency = time.time() - start_time
+
+            try:
                 if current_app:
-                    current_app.logger.warning(f"[Orchestrator] Provider {provider} failed: {str(e)}. Falling back...")
-                continue
+                    current_app.logger.error(
+                        f"[Orchestrator] Generation failed: {str(e)}"
+                    )
+            except Exception:
+                logging.getLogger(__name__).error(
+                    f"[Orchestrator] Generation failed: {str(e)}"
+                )
 
-        # If all providers fail
-        latency = time.time() - start_time
-        if current_app:
-            current_app.logger.error(f"[Orchestrator] All providers failed. Last error: {str(last_error)}")
-        
-        return {
-            "success": False,
-            "provider": None,
-            "result": None,
-            "latency": latency,
-            "error": str(last_error) or "All AI providers failed."
-        }
+            return {
+                "success": False,
+                "provider": None,
+                "result": None,
+                "latency": latency,
+                "error": str(e) or "All AI providers failed.",
+            }
 
-# Singleton instance for application-wide use
-ai_orchestrator = AIOrchestrator()
+
+# Singleton instance for application-wide compatibility.
+ai_orchestrator = AIOrchestrator() 

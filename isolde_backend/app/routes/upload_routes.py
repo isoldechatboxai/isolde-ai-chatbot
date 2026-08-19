@@ -7,7 +7,7 @@ from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
 from app.extensions import db
-from app.models import UploadedFile
+from app.models.uploaded_file import UploadedFile
 from app.services.file_service import extract_text
 from app.services.provider_router import analyze_image
 from app.utils.validators import allowed_file
@@ -21,6 +21,7 @@ upload_bp = Blueprint("upload", __name__)
 IMAGE_TYPES = {"png", "jpg", "jpeg"}
 MIME_MAP = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg"}
 
+
 @upload_bp.route("/upload", methods=["POST"])
 @jwt_required()
 def upload_file():
@@ -28,10 +29,12 @@ def upload_file():
         return jsonify({"error": "No file part in the request."}), 400
 
     file = request.files["file"]
+
     if file.filename == "":
         return jsonify({"error": "No file selected."}), 400
 
     allowed = current_app.config["ALLOWED_EXTENSIONS"]
+
     if not allowed_file(file.filename, allowed):
         return jsonify({"error": f"File type not allowed. Allowed: {sorted(allowed)}"}), 400
 
@@ -43,7 +46,7 @@ def upload_file():
         # Fallback to the original filename's extension if secure_filename stripped the dot
         file_type = file.filename.rsplit(".", 1)[-1].lower()
         filename = f"{filename}.{file_type}" if filename else f"file.{file_type}"
-        
+
     unique_name = f"{uuid.uuid4()}_{filename}"
     save_path = os.path.join(current_app.config["UPLOAD_FOLDER"], unique_name)
     os.makedirs(current_app.config["UPLOAD_FOLDER"], exist_ok=True)
@@ -58,7 +61,7 @@ def upload_file():
         stored_path=save_path,
         file_type=file_type,
     )
-    
+
     # Handle database commit errors with rollback
     try:
         db.session.add(record)
@@ -84,6 +87,7 @@ def upload_file():
 
         with open(save_path, "rb") as f:
             image_bytes = f.read()
+
         try:
             answer = analyze_image(image_bytes, MIME_MAP[file_type], question)
         except Exception as e:

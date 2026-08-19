@@ -14,7 +14,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 # Assuming SQLAlchemy models are defined project-wide. 
 # We import typical models matching the application context (e.g., Conversation / Chat and Message models).
-from app.models import Conversation, Message  # Adjust import path as necessary based on project layout
+from app.models.conversation import Conversation, Message  # Adjust import path as necessary based on project layout
 
 
 class ChatRepository:
