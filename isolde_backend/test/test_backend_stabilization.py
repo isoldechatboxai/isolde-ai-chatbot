@@ -16,13 +16,15 @@ class TestConfig(Config):
     UPLOAD_FOLDER = "/tmp/test-uploads"
     LOG_DIR = "/tmp/test-logs"
     VECTOR_STORE_DIR = "/tmp/test-vector-store"
+    # Override engine options for SQLite in-memory compatibility
+    SQLALCHEMY_ENGINE_OPTIONS = {}
 
 
 @pytest.fixture
-def app_context():
+def app():
     """Create app context with database."""
     app = create_app(TestConfig)
-    with app.app_context():
+    with app.app():
         db.create_all()
         yield app
         db.session.remove()
@@ -30,19 +32,19 @@ def app_context():
 
 
 @pytest.fixture
-def auth_token(app_context):
+def auth_token(app):
     """Create a valid JWT token for testing."""
     from app.models.user import User
-    
-    with app_context.app_context():
+
+    with app.app():
         # Create a real test user with Active status
         test_user = User(name="Test User", email="testuser@example.com", status="Active")
         test_user.set_password("TestPassword123")
         db.session.add(test_user)
         db.session.commit()
         user_id = test_user.id
-    
-    with app_context.test_request_context():
+
+    with app.test_request_context():
         token = create_access_token(identity=user_id)
     return token
 
@@ -117,20 +119,20 @@ class TestAccountStatusEnforcement:
     """Unit 2B regression tests for account status enforcement."""
 
     @staticmethod
-    def _create_test_user(app_context, email, status="Active"):
+    def _create_test_user(app, email, status="Active"):
         """Helper to create a test user with specified status."""
         from app.models.user import User
-        with app_context.app_context():
+        with app.app():
             user = User(name="Test User", email=email, status=status)
             user.set_password("ValidPassword123")
             db.session.add(user)
             db.session.commit()
             return user.id
 
-    def test_valid_login_succeeds(self, app_context):
+    def test_valid_login_succeeds(self, app):
         """Valid credentials with Active status should allow login."""
-        client = app_context.test_client()
-        user_id = self._create_test_user(app_context, "active@example.com", status="Active")
+        client = app.test_client()
+        user_id = self._create_test_user(app, "active@example.com", status="Active")
 
         res = client.post("/api/login", json={
             "email": "active@example.com",
@@ -142,10 +144,10 @@ class TestAccountStatusEnforcement:
         assert "access_token" in data
         assert data["user"]["status"] == "Active"
 
-    def test_invalid_password_fails(self, app_context):
+    def test_invalid_password_fails(self, app):
         """Invalid password should return 401."""
-        client = app_context.test_client()
-        self._create_test_user(app_context, "user@example.com", status="Active")
+        client = app.test_client()
+        self._create_test_user(app, "user@example.com", status="Active")
 
         res = client.post("/api/login", json={
             "email": "user@example.com",
@@ -155,10 +157,10 @@ class TestAccountStatusEnforcement:
         assert res.status_code == 401
         assert "Invalid email or password" in res.get_json()["error"]
 
-    def test_disabled_user_cannot_login(self, app_context):
+    def test_disabled_user_cannot_login(self, app):
         """Disabled user cannot login, even with correct password."""
-        client = app_context.test_client()
-        self._create_test_user(app_context, "disabled@example.com", status="Disabled")
+        client = app.test_client()
+        self._create_test_user(app, "disabled@example.com", status="Disabled")
 
         res = client.post("/api/login", json={
             "email": "disabled@example.com",
@@ -168,10 +170,10 @@ class TestAccountStatusEnforcement:
         assert res.status_code == 401
         assert "Invalid email or password" in res.get_json()["error"]
 
-    def test_deleted_user_cannot_login(self, app_context):
+    def test_deleted_user_cannot_login(self, app):
         """Deleted user cannot login, even with correct password."""
-        client = app_context.test_client()
-        self._create_test_user(app_context, "deleted@example.com", status="Deleted")
+        client = app.test_client()
+        self._create_test_user(app, "deleted@example.com", status="Deleted")
 
         res = client.post("/api/login", json={
             "email": "deleted@example.com",
@@ -181,12 +183,12 @@ class TestAccountStatusEnforcement:
         assert res.status_code == 401
         assert "Invalid email or password" in res.get_json()["error"]
 
-    def test_disabled_user_jwt_rejected(self, app_context, auth_token):
+    def test_disabled_user_jwt_rejected(self, app, auth_token):
         """Disabled user's existing JWT should be rejected on protected routes."""
         from app.models.user import User
         
         # Create a test user with Active status initially
-        with app_context.app_context():
+        with app.app():
             user = User(name="Active User", email="jwt_test@example.com", status="Active")
             user.set_password("ValidPassword123")
             db.session.add(user)
@@ -195,7 +197,7 @@ class TestAccountStatusEnforcement:
 
             # Create a valid JWT for this user
             from flask_jwt_extended import create_access_token
-            with app_context.test_request_context():
+            with app.test_request_context():
                 token = create_access_token(identity=user_id)
 
             # Now disable the user
@@ -204,7 +206,7 @@ class TestAccountStatusEnforcement:
             db.session.commit()
 
         # Try to use the JWT on a protected route
-        client = app_context.test_client()
+        client = app.test_client()
         headers = {"Authorization": f"Bearer {token}"}
         
         # Use marketplace endpoint which requires auth
@@ -213,12 +215,12 @@ class TestAccountStatusEnforcement:
         # Should be rejected because user is now disabled
         assert res.status_code == 401
 
-    def test_deleted_user_jwt_rejected(self, app_context):
+    def test_deleted_user_jwt_rejected(self, app):
         """Deleted user's existing JWT should be rejected on protected routes."""
         from app.models.user import User
         
         # Create a test user with Active status initially
-        with app_context.app_context():
+        with app.app():
             user = User(name="Delete Test User", email="delete_jwt_test@example.com", status="Active")
             user.set_password("ValidPassword123")
             db.session.add(user)
@@ -227,7 +229,7 @@ class TestAccountStatusEnforcement:
 
             # Create a valid JWT for this user
             from flask_jwt_extended import create_access_token
-            with app_context.test_request_context():
+            with app.test_request_context():
                 token = create_access_token(identity=user_id)
 
             # Now delete the user (mark as Deleted)
@@ -236,7 +238,7 @@ class TestAccountStatusEnforcement:
             db.session.commit()
 
         # Try to use the JWT on a protected route
-        client = app_context.test_client()
+        client = app.test_client()
         headers = {"Authorization": f"Bearer {token}"}
         
         # Use marketplace endpoint which requires auth
@@ -245,9 +247,9 @@ class TestAccountStatusEnforcement:
         # Should be rejected because user is now deleted
         assert res.status_code == 401
 
-    def test_client_cannot_access_admin_endpoint(self, app_context, auth_token):
+    def test_client_cannot_access_admin_endpoint(self, app, auth_token):
         """Client user should not access admin endpoints."""
-        client = app_context.test_client()
+        client = app.test_client()
         test_client, token = (client, auth_token)
         
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
@@ -256,11 +258,11 @@ class TestAccountStatusEnforcement:
         # Client role should be rejected
         assert res.status_code == 403
 
-    def test_admin_can_access_allowed_endpoint(self, app_context):
+    def test_admin_can_access_allowed_endpoint(self, app):
         """Admin user should access allowed admin endpoints."""
         from app.models.user import User
         
-        with app_context.app_context():
+        with app.app():
             # Create an admin user
             admin = User(name="Admin User", email="admin@example.com", role="Admin", status="Active")
             admin.set_password("ValidPassword123")
@@ -270,11 +272,11 @@ class TestAccountStatusEnforcement:
 
             # Create JWT for admin
             from flask_jwt_extended import create_access_token
-            with app_context.test_request_context():
+            with app.test_request_context():
                 token = create_access_token(identity=admin_id)
 
         # Access admin endpoint
-        client = app_context.test_client()
+        client = app.test_client()
         headers = {"Authorization": f"Bearer {token}"}
         res = client.get("/api/admin/dashboard", headers=headers)
         
@@ -285,9 +287,9 @@ class TestAccountStatusEnforcement:
 
 
 @pytest.fixture
-def client(app_context, auth_token):
+def client(auth_token, app):
     """Create test client with auth token."""
-    return app_context.test_client(), auth_token
+    return app.test_client(), auth_token
 
 
 def get_auth_headers(token):
@@ -297,9 +299,9 @@ def get_auth_headers(token):
 
 class TestVersionedApiCompatibility:
 
-    def test_api_v1_health_and_ready_endpoints(self, app_context):
+    def test_api_v1_health_and_ready_endpoints(self, app):
         """The platform must expose the target /api/v1 namespace for health checks."""
-        client = app_context.test_client()
+        client = app.test_client()
 
         health_response = client.get("/api/v1/health")
         assert health_response.status_code == 200
@@ -360,7 +362,7 @@ class TestMarketplaceRoutes:
     def test_install_plugin_requires_auth(self, client):
         """Test that installing a plugin requires authentication."""
         test_client, token = client
-        res = test_client.post("/api/marketplace/install/1")
+        res = test_client.post("/api/marketplace/install/1", headers={"Content-Type": "application/json"})
         assert res.status_code == 401
     
     def test_get_installed_plugins_requires_auth(self, client):
@@ -432,7 +434,7 @@ class TestWorkflowRoutes:
     def test_execute_workflow_requires_auth(self, client):
         """Test that executing a workflow requires authentication."""
         test_client, token = client
-        res = test_client.post("/api/workflows/1/execute")
+        res = test_client.post("/api/workflows/1/execute", headers={"Content-Type": "application/json"})
         assert res.status_code == 401
     
     def test_get_workflow_analytics_requires_auth(self, client):

@@ -12,6 +12,8 @@ class TestConfig(Config):
     TESTING = True
     SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
     JWT_SECRET_KEY = "test-secret-key-for-testing"
+    # Override engine options for SQLite in-memory compatibility
+    SQLALCHEMY_ENGINE_OPTIONS = {}
 
 
 class DummyPlugin(IPlugin):
