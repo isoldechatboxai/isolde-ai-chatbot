@@ -1,3 +1,20 @@
 
 .env
 __pycache__/
+.env
+.env.*
+!.env.example
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+instance/
+logs/
+
+uploads/
+*.log
+
+.venv/
+venv/
