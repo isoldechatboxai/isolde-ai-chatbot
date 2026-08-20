@@ -1,3 +1,4 @@
+# app/routes/api_key_routes.py
 from datetime import datetime, timedelta
 
 from flask import Blueprint, request, jsonify, current_app
@@ -9,9 +10,7 @@ from app.services.api_key_service import (
     revoke_api_key
 )
 
-
 api_key_bp = Blueprint("api_key_bp", __name__)
-
 
 ALLOWED_PERMISSIONS = {
     "read",
@@ -27,10 +26,8 @@ def _json_error(message, status_code, details=None):
     payload = {
         "error": message
     }
-
     if details:
         payload["details"] = details
-
     return jsonify(payload), status_code
 
 
@@ -52,9 +49,9 @@ def _sanitize_permissions(raw_permissions, is_admin_user):
     Normalize and validate API-key permissions.
 
     Allowed permissions:
-    - read
-    - write
-    - admin
+     - read
+     - write
+     - admin
 
     Admin permission may only be assigned by an Admin user.
     """
@@ -99,37 +96,24 @@ def _sanitize_permissions(raw_permissions, is_admin_user):
 def generate_key():
     """
     Endpoint for developers to generate a new API key.
-
     Returns the PLAINTEXT key ONCE.
     """
     user_id = get_jwt_identity()
-
     if not user_id:
-        return _json_error(
-            "Authentication required.",
-            401
-        )
+        return _json_error("Authentication required.", 401)
 
     data = request.get_json(silent=True) or {}
 
     name = data.get("name")
-
     if name is None:
         name = "Default API Key"
 
     if not isinstance(name, str):
-        return _json_error(
-            "API key name must be a string.",
-            400
-        )
+        return _json_error("API key name must be a string.", 400)
 
     name = name.strip()
-
     if not name:
-        return _json_error(
-            "API key name cannot be empty.",
-            400
-        )
+        return _json_error("API key name cannot be empty.", 400)
 
     if len(name) > MAX_KEY_NAME_LENGTH:
         return _json_error(
@@ -144,13 +128,11 @@ def generate_key():
         data.get("permissions"),
         is_admin_user
     )
-
     if permission_error:
         return permission_error
 
     expires_in_days = data.get("expires_in_days")
     expires_at = None
-
     if expires_in_days is not None:
         try:
             expires_in_days = int(expires_in_days)
@@ -181,16 +163,13 @@ def generate_key():
             permissions=permissions,
             expires_at=expires_at
         )
-
         return jsonify({
             "message": "API key generated successfully. Save this key now; it will never be shown again!",
             "api_key": raw_key,
             "metadata": key_metadata
         }), 201
-
     except Exception:
         current_app.logger.exception("Failed to generate API key.")
-
         return _json_error(
             "Failed to generate API key.",
             500,
@@ -205,23 +184,14 @@ def get_user_keys():
     Lists all API keys metadata and analytics belonging to the authenticated user.
     """
     user_id = get_jwt_identity()
-
     if not user_id:
-        return _json_error(
-            "Authentication required.",
-            401
-        )
+        return _json_error("Authentication required.", 401)
 
     try:
         keys = list_user_keys(user_id)
-
-        return jsonify({
-            "keys": keys
-        }), 200
-
+        return jsonify({"keys": keys}), 200
     except Exception:
         current_app.logger.exception("Failed to fetch API keys.")
-
         return _json_error(
             "Failed to fetch API keys.",
             500,
@@ -234,35 +204,24 @@ def get_user_keys():
 def delete_key(key_id):
     """
     Revokes an API key so it can no longer be used for authentication.
-
     Ownership is enforced by requiring both key_id and authenticated user_id.
     """
     user_id = get_jwt_identity()
-
     if not user_id:
-        return _json_error(
-            "Authentication required.",
-            401
-        )
+        return _json_error("Authentication required.", 401)
 
     try:
         success = revoke_api_key(key_id, user_id)
-
         if not success:
-            return _json_error(
-                "API key not found or unauthorized.",
-                404
-            )
+            return _json_error("API key not found or unauthorized.", 404)
 
         return jsonify({
             "message": f"API key ID {key_id} has been revoked successfully."
         }), 200
-
     except Exception:
         current_app.logger.exception(
             f"Failed to revoke API key ID {key_id}."
         )
-
         return _json_error(
             "Failed to revoke API key.",
             500,

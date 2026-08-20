@@ -24,7 +24,8 @@ class TestConfig(Config):
 def app():
     """Create app context with database."""
     app = create_app(TestConfig)
-    with app.app():
+
+    with app.app_context():
         db.create_all()
         yield app
         db.session.remove()
@@ -36,7 +37,7 @@ def auth_token(app):
     """Create a valid JWT token for testing."""
     from app.models.user import User
 
-    with app.app():
+    with app.app_context():
         # Create a real test user with Active status
         test_user = User(name="Test User", email="testuser@example.com", status="Active")
         test_user.set_password("TestPassword123")
@@ -122,7 +123,7 @@ class TestAccountStatusEnforcement:
     def _create_test_user(app, email, status="Active"):
         """Helper to create a test user with specified status."""
         from app.models.user import User
-        with app.app():
+        with app.app_context():
             user = User(name="Test User", email=email, status=status)
             user.set_password("ValidPassword123")
             db.session.add(user)
@@ -188,7 +189,7 @@ class TestAccountStatusEnforcement:
         from app.models.user import User
         
         # Create a test user with Active status initially
-        with app.app():
+        with app.app_context():
             user = User(name="Active User", email="jwt_test@example.com", status="Active")
             user.set_password("ValidPassword123")
             db.session.add(user)
@@ -220,7 +221,7 @@ class TestAccountStatusEnforcement:
         from app.models.user import User
         
         # Create a test user with Active status initially
-        with app.app():
+        with app.app_context():
             user = User(name="Delete Test User", email="delete_jwt_test@example.com", status="Active")
             user.set_password("ValidPassword123")
             db.session.add(user)
@@ -262,7 +263,7 @@ class TestAccountStatusEnforcement:
         """Admin user should access allowed admin endpoints."""
         from app.models.user import User
         
-        with app.app():
+        with app.app_context():
             # Create an admin user
             admin = User(name="Admin User", email="admin@example.com", role="Admin", status="Active")
             admin.set_password("ValidPassword123")

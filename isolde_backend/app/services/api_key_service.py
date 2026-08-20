@@ -1,3 +1,4 @@
+# app/services/api_key_service.py
 from datetime import datetime
 
 from flask import current_app
@@ -25,7 +26,6 @@ def create_api_key(user_id: str, name: str, permissions: str = "read,write", exp
             is_active=True,
             is_revoked=False
         )
-
         db.session.add(new_key)
         db.session.commit()
 
@@ -36,7 +36,6 @@ def create_api_key(user_id: str, name: str, permissions: str = "read,write", exp
         # Return plaintext key once. This is intentional and must remain the only
         # point where the raw key is exposed.
         return raw_key, new_key.to_dict()
-
     except Exception:
         db.session.rollback()
         current_app.logger.exception(
@@ -50,14 +49,14 @@ def verify_api_key(raw_key: str):
     Validates an incoming plaintext API key.
 
     Checks:
-    - key format
-    - key exists by hash
-    - key is active
-    - key is not revoked
-    - key is not expired
-    - owning user exists
-    - owning user is Active
-    - admin permission is only valid for Admin users
+     - key format
+     - key exists by hash
+     - key is active
+     - key is not revoked
+     - key is not expired
+     - owning user exists
+     - owning user is Active
+     - admin permission is only valid for Admin users
 
     Updates last_used_at timestamp and request counter on successful validation.
     """
@@ -68,7 +67,6 @@ def verify_api_key(raw_key: str):
 
     # Query database by hash only. The raw key is never stored.
     api_key_record = ApiKey.query.filter_by(key_hash=key_hash).first()
-
     if not api_key_record:
         return None
 
@@ -125,12 +123,10 @@ def track_api_usage(key_hash: str, tokens_used: int = 0, cost: float = 0.0):
     """
     try:
         record = ApiKey.query.filter_by(key_hash=key_hash).first()
-
         if record:
             record.total_tokens_used += int(tokens_used or 0)
             record.total_cost += float(cost or 0.0)
             db.session.commit()
-
     except Exception:
         db.session.rollback()
         current_app.logger.exception("Failed to track API usage.")
@@ -139,26 +135,21 @@ def track_api_usage(key_hash: str, tokens_used: int = 0, cost: float = 0.0):
 def revoke_api_key(key_id: int, user_id: str) -> bool:
     """
     Revokes an API key so it can no longer be used.
-
     Ownership is enforced by filtering on both key_id and user_id.
     """
     try:
         record = ApiKey.query.filter_by(id=key_id, user_id=user_id).first()
-
         if not record:
             return False
 
         record.is_revoked = True
         record.is_active = False
-
         db.session.commit()
 
         current_app.logger.info(
             f"API Key ID {key_id} revoked for user {user_id}"
         )
-
         return True
-
     except Exception:
         db.session.rollback()
         current_app.logger.exception(
@@ -170,7 +161,6 @@ def revoke_api_key(key_id: int, user_id: str) -> bool:
 def list_user_keys(user_id: str) -> list:
     """
     Returns all API keys associated with a user.
-
     Returns metadata only. The raw key and key hash are never returned.
     """
     records = (
@@ -179,7 +169,6 @@ def list_user_keys(user_id: str) -> list:
         .order_by(ApiKey.created_at.desc())
         .all()
     )
-
     return [record.to_dict() for record in records]
 
 

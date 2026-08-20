@@ -12,19 +12,15 @@ FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
 
 def _env_bool(name: str, default: bool = False) -> bool:
     value = os.getenv(name)
-
     if value is None:
         return default
-
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _env_int(name: str, default: int) -> int:
     value = os.getenv(name)
-
     if value is None or value.strip() == "":
         return default
-
     try:
         return int(value)
     except ValueError as exc:
@@ -35,7 +31,6 @@ def _env_int(name: str, default: int) -> int:
 
 def _env_list(name: str, default: str = "") -> list[str]:
     value = os.getenv(name, default)
-
     return [
         item.strip()
         for item in value.split(",")
@@ -46,13 +41,11 @@ def _env_list(name: str, default: str = "") -> list[str]:
 def _normalize_database_url(database_url: str) -> str:
     """
     Normalize DATABASE_URL values commonly supplied by hosting platforms.
-
     PostgreSQL URLs may be supplied as postgres://... while SQLAlchemy
     expects postgresql://...
     """
     if database_url.startswith("postgres://"):
         return "postgresql://" + database_url[len("postgres://"):]
-
     return database_url
 
 
@@ -89,7 +82,6 @@ class Config:
     # Database
     # ==========================================================
     _database_url = os.getenv("DATABASE_URL", "").strip()
-
     if _database_url:
         SQLALCHEMY_DATABASE_URI = _normalize_database_url(
             _database_url
@@ -116,7 +108,6 @@ class Config:
     # JWT algorithms and transport must be explicit.
     JWT_ALGORITHM = "HS256"
     JWT_DECODE_ALGORITHMS = ["HS256"]
-
     JWT_TOKEN_LOCATION = ["headers"]
     JWT_HEADER_NAME = "Authorization"
     JWT_HEADER_TYPE = "Bearer"
@@ -257,12 +248,10 @@ class Config:
             return True
 
         cleaned = value.strip()
-
         if not cleaned:
             return True
 
         normalized = re.sub(r"[^a-z0-9]", "", cleaned.lower())
-
         insecure_tokens = {
             "changeme",
             "change_me",
@@ -286,12 +275,10 @@ class Config:
             "jwtsecret",
             "flasksecret",
         }
-
         if normalized in insecure_tokens:
             return True
 
         lower_value = cleaned.lower()
-
         if any(token in lower_value for token in (
             "example",
             "placeholder",
@@ -317,7 +304,6 @@ class Config:
 
         Development can run without external secrets so that local
         development and repository setup remain possible.
-
         Production must fail fast when critical configuration is missing.
         """
         if not cls.IS_PRODUCTION:
@@ -335,7 +321,6 @@ class Config:
             if not value or not value.strip():
                 missing.append(key_name)
                 continue
-
             if cls._is_placeholder_secret(value):
                 unsafe.append(key_name)
 
@@ -351,7 +336,6 @@ class Config:
             )
 
         cors_origins = cls.CORS_ORIGINS or []
-
         if "*" in cors_origins or any(origin.strip() == "*" for origin in cors_origins):
             raise RuntimeError(
                 "CORS_ORIGINS must not use '*' in production."
@@ -367,7 +351,6 @@ class Config:
 def ensure_runtime_directories() -> None:
     """
     Create runtime directories when they do not exist.
-
     This keeps local development and deployment startup predictable.
     """
     directories = (
@@ -375,7 +358,6 @@ def ensure_runtime_directories() -> None:
         Config.VECTOR_STORE_DIR,
         Config.LOG_DIR,
     )
-
     for directory in directories:
         os.makedirs(
             directory,

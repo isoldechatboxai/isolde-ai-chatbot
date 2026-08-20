@@ -1,3 +1,4 @@
+# app/models/saas_cloud_model.py
 from datetime import datetime
 import hashlib
 import secrets
@@ -19,10 +20,7 @@ class Tenant(db.Model):
         default='Free'
     )  # Free, Pro, Business, Enterprise
     is_active = db.Column(db.Boolean, default=True)
-    created_at = db.Column(
-        db.DateTime,
-        default=datetime.utcnow
-    )
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     def to_dict(self):
         return {
@@ -45,28 +43,16 @@ class Subscription(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     tenant_id = db.Column(
         db.Integer,
-        db.ForeignKey(
-            'tenants.id',
-            ondelete='CASCADE'
-        ),
+        db.ForeignKey('tenants.id', ondelete='CASCADE'),
         nullable=False
     )
-    plan_name = db.Column(
-        db.String(50),
-        nullable=False
-    )
+    plan_name = db.Column(db.String(50), nullable=False)
     status = db.Column(
         db.String(30),
         default='Active'
     )  # Active, PastDue, Canceled
-    renewal_date = db.Column(
-        db.DateTime,
-        nullable=True
-    )
-    created_at = db.Column(
-        db.DateTime,
-        default=datetime.utcnow
-    )
+    renewal_date = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     def to_dict(self):
         return {
@@ -88,28 +74,16 @@ class Invoice(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     tenant_id = db.Column(
         db.Integer,
-        db.ForeignKey(
-            'tenants.id',
-            ondelete='CASCADE'
-        ),
+        db.ForeignKey('tenants.id', ondelete='CASCADE'),
         nullable=False
     )
-    amount = db.Column(
-        db.Float,
-        nullable=False
-    )
-    currency = db.Column(
-        db.String(10),
-        default='USD'
-    )
+    amount = db.Column(db.Float, nullable=False)
+    currency = db.Column(db.String(10), default='USD')
     status = db.Column(
         db.String(30),
         default='Paid'
     )  # Paid, Pending, Failed
-    invoice_date = db.Column(
-        db.DateTime,
-        default=datetime.utcnow
-    )
+    invoice_date = db.Column(db.DateTime, default=datetime.utcnow)
 
     def to_dict(self):
         return {
@@ -129,24 +103,12 @@ class Invoice(db.Model):
 class APIKey(db.Model):
     __tablename__ = 'saas_api_keys'
 
-    id = db.Column(
-        db.Integer,
-        primary_key=True
-    )
-
-    user_id = db.Column(
-        db.Integer,
-        nullable=False
-    )
-
-    key_name = db.Column(
-        db.String(100),
-        nullable=False
-    )
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, nullable=False)
+    key_name = db.Column(db.String(100), nullable=False)
 
     # Existing plaintext secret column.
-    # PRESERVED intentionally.
-    # Phase 4 legacy backfill/removal is out of scope.
+    # PRESERVED intentionally. Phase 4 legacy backfill/removal is out of scope.
     key_secret = db.Column(
         db.String(255),
         default=lambda: f"isk_{uuid.uuid4().hex}",
@@ -155,31 +117,14 @@ class APIKey(db.Model):
     )
 
     # Phase 2 / Phase 3 verification hash.
-    key_hash = db.Column(
-        db.String(255),
-        nullable=True
-    )
+    key_hash = db.Column(db.String(255), nullable=True)
 
     # Safe non-secret identification prefix.
-    key_prefix = db.Column(
-        db.String(20),
-        nullable=True
-    )
+    key_prefix = db.Column(db.String(20), nullable=True)
 
-    scopes = db.Column(
-        db.String(255),
-        default='read,write,ai'
-    )
-
-    is_active = db.Column(
-        db.Boolean,
-        default=True
-    )
-
-    created_at = db.Column(
-        db.DateTime,
-        default=datetime.utcnow
-    )
+    scopes = db.Column(db.String(255), default='read,write,ai')
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     @staticmethod
     def hash_key(raw_key):
@@ -192,10 +137,7 @@ class APIKey(db.Model):
         """
         if not raw_key or not isinstance(raw_key, str):
             return None
-
-        return hashlib.sha256(
-            raw_key.encode("utf-8")
-        ).hexdigest()
+        return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
 
     @classmethod
     def generate_key(cls):
@@ -211,11 +153,8 @@ class APIKey(db.Model):
             key_prefix = first 10 characters of raw_key
         """
         raw_key = f"isk_{secrets.token_hex(16)}"
-
         key_hash = cls.hash_key(raw_key)
-
         key_prefix = raw_key[:10]
-
         return raw_key, key_hash, key_prefix
 
     @classmethod
@@ -227,10 +166,7 @@ class APIKey(db.Model):
         This method is intentionally independent from generate_key().
 
         Phase 2 contract:
-
-            raw_key, key_prefix, key_hash = (
-                APIKey.generate_secure_key()
-            )
+            raw_key, key_prefix, key_hash = APIKey.generate_secure_key()
 
         Contract:
             raw_key    = "isk_" + 32 hex characters
@@ -238,7 +174,6 @@ class APIKey(db.Model):
             key_hash   = Werkzeug password hash of raw_key
 
         The returned key_hash is compatible with:
-
             check_password_hash(key_hash, raw_key)
 
         This method must NOT delegate to generate_key(), because
@@ -246,11 +181,8 @@ class APIKey(db.Model):
         contracts.
         """
         raw_key = f"isk_{secrets.token_hex(16)}"
-
         key_prefix = raw_key[:12]
-
         key_hash = generate_password_hash(raw_key)
-
         return raw_key, key_prefix, key_hash
 
     @classmethod
@@ -268,14 +200,10 @@ class APIKey(db.Model):
             return None
 
         key_hash = cls.hash_key(raw_key)
-
         if not key_hash:
             return None
 
-        record = cls.query.filter_by(
-            key_hash=key_hash
-        ).first()
-
+        record = cls.query.filter_by(key_hash=key_hash).first()
         if not record:
             return None
 
