@@ -1,4 +1,4 @@
-```
+﻿```
 # Python
 __pycache__/
 *.pyc
@@ -23,23 +23,19 @@ build/
 *.egg-info/
 .installed.cfg
 *.egg
-
 # Testing
 .coverage*
 coverage.xml
-htmlcov/
-
 # IDE and editor files
 .vscode/
 .idea/
 *.swp
 *.swo
 *.tmp
-
 # OS generated files
 .DS_Store
 Thumbs.db
-
 # Logs
 *.log
-```
+```PART3_CURRENT_SOURCE_FILES.txt
+isolde-ai-chatbot/
