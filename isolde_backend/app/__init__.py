@@ -1,4 +1,4 @@
-﻿import os
+import os
 from flask import Flask, jsonify, send_from_directory, request
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -463,12 +463,7 @@ def create_app(config_class=Config):
         settings_bp,
         url_prefix="/api",
     )
-    app.register_blueprint(
-        api_key_test_bp,
-        url_prefix="/api",
-    )
-
-    # Codex Project Engineering blueprint
+# Codex Project Engineering blueprint
     app.register_blueprint(
         codex_bp,
         url_prefix="/api",
