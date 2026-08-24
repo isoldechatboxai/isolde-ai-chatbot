@@ -1,27 +1,23 @@
 """
 Unified Chat Engine — production-hardened rebuild.
-
 Endpoint:
-    POST /api/engine/chat          (blueprint registered with url_prefix="/api")
-
+POST /api/engine/chat          (blueprint registered with url_prefix="/api")
 Security:
-    • JWT required  (@jwt_required)
-    • User identity from token, never from request body
-    • Conversation ownership enforced
-
+• JWT required  (@jwt_required)
+• User identity from token, never from request body
+• Conversation ownership enforced
 Token limits:
-    • check_and_deduct_tokens is called as a BEST-EFFORT usage tracker.
-    • It NEVER blocks or rejects a chat request.
-    • When hard billing is enabled in the future, flip the guard below.
-
+• check_and_deduct_tokens is called as a BEST-EFFORT usage tracker.
+• It NEVER blocks or rejects a chat request.
+• When hard billing is enabled in the future, flip the guard below.
 History:
-    • Uses the existing Conversation / Message models.
-    • Retrieves the last 20 messages and passes them to generate_reply.
-    • Saves both user and assistant messages after generation.
+• Uses the existing Conversation / Message models.
+• Retrieves the last 20 messages and passes them to generate_reply.
+• Saves both user and assistant messages after generation.
 """
-
-from flask import Blueprint, request, jsonify, current_app
-from flask_jwt_extended import jwt_required, get_jwt_identity
+from functools import wraps
+from flask import Blueprint, request, jsonify, current_app, g
+from flask_jwt_extended import verify_jwt_in_request, get_jwt_identity
 
 from app.extensions import db
 from app.models.conversation import Conversation, Message
@@ -36,12 +32,65 @@ HISTORY_LIMIT = 20
 
 
 # ---------------------------------------------------------------------------
+# Unified Authentication Decorator
+# ---------------------------------------------------------------------------
+def unified_auth_required():
+    """
+    Allows access via either:
+    1. Valid JWT token (internal/admin access)
+    2. Valid Isolde API key (external developer access)
+
+    Sets g.auth_user_id to the authenticated user's ID in both cases.
+    Sets g.auth_method to 'jwt' or 'api_key'.
+    """
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            # 1. Try JWT authentication first
+            try:
+                verify_jwt_in_request(optional=True)
+                jwt_identity = get_jwt_identity()
+                if jwt_identity:
+                    g.auth_user_id = str(jwt_identity)
+                    g.auth_method = 'jwt'
+                    return f(*args, **kwargs)
+            except Exception:
+                pass
+
+            # 2. Try API key authentication
+            api_key = None
+            if 'X-API-Key' in request.headers:
+                api_key = request.headers['X-API-Key']
+            elif 'Authorization' in request.headers:
+                auth_header = request.headers['Authorization']
+                if auth_header.startswith('Bearer '):
+                    token = auth_header.split(' ', 1)[1]
+                    if token.startswith('isk_'):
+                        api_key = token
+
+            if api_key:
+                from app.services.api_key_service import verify_api_key
+                key_record = verify_api_key(api_key)
+                if key_record:
+                    g.auth_user_id = key_record.user_id
+                    g.auth_method = 'api_key'
+                    g.api_key = key_record
+                    return f(*args, **kwargs)
+
+            return jsonify({
+                "error": "Authentication required. Provide a valid JWT or Isolde API key."
+            }), 401
+
+        return decorated_function
+    return decorator
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
 def _get_or_create_conversation(user_id: str, conversation_id: str | None) -> Conversation:
     """
-    Return the existing conversation if it belongs to *user_id*,
+    Return the existing conversation if it belongs to user_id,
     otherwise create a new one.  Mirrors the logic in chat_routes.py.
     """
     if conversation_id:
@@ -62,7 +111,7 @@ def _get_or_create_conversation(user_id: str, conversation_id: str | None) -> Co
 def _history_for_provider(convo: Conversation, limit: int = HISTORY_LIMIT) -> list:
     """
     Build the history list expected by provider_router.generate_reply().
-    Uses the same {"role": ..., "parts": [...]} shape that
+    Uses the same { "role": ..., "parts": [...]} shape that
     chat_routes._history_for_gemini produces, which is understood by
     every provider implementation in provider_router.
     """
@@ -119,20 +168,38 @@ def _try_token_tracking(user_id: str, message: str) -> None:
         )
 
 
+def _track_api_key_usage() -> None:
+    """
+    Best-effort API key usage tracking.
+    Updates total_requests counter for the authenticated API key.
+    NEVER blocks the chat request.
+    """
+    api_key_record = getattr(g, "api_key", None)
+    if not api_key_record:
+        return
+    try:
+        from app.services.api_key_service import track_api_usage
+        track_api_usage(api_key_record.key_hash, tokens_used=0, cost=0.0)
+    except Exception as exc:
+        current_app.logger.debug(
+            f"API key usage tracking skipped (non-fatal): {exc}"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Route
 # ---------------------------------------------------------------------------
-
 @unified_engine_bp.route("/engine/chat", methods=["POST"], strict_slashes=False)
-@jwt_required()
+@unified_auth_required()
 def handle_unified_chat():
     """
     POST /api/engine/chat
-    Body: {"message": "...", "conversation_id": "..." (optional)}
-    """
+    Body: { "message": "...", "conversation_id": "..." (optional)}
 
+    Supports both JWT and Isolde API key authentication.
+    """
     # -- 1. Identify the authenticated user --------------------------------
-    current_user_id = get_jwt_identity()
+    current_user_id = getattr(g, 'auth_user_id', None)
     if not current_user_id:
         return jsonify({"error": "Authentication required."}), 401
 
@@ -152,7 +219,10 @@ def handle_unified_chat():
     # -- 3. Best-effort token usage tracking (non-blocking) ----------------
     _try_token_tracking(current_user_id, message)
 
-    # -- 4. Resolve or create the conversation -----------------------------
+    # -- 4. Best-effort API key usage tracking (non-blocking) --------------
+    _track_api_key_usage()
+
+    # -- 5. Resolve or create the conversation -----------------------------
     try:
         convo = _get_or_create_conversation(current_user_id, conversation_id)
     except Exception as exc:
@@ -160,14 +230,14 @@ def handle_unified_chat():
         current_app.logger.error(f"Conversation resolution failed: {exc}")
         return jsonify({"error": "Failed to resolve conversation."}), 500
 
-    # -- 5. Build conversation history for the provider --------------------
+    # -- 6. Build conversation history for the provider --------------------
     try:
         history = _history_for_provider(convo)
     except Exception as exc:
         current_app.logger.warning(f"History load failed (continuing without): {exc}")
         history = []
 
-    # -- 6. Save the user message BEFORE generation ------------------------
+    # -- 7. Save the user message BEFORE generation ------------------------
     try:
         _save_message(convo.id, "user", message)
     except Exception as exc:
@@ -177,7 +247,7 @@ def handle_unified_chat():
 
     _try_legacy_history_save(current_user_id, convo.id, "user", message)
 
-    # -- 7. Generate the AI reply ------------------------------------------
+    # -- 8. Generate the AI reply ------------------------------------------
     try:
         ai_reply = generate_reply(message, history=history)
     except RuntimeError as exc:
@@ -187,7 +257,7 @@ def handle_unified_chat():
         current_app.logger.error(f"Unified Engine AI Error: {exc}")
         return jsonify({"error": "The AI service is temporarily unavailable."}), 502
 
-    # -- 8. Save the assistant reply ----------------------------------------
+    # -- 9. Save the assistant reply ----------------------------------------
     try:
         _save_message(convo.id, "bot", ai_reply)
     except Exception as exc:
@@ -197,7 +267,7 @@ def handle_unified_chat():
 
     _try_legacy_history_save(current_user_id, convo.id, "assistant", ai_reply)
 
-    # -- 9. Auto-title the conversation on first exchange -------------------
+    # -- 10. Auto-title the conversation on first exchange -------------------
     try:
         if convo.title == "New Conversation":
             convo.title = message[:50]
@@ -205,7 +275,7 @@ def handle_unified_chat():
     except Exception:
         db.session.rollback()
 
-    # -- 10. Return the response --------------------------------------------
+    # -- 11. Return the response --------------------------------------------
     return jsonify({
         "status": "success",
         "reply": ai_reply,

@@ -1,8 +1,6 @@
-# app/models/api_key_model.py
 import secrets
 import hashlib
 from datetime import datetime
-
 from app.extensions import db
 
 
@@ -22,7 +20,7 @@ class ApiKey(db.Model):
     # Store ONLY the SHA-256 hash of the key, never the plaintext key
     key_hash = db.Column(db.String(64), unique=True, nullable=False, index=True)
 
-    # Hint for user identification (e.g., first 8 chars like 'isk_live_...')
+    # Hint for user identification (e.g., first 10 chars like 'isk_1ab23c')
     key_prefix = db.Column(db.String(12), nullable=False)
 
     # Role-Based Access Control (RBAC) & Permissions (comma-separated)

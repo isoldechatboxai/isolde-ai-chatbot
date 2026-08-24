@@ -3,7 +3,7 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 
 from app.extensions import db
 from app.models.conversation import Conversation, Message
-from app.models.user import User, Setting, Feedback, Broadcast
+from app.models.user import User, Setting, Broadcast
 from app.models.memory_model import UserMemory
 
 from app.services.provider_router import generate_reply
@@ -431,7 +431,7 @@ def chat():
             current_app.logger.error(f"Error saving messages: {e}")
 
         try:
-            user = User.query.get(user_id)
+            user = db.session.get(User, user_id)
 
             if user:
                 estimated_tokens = (len(message) + len(reply_text)) // 4
@@ -628,29 +628,34 @@ def stream_chat():
                 yield "data: [DONE]\n\n"
 
                 if user_id and convo and not stop_event.is_set():
-                    user_msg = Message(
-                        conversation_id=convo.id,
-                        role="user",
-                        content=message,
-                        language=lang_code,
-                    )
+                    try:
+                        user_msg = Message(
+                            conversation_id=convo.id,
+                            role="user",
+                            content=message,
+                            language=lang_code,
+                        )
 
-                    bot_msg = Message(
-                        conversation_id=convo.id,
-                        role="bot",
-                        content=reply_text,
-                        language=lang_code,
-                    )
+                        bot_msg = Message(
+                            conversation_id=convo.id,
+                            role="bot",
+                            content=reply_text,
+                            language=lang_code,
+                        )
 
-                    db.session.add_all([user_msg, bot_msg])
+                        db.session.add_all([user_msg, bot_msg])
 
-                    if convo.title == "New Conversation":
-                        convo.title = message[:50]
+                        if convo.title == "New Conversation":
+                            convo.title = message[:50]
 
-                    db.session.commit()
+                        db.session.commit()
+
+                    except Exception as e:
+                        db.session.rollback()
+                        current_app.logger.error(f"Error saving messages in stream: {e}")
 
                     try:
-                        user = User.query.get(user_id)
+                        user = db.session.get(User, user_id)
 
                         if user:
                             estimated_tokens = (len(message) + len(reply_text)) // 4
@@ -659,7 +664,7 @@ def stream_chat():
 
                     except Exception as e:
                         db.session.rollback()
-                        current_app.logger.error(f"Error updating token analytics: {e}")
+                        current_app.logger.error(f"Error updating token analytics in stream: {e}")
 
             except Exception as e:
                 current_app.logger.error(f"Streaming error: {e}")
@@ -720,52 +725,3 @@ def stop_chat_generation():
         "status": "success",
         "stopped": stopped
     }), 200
-
-
-@chat_bp.route("/feedback", methods=["POST"], strict_slashes=False)
-@jwt_required(optional=True)
-def submit_feedback():
-    data = request.get_json(silent=True) or {}
-
-    rating = data.get("rating")
-    comment = data.get("comment", "")
-
-    if not rating:
-        return jsonify({"error": "Rating is required"}), 400
-
-    user_id = get_jwt_identity()
-    user_name = "Guest"
-
-    if user_id:
-        try:
-            user = User.query.get(user_id)
-
-            if user:
-                user_name = user.name or user.email
-
-        except Exception:
-            pass
-
-    try:
-        fb = Feedback(
-            user_name=user_name,
-            rating=rating,
-            comment=comment,
-        )
-
-        db.session.add(fb)
-        db.session.commit()
-
-        return jsonify({
-            "status": "success",
-            "message": "Feedback saved for Admin Panel!"
-        }), 200
-
-    except Exception as e:
-        db.session.rollback()
-        current_app.logger.error(f"Feedback save error: {e}")
-
-        return jsonify({
-            "status": "error",
-            "message": "Failed to save feedback."
-        }), 500

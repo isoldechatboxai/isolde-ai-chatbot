@@ -46,76 +46,68 @@ def create_api_key(user_id: str, name: str, permissions: str = "read,write", exp
 
 def verify_api_key(raw_key: str):
     """
-    Validates an incoming plaintext API key.
+    Verify an Isolde-owned API key.
 
-    Checks:
-     - key format
-     - key exists by hash
-     - key is active
-     - key is not revoked
-     - key is not expired
-     - owning user exists
-     - owning user is Active
-     - admin permission is only valid for Admin users
-
-    Updates last_used_at timestamp and request counter on successful validation.
+    Flow:
+    raw key -> SHA/hash -> database lookup -> status/expiry checks -> record.
+    Never stores or returns the raw API key.
     """
-    if not raw_key or not isinstance(raw_key, str) or not raw_key.startswith("isk_"):
+    if not raw_key or not isinstance(raw_key, str):
         return None
 
-    key_hash = ApiKey.hash_key(raw_key)
+    raw_key = raw_key.strip()
 
-    # Query database by hash only. The raw key is never stored.
-    api_key_record = ApiKey.query.filter_by(key_hash=key_hash).first()
-    if not api_key_record:
+    if not raw_key:
         return None
 
-    # Key lifecycle checks.
-    if not api_key_record.is_active or api_key_record.is_revoked:
-        return None
-
-    # Check expiration if set.
-    if api_key_record.expires_at and datetime.utcnow() > api_key_record.expires_at:
-        return None
-
-    # Enforce owner account status.
-    #
-    # API-key authentication must not bypass the same account-status rules
-    # that apply to JWT authentication.
     try:
-        owner = db.session.get(User, api_key_record.user_id)
+        key_hash = ApiKey.hash_key(raw_key)
     except Exception:
-        db.session.rollback()
-        current_app.logger.exception("API key owner lookup failed.")
         return None
 
-    if not owner or owner.status != "Active":
-        return None
-
-    # Normalize key permissions.
-    key_permissions = {
-        permission.strip().lower()
-        for permission in (api_key_record.permissions or "").split(",")
-        if permission.strip()
-    }
-
-    # Do not allow admin API-key permissions unless the owning account is Admin.
-    if "admin" in key_permissions and getattr(owner, "role", None) != "Admin":
-        return None
-
-    # Update usage metadata safely.
     try:
-        api_key_record.last_used_at = datetime.utcnow()
-        api_key_record.total_requests += 1
-        db.session.commit()
-    except Exception:
-        db.session.rollback()
-        current_app.logger.error(
-            f"Failed to update API key stats for key prefix {api_key_record.key_prefix}"
+        record = (
+            ApiKey.query
+            .filter(ApiKey.key_hash == key_hash)
+            .first()
         )
+    except Exception:
+        return None
 
-    return api_key_record
+    if record is None:
+        return None
 
+    # Explicit revocation check.
+    if bool(getattr(record, "is_revoked", False)):
+        return None
+
+    # Explicit active check.
+    if hasattr(record, "is_active"):
+        if not bool(getattr(record, "is_active")):
+            return None
+
+    # Optional expiration check.
+    expires_at = getattr(record, "expires_at", None)
+
+    if expires_at is not None:
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+
+        try:
+            if expires_at.tzinfo is None:
+                now = datetime.now()
+            if expires_at <= now:
+                return None
+        except TypeError:
+            # Handle legacy naive/aware datetime combinations safely.
+            try:
+                if expires_at <= datetime.now():
+                    return None
+            except Exception:
+                return None
+
+    return record
 
 def track_api_usage(key_hash: str, tokens_used: int = 0, cost: float = 0.0):
     """

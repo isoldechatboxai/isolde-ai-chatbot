@@ -1,5 +1,4 @@
 import os
-
 from flask import Flask, jsonify, send_from_directory, request
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -17,15 +16,12 @@ except ImportError:
 
 from config import Config, FRONTEND_DIR
 from app.extensions import db, jwt, cors, migrate
-from app.models.user import User
-import app.models  # Ensure all models are registered with SQLAlchemy metadata
 from app.utils.logger import setup_logger
 
 # Middleware
 from app.middleware.request_logger import setup_request_logger
 from app.middleware.security_headers import setup_security_headers
 from app.middleware.content_validator import setup_content_validator
-
 
 # -------------------------------------------------------------------
 # Global rate limiter
@@ -39,12 +35,10 @@ limiter = Limiter(
 def _user_lookup_error(message: str, jwt_header, jwt_payload):
     """
     Compatibility helper for Flask-JWT-Extended UserLookupError.
-
     Some Flask-JWT-Extended versions require:
         UserLookupError(message, jwt_header, jwt_data)
     Other/custom fallback versions may accept only:
         UserLookupError(message)
-
     This helper preserves account-status enforcement without causing
     constructor TypeError on supported versions.
     """
@@ -57,40 +51,33 @@ def _user_lookup_error(message: str, jwt_header, jwt_payload):
 def _apply_part1_targeted_rate_limits(app):
     """
     Part 1 targeted rate limiting.
-
     Applies narrow Flask-Limiter limits only to API-key related endpoints:
-    - api_key blueprint endpoints: 5 per minute
-    - SaaS API-key endpoints: 10 per minute
-
-    This function:
-      - reuses the existing global limiter
-      - does not create a second limiter
-      - does not apply global application limits
-      - does not modify unrelated endpoints
-      - preserves existing Flask-Limiter configuration
-    """
+     - api_key blueprint endpoints: 5 per minute
+     - SaaS API-key endpoints: 10 per minute
+     This function:
+       - reuses the existing global limiter
+       - does not create a second limiter
+       - does not apply global application limits
+       - does not modify unrelated endpoints
+       - preserves existing Flask-Limiter configuration
+     """
     api_key_limit = app.config.get(
         "API_KEY_RATE_LIMIT",
         "5 per minute",
     )
-
     saas_api_key_limit = app.config.get(
         "SAAS_API_KEY_RATE_LIMIT",
         "10 per minute",
     )
 
     wrapped_endpoints = set()
-
     for endpoint, view_func in list(app.view_functions.items()):
         if endpoint == "static":
             continue
-
         if endpoint in wrapped_endpoints:
             continue
-
         if view_func is None:
             continue
-
         if getattr(view_func, "__part1_rate_limited__", False):
             wrapped_endpoints.add(endpoint)
             continue
@@ -124,23 +111,18 @@ def _apply_part1_targeted_rate_limits(app):
 
         if is_api_key_endpoint:
             limited_view = limiter.limit(api_key_limit)(view_func)
-
             try:
                 limited_view.__part1_rate_limited__ = True
             except Exception:
                 pass
-
             app.view_functions[endpoint] = limited_view
             wrapped_endpoints.add(endpoint)
-
         elif is_saas_api_key_endpoint:
             limited_view = limiter.limit(saas_api_key_limit)(view_func)
-
             try:
                 limited_view.__part1_rate_limited__ = True
             except Exception:
                 pass
-
             app.view_functions[endpoint] = limited_view
             wrapped_endpoints.add(endpoint)
 
@@ -148,15 +130,23 @@ def _apply_part1_targeted_rate_limits(app):
 def create_app(config_class=Config):
     """
     Application factory for the Isolde Flask backend.
-
     The application factory is responsible for:
-    - loading configuration
-    - initializing Flask extensions
-    - registering middleware
-    - registering API blueprints
-    - exposing health/readiness endpoints
-    - serving the frontend
+     - loading configuration
+     - initializing Flask extensions
+     - registering middleware
+     - registering API blueprints
+     - exposing health/readiness endpoints
+     - serving the frontend
     """
+    # ----------------------------------------------------------------
+    # Deferred imports — performed INSIDE the factory to avoid
+    # circular imports between app, models, and routes.
+    # At this point the app package is fully initialized, so models
+    # and routes can safely import from app.extensions.
+    # ----------------------------------------------------------------
+    from app.models.user import User
+    import app.models  # Ensure all models are registered with SQLAlchemy metadata
+
     app = Flask(
         __name__,
         static_folder=FRONTEND_DIR,
@@ -175,12 +165,10 @@ def create_app(config_class=Config):
         app.config["UPLOAD_FOLDER"],
         exist_ok=True,
     )
-
     os.makedirs(
         app.config["LOG_DIR"],
         exist_ok=True,
     )
-
     os.makedirs(
         app.config["VECTOR_STORE_DIR"],
         exist_ok=True,
@@ -202,7 +190,6 @@ def create_app(config_class=Config):
             "Invalid JWT token: %s",
             reason,
         )
-
         return jsonify({
             "error": "Invalid authentication token."
         }), 401
@@ -213,7 +200,6 @@ def create_app(config_class=Config):
             "Missing JWT token: %s",
             reason,
         )
-
         return jsonify({
             "error": "Authentication required."
         }), 401
@@ -254,14 +240,12 @@ def create_app(config_class=Config):
     @jwt.user_lookup_loader
     def user_lookup(jwt_header, jwt_payload):
         user_id = jwt_payload.get("sub")
-
         if not user_id:
             raise _user_lookup_error(
                 "Missing user identity.",
                 jwt_header,
                 jwt_payload,
             )
-
         try:
             user = db.session.get(User, user_id)
         except Exception:
@@ -270,14 +254,12 @@ def create_app(config_class=Config):
                 jwt_header,
                 jwt_payload,
             )
-
         if not user or user.status != "Active":
             raise _user_lookup_error(
                 "User account is not active.",
                 jwt_header,
                 jwt_payload,
             )
-
         return user
 
     # ----------------------------------------------------------------
@@ -287,10 +269,8 @@ def create_app(config_class=Config):
         "CORS_ORIGINS",
         ["*"],
     )
-
     # Credentials must not be enabled with a wildcard origin.
     supports_credentials = cors_origins != ["*"]
-
     cors.init_app(
         app,
         resources={
@@ -360,6 +340,8 @@ def create_app(config_class=Config):
     from app.routes.ai_studio_routes import ai_studio_bp
     from app.routes.unified_chat_engine import unified_engine_bp
     from app.routes.settings_routes import settings_bp
+    from app.routes.api_key_test_routes import api_key_test_bp
+    from app.routes.codex_routes import codex_bp  # Codex Project Engineering
 
     # Health and analytics
     from app.routes.health_routes import health_bp
@@ -385,82 +367,66 @@ def create_app(config_class=Config):
         auth_bp,
         url_prefix="/api",
     )
-
     app.register_blueprint(
         chat_bp,
         url_prefix="/api",
     )
-
     app.register_blueprint(
         upload_bp,
         url_prefix="/api",
     )
-
     app.register_blueprint(
         feedback_bp,
         url_prefix="/api",
     )
-
     app.register_blueprint(
         history_bp,
         url_prefix="/api",
     )
-
     app.register_blueprint(
         profile_bp,
         url_prefix="/api",
     )
-
     app.register_blueprint(
         admin_bp,
         url_prefix="/api",
     )
-
     app.register_blueprint(
         memory_bp,
         url_prefix="/api",
     )
-
     app.register_blueprint(
         workspace_bp,
         url_prefix="/api",
     )
-
     app.register_blueprint(
         agent_bp,
         url_prefix="/api",
     )
-
     app.register_blueprint(
         productivity_bp,
         url_prefix="/api",
     )
-
     app.register_blueprint(
         voice_bp,
         url_prefix="/api",
     )
-
     app.register_blueprint(
         workflow_bp,
         url_prefix="/api",
     )
-
     app.register_blueprint(
         collaboration_bp,
         url_prefix="/api",
     )
-
     app.register_blueprint(
         marketplace_bp,
         url_prefix="/api",
     )
-
     app.register_blueprint(
         saas_cloud_bp,
         url_prefix="/api",
     )
-
     app.register_blueprint(
         intelligence_bp,
         url_prefix="/api",
@@ -469,6 +435,7 @@ def create_app(config_class=Config):
     # RAG routes define their own paths.
     app.register_blueprint(rag_bp)
 
+    # ISOLDE Own API blueprint — registered ONCE (duplicate removed)
     app.register_blueprint(
         api_key_bp,
         url_prefix="/api",
@@ -481,24 +448,30 @@ def create_app(config_class=Config):
         billing_bp,
         url_prefix="/api",
     )
-
     app.register_blueprint(
         plugin_bp,
         url_prefix="/api",
     )
-
     app.register_blueprint(
         ai_studio_bp,
         url_prefix="/api",
     )
-
     app.register_blueprint(
         unified_engine_bp,
         url_prefix="/api",
     )
-
     app.register_blueprint(
         settings_bp,
+        url_prefix="/api",
+    )
+    app.register_blueprint(
+        api_key_test_bp,
+        url_prefix="/api",
+    )
+
+    # Codex Project Engineering blueprint
+    app.register_blueprint(
+        codex_bp,
         url_prefix="/api",
     )
 
@@ -543,7 +516,6 @@ def create_app(config_class=Config):
             "Unhandled server error: %s",
             error,
         )
-
         return jsonify({
             "error": "Internal server error."
         }), 500
@@ -555,7 +527,6 @@ def create_app(config_class=Config):
     def part1_secure_api_response_headers(response):
         """
         Prevent API responses from being cached by browsers or proxies.
-
         This is additive and does not replace the existing security
         header middleware.
         """
@@ -565,7 +536,6 @@ def create_app(config_class=Config):
                 response.headers.setdefault("Pragma", "no-cache")
         except Exception:
             pass
-
         return response
 
     # ----------------------------------------------------------------
@@ -578,7 +548,6 @@ def create_app(config_class=Config):
     def liveness():
         """
         Lightweight process-level liveness check.
-
         This endpoint intentionally does not require the database.
         """
         return jsonify({
@@ -596,7 +565,6 @@ def create_app(config_class=Config):
     def readiness():
         """
         Readiness check.
-
         Verifies that the application can communicate with the
         configured database and that required runtime directories exist.
         """
@@ -606,7 +574,6 @@ def create_app(config_class=Config):
             "vector_store": False,
             "logs": False,
         }
-
         try:
             db.session.execute(text("SELECT 1"))
             checks["database"] = True
@@ -621,7 +588,6 @@ def create_app(config_class=Config):
             "vector_store": app.config["VECTOR_STORE_DIR"],
             "logs": app.config["LOG_DIR"],
         }
-
         for check_name, directory in required_directories.items():
             try:
                 checks[check_name] = os.path.isdir(directory)
@@ -633,7 +599,6 @@ def create_app(config_class=Config):
                 )
 
         ready = all(checks.values())
-
         return jsonify({
             "status": "ready" if ready else "not_ready",
             "service": "Isolde backend",
@@ -648,17 +613,14 @@ def create_app(config_class=Config):
         """Compatibility alias for the health endpoint in the target API namespace."""
         try:
             from app.services.health_service import health_service
-
             status_data = health_service.check_system_health()
             status_code = 200 if status_data.get("status") == "healthy" else 503
-
             return jsonify({
                 "success": status_code == 200,
                 "data": status_data,
             }), status_code
         except Exception as error:
             app.logger.exception("Versioned health check failed: %s", error)
-
             return jsonify({
                 "success": False,
                 "error": "Health check failed.",

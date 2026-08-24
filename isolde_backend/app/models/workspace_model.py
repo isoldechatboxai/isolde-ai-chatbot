@@ -1,7 +1,6 @@
-# app/models/workspace_model.py
 from datetime import datetime
 from typing import Optional
-from app import db
+from app.extensions import db
 
 
 class Workspace(db.Model):
@@ -57,7 +56,7 @@ class Project(db.Model):
     )
     name: str = db.Column(db.String(255), nullable=False)
     description: Optional[str] = db.Column(db.Text, nullable=True)
-    status: str = db.Column(db.String(50), default="Active", nullable=False)  # Active, Archived, Completed
+    status: str = db.Column(db.String(50), default="Active", nullable=False)
     created_at: datetime = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at: datetime = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -91,7 +90,7 @@ class Agent(db.Model):
         db.Integer, db.ForeignKey("workspaces.id"), nullable=False, index=True
     )
     name: str = db.Column(db.String(255), nullable=False)
-    role_description: Optional[str] = db.Column(db.String(255), nullable=True)  # e.g. "Sales Assistant"
+    role_description: Optional[str] = db.Column(db.String(255), nullable=True)
     system_prompt: str = db.Column(db.Text, nullable=False)
     avatar_emoji: str = db.Column(db.String(10), default="🤖", nullable=False)
     is_default: bool = db.Column(db.Boolean, default=False, nullable=False)
@@ -130,9 +129,9 @@ class WorkspaceDocument(db.Model):
         db.Integer, db.ForeignKey("projects.id"), nullable=True, index=True
     )
     file_name: str = db.Column(db.String(255), nullable=False)
-    file_type: Optional[str] = db.Column(db.String(50), nullable=True)  # pdf, docx, txt, etc.
-    extracted_text: Optional[str] = db.Column(db.Text, nullable=True)  # raw text used for RAG
-    uploaded_by: Optional[str] = db.Column(db.String(255), nullable=True)  # user_id
+    file_type: Optional[str] = db.Column(db.String(50), nullable=True)
+    extracted_text: Optional[str] = db.Column(db.Text, nullable=True)
+    uploaded_by: Optional[str] = db.Column(db.String(255), nullable=True)
     created_at: datetime = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
     def to_dict(self) -> dict:

@@ -1,6 +1,4 @@
-# app/routes/api_key_routes.py
 from datetime import datetime, timedelta
-
 from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity, current_user
 
@@ -34,7 +32,6 @@ def _json_error(message, status_code, details=None):
 def _get_current_user_safe():
     """
     Safely resolve the Flask-JWT-Extended current_user proxy.
-
     This route is already protected by @jwt_required(). This helper only
     avoids unexpected proxy errors while reading role information.
     """
@@ -47,12 +44,10 @@ def _get_current_user_safe():
 def _sanitize_permissions(raw_permissions, is_admin_user):
     """
     Normalize and validate API-key permissions.
-
     Allowed permissions:
-     - read
-     - write
-     - admin
-
+      - read
+      - write
+      - admin
     Admin permission may only be assigned by an Admin user.
     """
     if raw_permissions is None:
@@ -112,6 +107,7 @@ def generate_key():
         return _json_error("API key name must be a string.", 400)
 
     name = name.strip()
+
     if not name:
         return _json_error("API key name cannot be empty.", 400)
 
@@ -133,6 +129,7 @@ def generate_key():
 
     expires_in_days = data.get("expires_in_days")
     expires_at = None
+
     if expires_in_days is not None:
         try:
             expires_in_days = int(expires_in_days)
@@ -214,7 +211,6 @@ def delete_key(key_id):
         success = revoke_api_key(key_id, user_id)
         if not success:
             return _json_error("API key not found or unauthorized.", 404)
-
         return jsonify({
             "message": f"API key ID {key_id} has been revoked successfully."
         }), 200
