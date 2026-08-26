@@ -22,7 +22,7 @@ def list_custom_models():
 @jwt_required()
 def create_custom_model():
     return jsonify({
-        "status": "unavailable",
+        "status": "NOT_SUPPORTED",
         "error": "Fine-tuning is not configured. Configure a supported training provider before creating models."
     }), 501
 

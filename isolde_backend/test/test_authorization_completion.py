@@ -68,6 +68,51 @@ def test_organization_membership_and_admin_permissions_are_enforced(client, db):
     ).status_code == 404
 
 
+def test_master_can_manage_members_but_subaccount_cannot_escalate(client, db):
+    owner = _user(db, "master@example.com")
+    subaccount = _user(db, "subaccount@example.com")
+    other = _user(db, "other-subaccount@example.com")
+    org = Organization(name="Managed Org", owner_id=owner.id)
+    db.session.add(org)
+    db.session.flush()
+    viewer = OrganizationRole(org_id=org.id, name="Viewer", permissions="[]")
+    manager = OrganizationRole(org_id=org.id, name="Manager", permissions='["manage_users"]')
+    db.session.add_all([viewer, manager])
+    db.session.flush()
+    owner_member = OrganizationMember(org_id=org.id, user_id=owner.id, role_id=manager.id)
+    db.session.add(owner_member)
+    db.session.commit()
+
+    added = client.post(
+        f"/api/organizations/{org.id}/members", headers=_headers(owner),
+        json={"email": subaccount.email, "role_id": viewer.id},
+    )
+    assert added.status_code == 201
+    member_id = added.get_json()["member"]["id"]
+    assert client.patch(
+        f"/api/organizations/{org.id}/members/{member_id}", headers=_headers(subaccount),
+        json={"role_id": manager.id},
+    ).status_code == 404
+    assert client.post(
+        f"/api/organizations/{org.id}/members", headers=_headers(subaccount),
+        json={"email": other.email, "role_id": manager.id},
+    ).status_code == 404
+    assert client.get(f"/api/organizations/{org.id}/usage", headers=_headers(subaccount)).status_code == 404
+
+    updated = client.patch(
+        f"/api/organizations/{org.id}/members/{member_id}", headers=_headers(owner),
+        json={"status": "Suspended", "role_id": manager.id},
+    )
+    assert updated.status_code == 200
+    assert updated.get_json()["member"]["status"] == "Suspended"
+    assert client.delete(
+        f"/api/organizations/{org.id}/members/{owner_member.id}", headers=_headers(owner)
+    ).status_code == 409
+    assert client.delete(
+        f"/api/organizations/{org.id}/members/{member_id}", headers=_headers(owner)
+    ).status_code == 200
+
+
 def test_saas_routes_no_longer_share_anonymous_identity(client):
     assert client.get("/api/saas/apikeys").status_code == 401
     assert client.post("/api/saas/apikeys", json={"key_name": "anonymous"}).status_code == 401

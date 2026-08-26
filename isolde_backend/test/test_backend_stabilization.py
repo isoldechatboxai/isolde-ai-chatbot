@@ -69,6 +69,8 @@ class TestProductionConfigValidation:
             RATELIMIT_STORAGE_URI = "redis://redis:6379/0"
             CANCELLATION_REDIS_URL = "redis://redis:6379/1"
             RAG_STORAGE_BACKEND = "database"
+            STORAGE_BACKEND = "s3"
+            S3_BUCKET = "isolde-test-private"
             SQLALCHEMY_DATABASE_URI = "postgresql://isolde:secret@db/isolde"
 
         for key, value in overrides.items():

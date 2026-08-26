@@ -17,6 +17,8 @@ from app.models.user import User, Setting, Broadcast
 from app.models.conversation import Conversation, Message
 from app.models.feedback import Feedback
 from app.models.auth_model import AuthSession
+from app.models.billing_model import CreditBalance, Invoice, Subscription
+from app.models.collaboration_model import Organization, OrganizationMember
 
 admin_bp = Blueprint("admin", __name__)
 
@@ -115,6 +117,62 @@ def admin_dashboard(admin_user):
             "total_feedback": total_feedback,
         },
     }), 200
+
+
+@admin_bp.route("/admin/tenants", methods=["GET"], strict_slashes=False)
+@jwt_required()
+@admin_required
+def admin_tenants(admin_user):
+    organizations = Organization.query.order_by(Organization.created_at.desc()).all()
+    return jsonify({"status": "success", "tenants": [{
+        **org.to_dict(),
+        "member_count": OrganizationMember.query.filter_by(org_id=org.id).count(),
+    } for org in organizations]}), 200
+
+
+@admin_bp.route("/admin/billing-summary", methods=["GET"], strict_slashes=False)
+@jwt_required()
+@admin_required
+def admin_billing_summary(admin_user):
+    return jsonify({"status": "success", "billing": {
+        "subscriptions": Subscription.query.count(),
+        "invoices": Invoice.query.count(),
+        "recorded_credits": db.session.query(db.func.coalesce(db.func.sum(CreditBalance.credits), 0)).scalar(),
+        "provider": "Not configured" if not current_app.config.get("PAYMENT_PROVIDER") else current_app.config["PAYMENT_PROVIDER"],
+    }}), 200
+
+
+@admin_bp.route("/admin/provider-status", methods=["GET"], strict_slashes=False)
+@jwt_required()
+@admin_required
+def admin_provider_status(admin_user):
+    providers = {
+        "gemini": bool(current_app.config.get("GEMINI_API_KEY") and current_app.config.get("GEMINI_MODEL")),
+        "openai": bool(current_app.config.get("OPENAI_API_KEY")),
+        "claude": bool(current_app.config.get("ANTHROPIC_API_KEY")),
+        "openrouter": bool(current_app.config.get("OPENROUTER_API_KEY")),
+        "deepseek": bool(current_app.config.get("DEEPSEEK_API_KEY")),
+        "mistral": bool(current_app.config.get("MISTRAL_API_KEY")),
+    }
+    return jsonify({"status": "success", "providers": {
+        name: "Configured" if configured else "Not configured"
+        for name, configured in providers.items()
+    }}), 200
+
+
+@admin_bp.route("/admin/operations", methods=["GET"], strict_slashes=False)
+@jwt_required()
+@admin_required
+def admin_operations(admin_user):
+    from app.services.health_service import health_service
+    health = health_service.check_system_health()
+    return jsonify({"status": "success", "operations": {
+        "health": health,
+        "storage_backend": current_app.config.get("STORAGE_BACKEND", "local"),
+        "rag_backend": current_app.config.get("RAG_STORAGE_BACKEND", "database"),
+        "rate_limit_storage": "Redis" if current_app.config.get("RATELIMIT_STORAGE_URI", "").startswith("redis") else "Not configured",
+        "logs": "File logging enabled" if current_app.config.get("LOG_TO_FILE") else "Application logger",
+    }}), 200
 
 
 # ---------------------------------------------------------------------------

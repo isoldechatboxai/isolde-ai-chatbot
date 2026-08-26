@@ -108,7 +108,7 @@ def test_empty_database_bootstrap_creates_current_schema(tmp_path):
     with bootstrap_app.app_context():
         tables = set(inspect(extension_db.engine).get_table_names())
         assert {"users", "rag_documents", "rag_chunks", "alembic_version"} <= tables
-        assert extension_db.session.execute(text("SELECT version_num FROM alembic_version")).scalar() == "20260826_000002"
+        assert extension_db.session.execute(text("SELECT version_num FROM alembic_version")).scalar() == "20260826_000003"
 
 
 def test_bootstrap_refuses_nonempty_unversioned_database(tmp_path):
@@ -146,7 +146,9 @@ def test_security_sensitive_routes_have_targeted_rate_limits(app):
 
 
 def test_existing_database_migrates_from_auth_head_to_rag_head(app):
+    from app.models.billing_model import PaymentEvent
     with app.app_context():
+        PaymentEvent.__table__.drop(extension_db.engine, checkfirst=True)
         RAGChunk.__table__.drop(extension_db.engine, checkfirst=True)
         RAGDocument.__table__.drop(extension_db.engine, checkfirst=True)
     runner = app.test_cli_runner()
@@ -156,4 +158,4 @@ def test_existing_database_migrates_from_auth_head_to_rag_head(app):
     assert upgraded.exit_code == 0, upgraded.output
     with app.app_context():
         assert {"rag_documents", "rag_chunks"} <= set(inspect(extension_db.engine).get_table_names())
-        assert extension_db.session.execute(text("SELECT version_num FROM alembic_version")).scalar() == "20260826_000002"
+        assert extension_db.session.execute(text("SELECT version_num FROM alembic_version")).scalar() == "20260826_000003"

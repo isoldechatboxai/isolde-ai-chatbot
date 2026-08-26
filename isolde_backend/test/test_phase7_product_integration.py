@@ -21,6 +21,14 @@ def test_admin_login_creates_revocable_database_session(client, db):
 
     headers = {"Authorization": f"Bearer {token}"}
     assert client.get("/api/admin/dashboard", headers=headers).status_code == 200
+    assert client.get("/api/admin/tenants", headers=headers).status_code == 200
+    providers = client.get("/api/admin/provider-status", headers=headers)
+    assert providers.status_code == 200
+    assert all(value in {"Configured", "Not configured"} for value in providers.get_json()["providers"].values())
+    assert client.get("/api/admin/billing-summary", headers=headers).status_code == 200
+    operations = client.get("/api/admin/operations", headers=headers)
+    assert operations.status_code == 200
+    assert "operations" in operations.get_json()
     assert client.post("/api/logout", headers=headers).status_code == 200
     assert client.get("/api/admin/dashboard", headers=headers).status_code == 401
 

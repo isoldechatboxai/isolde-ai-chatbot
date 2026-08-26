@@ -216,6 +216,21 @@ class Config:
             "vector_store",
         ).strip(),
     )
+    STORAGE_BACKEND = os.getenv("STORAGE_BACKEND", "local").strip().lower()
+    S3_BUCKET = os.getenv("S3_BUCKET", "").strip()
+    S3_REGION = os.getenv("S3_REGION", "").strip()
+    S3_ENDPOINT_URL = os.getenv("S3_ENDPOINT_URL", "").strip()
+    S3_ACCESS_KEY_ID = os.getenv("S3_ACCESS_KEY_ID", "").strip()
+    S3_SECRET_ACCESS_KEY = os.getenv("S3_SECRET_ACCESS_KEY", "").strip()
+    PAYMENT_PROVIDER = os.getenv("PAYMENT_PROVIDER", "").strip().lower()
+    STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "").strip()
+    STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()
+    STRIPE_PRICE_PRO = os.getenv("STRIPE_PRICE_PRO", "").strip()
+    STRIPE_PRICE_ENTERPRISE = os.getenv("STRIPE_PRICE_ENTERPRISE", "").strip()
+    PAYMENT_SUCCESS_URL = os.getenv("PAYMENT_SUCCESS_URL", "").strip()
+    PAYMENT_CANCEL_URL = os.getenv("PAYMENT_CANCEL_URL", "").strip()
+    IMAGE_PROVIDER = os.getenv("IMAGE_PROVIDER", "").strip().lower()
+    VIDEO_PROVIDER = os.getenv("VIDEO_PROVIDER", "").strip().lower()
     RAG_STORAGE_BACKEND = os.getenv("RAG_STORAGE_BACKEND", "database").strip().lower()
 
     # ==========================================================
@@ -271,6 +286,7 @@ class Config:
     CHAT_RATE_LIMIT = os.getenv("CHAT_RATE_LIMIT", "20 per minute").strip()
     UPLOAD_RATE_LIMIT = os.getenv("UPLOAD_RATE_LIMIT", "10 per minute").strip()
     OAUTH_RATE_LIMIT = os.getenv("OAUTH_RATE_LIMIT", "20 per minute").strip()
+    BILLING_RATE_LIMIT = os.getenv("BILLING_RATE_LIMIT", "10 per minute").strip()
 
     MAIL_SERVER = os.getenv("MAIL_SERVER", "").strip()
     MAIL_PORT = _env_int("MAIL_PORT", 587)
@@ -405,6 +421,10 @@ class Config:
             raise RuntimeError("CANCELLATION_REDIS_URL must use Redis in production.")
         if cls.RAG_STORAGE_BACKEND != "database":
             raise RuntimeError("RAG_STORAGE_BACKEND must be 'database' in production.")
+        if cls.STORAGE_BACKEND != "s3":
+            raise RuntimeError("STORAGE_BACKEND must be 's3' in production.")
+        if not cls.S3_BUCKET:
+            raise RuntimeError("S3_BUCKET is required in production.")
         if cls.SQLALCHEMY_DATABASE_URI.startswith("sqlite:"):
             raise RuntimeError("DATABASE_URL must use a multi-worker production database, not SQLite.")
 

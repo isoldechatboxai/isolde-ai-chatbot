@@ -33,16 +33,11 @@ class HealthService:
             if current_app:
                 current_app.logger.error(f"[HealthService] Database health check failed: {str(e)}")
 
-        # 2. Check Storage Directory Write Permissions
+        # 2. Check the configured private storage backend.
         try:
-            upload_dir = current_app.config["UPLOAD_FOLDER"]
-            os.makedirs(upload_dir, exist_ok=True)
-            test_file_path = os.path.join(upload_dir, "health_probe.tmp")
-            with open(test_file_path, "w") as f:
-                f.write("OK")
-            if os.path.exists(test_file_path):
-                os.remove(test_file_path)
-                health_status["storage"] = "writable"
+            from app.services.storage_service import get_storage
+            if get_storage().check():
+                health_status["storage"] = "available"
         except Exception as e:
             health_status["status"] = "degraded"
             if current_app:

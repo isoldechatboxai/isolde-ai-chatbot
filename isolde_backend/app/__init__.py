@@ -123,6 +123,8 @@ def _apply_security_sensitive_rate_limits(app):
         "memory_bp.save_memory": app.config["CHAT_RATE_LIMIT"],
         "studio_bp.generate_image": app.config["CHAT_RATE_LIMIT"],
         "studio_bp.generate_video": app.config["CHAT_RATE_LIMIT"],
+        "billing_bp.create_checkout": app.config["BILLING_RATE_LIMIT"],
+        "billing_bp.payment_webhook": app.config["BILLING_RATE_LIMIT"],
     }
     for endpoint, limit_value in limits.items():
         view = app.view_functions.get(endpoint)
@@ -618,7 +620,13 @@ def create_app(config_class=Config):
                 error,
             )
 
-        required_directories = {"storage": app.config["UPLOAD_FOLDER"]}
+        try:
+            from app.services.storage_service import get_storage
+            checks["storage"] = get_storage().check()
+        except Exception as error:
+            app.logger.error("Readiness storage check failed: %s", error)
+
+        required_directories = {}
         if app.config.get("LOG_TO_FILE", False):
             required_directories["logs"] = app.config["LOG_DIR"]
         for check_name, directory in required_directories.items():

@@ -42,7 +42,7 @@ def test_create_custom_model(client):
         "dataset_uri": "s3://bucket/data.csv"
     })
     assert res.status_code == 501
-    assert res.get_json()["status"] == "unavailable"
+    assert res.get_json()["status"] == "NOT_SUPPORTED"
 
 
 def test_list_custom_models(client):

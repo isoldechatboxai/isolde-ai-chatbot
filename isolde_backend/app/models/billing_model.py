@@ -61,3 +61,13 @@ class Invoice(db.Model):
             "status": self.status,
             "created_at": self.created_at.isoformat() if self.created_at else None
         }
+
+
+class PaymentEvent(db.Model):
+    __tablename__ = "billing_payment_events"
+
+    id = db.Column(db.Integer, primary_key=True)
+    provider = db.Column(db.String(32), nullable=False)
+    event_id = db.Column(db.String(255), unique=True, nullable=False, index=True)
+    event_type = db.Column(db.String(100), nullable=False)
+    processed_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)

@@ -1,4 +1,8 @@
 import pytest
+import hashlib
+import hmac
+import json
+import time
 from app import create_app
 from app.extensions import db
 from app.models.user import User
@@ -53,6 +57,42 @@ def test_browser_cannot_deduct_credits(client, amount):
     res = client.post("/api/billing/credits/deduct", json={"amount": amount})
     assert res.status_code == 403
     assert client.get("/api/billing/credits").get_json()["credits"] == 100
+
+
+def test_checkout_fails_honestly_when_payment_provider_is_not_configured(client):
+    response = client.post("/api/billing/checkout", json={"plan": "Pro"})
+    assert response.status_code == 503
+    assert "not configured" in response.get_json()["error"].lower()
+
+
+def test_verified_payment_webhook_is_authoritative_and_idempotent(client):
+    client.application.config.update({"PAYMENT_PROVIDER": "stripe", "STRIPE_SECRET_KEY": "sk_test_local", "STRIPE_WEBHOOK_SECRET": "whsec_test"})
+    user_id = client.get("/api/billing/credits").get_json()["user_id"]
+    event = {
+        "id": "evt_verified_1", "type": "checkout.session.completed",
+        "data": {"object": {"payment_status": "paid", "metadata": {"user_id": user_id, "plan": "Pro"}}},
+    }
+    payload = json.dumps(event, separators=(",", ":")).encode()
+    timestamp = str(int(time.time()))
+    signature = hmac.new(b"whsec_test", timestamp.encode() + b"." + payload, hashlib.sha256).hexdigest()
+    headers = {"Stripe-Signature": f"t={timestamp},v1={signature}", "Content-Type": "application/json"}
+
+    first = client.post("/api/billing/webhook", data=payload, headers=headers)
+    second = client.post("/api/billing/webhook", data=payload, headers=headers)
+    assert first.status_code == 200
+    assert first.get_json()["status"] == "processed"
+    assert second.get_json()["status"] == "already_processed"
+    assert client.get("/api/billing/subscription").get_json()["subscription"]["plan_name"] == "Pro"
+    assert client.get("/api/billing/credits").get_json()["credits"] == 2000
+
+
+def test_payment_webhook_rejects_invalid_signature(client):
+    client.application.config.update({"PAYMENT_PROVIDER": "stripe", "STRIPE_SECRET_KEY": "sk_test_local", "STRIPE_WEBHOOK_SECRET": "whsec_test"})
+    response = client.post(
+        "/api/billing/webhook", data=b'{"id":"evt_bad","type":"test"}',
+        headers={"Stripe-Signature": "t=1,v1=invalid", "Content-Type": "application/json"},
+    )
+    assert response.status_code == 400
 
 
 def test_generate_and_list_invoice(client):

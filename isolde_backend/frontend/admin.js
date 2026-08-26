@@ -17,7 +17,10 @@ async function adminApi(path, options = {}) {
 }
 
 async function loadDashboard() {
-  const [dashboard, users] = await Promise.all([adminApi("/api/admin/dashboard"), adminApi("/api/admin/users")]);
+  const [dashboard, users, tenants, providers, billing, operations] = await Promise.all([
+    adminApi("/api/admin/dashboard"), adminApi("/api/admin/users"), adminApi("/api/admin/tenants"),
+    adminApi("/api/admin/provider-status"), adminApi("/api/admin/billing-summary"), adminApi("/api/admin/operations")
+  ]);
   document.getElementById("admin-login").hidden = true;
   document.getElementById("admin-dashboard").hidden = false;
   const stats = dashboard.dashboard || {};
@@ -34,6 +37,27 @@ async function loadDashboard() {
     return row;
   }));
   document.getElementById("admin-empty").hidden = (users.users || []).length !== 0;
+  document.getElementById("admin-tenants").replaceChildren(...(tenants.tenants || []).map((tenant) => {
+    const row = document.createElement("p"); row.textContent = `${tenant.name} — ${tenant.member_count} members — ${tenant.status}`; return row;
+  }));
+  renderDefinitionList("admin-providers", providers.providers || {});
+  renderDefinitionList("admin-billing", billing.billing || {});
+  renderDefinitionList("admin-operations", {
+    storage_backend: operations.operations?.storage_backend,
+    rag_backend: operations.operations?.rag_backend,
+    rate_limit_storage: operations.operations?.rate_limit_storage,
+    logs: operations.operations?.logs,
+    health: operations.operations?.health?.status,
+  });
+}
+
+function renderDefinitionList(id, values) {
+  document.getElementById(id).replaceChildren(...Object.entries(values).map(([key, value]) => {
+    const row = document.createElement("div");
+    const term = document.createElement("dt"); term.textContent = key.replaceAll("_", " ");
+    const detail = document.createElement("dd"); detail.textContent = String(value ?? "Not configured");
+    row.append(term, detail); return row;
+  }));
 }
 
 document.getElementById("admin-login-form").addEventListener("submit", async (event) => {

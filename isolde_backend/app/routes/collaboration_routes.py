@@ -5,6 +5,7 @@ from flask_jwt_extended import get_jwt_identity, jwt_required
 
 from app import db
 from app.models.collaboration_model import Invitation, Organization, OrganizationMember, OrganizationRole, Team
+from app.models.user import User
 from app.utils.validators import is_valid_email
 
 collaboration_bp = Blueprint("collaboration_bp", __name__)
@@ -37,6 +38,22 @@ def _organization_for_admin(org_id, user_id):
     except (TypeError, ValueError):
         permissions = []
     return org if "all" in permissions or "manage_users" in permissions else None
+
+
+def _organization_for_owner(org_id, user_id):
+    return Organization.query.filter_by(id=org_id, owner_id=user_id).first()
+
+
+def _member_payload(member):
+    user = db.session.get(User, member.user_id)
+    role = db.session.get(OrganizationRole, member.role_id) if member.role_id else None
+    payload = member.to_dict()
+    payload.update({
+        "name": user.name if user else None,
+        "email": user.email if user else None,
+        "role": role.to_dict() if role else None,
+    })
+    return payload
 
 
 @collaboration_bp.route("/organizations", methods=["GET"])
@@ -99,7 +116,83 @@ def get_members(org_id):
     if not _organization_for_member(org_id, _user_id()):
         return jsonify({"error": "Organization not found."}), 404
     members = OrganizationMember.query.filter_by(org_id=org_id).all()
-    return jsonify({"members": [item.to_dict() for item in members]}), 200
+    return jsonify({"members": [_member_payload(item) for item in members]}), 200
+
+
+@collaboration_bp.route("/organizations/<int:org_id>/roles", methods=["GET"])
+@jwt_required()
+def get_roles(org_id):
+    if not _organization_for_member(org_id, _user_id()):
+        return jsonify({"error": "Organization not found."}), 404
+    roles = OrganizationRole.query.filter_by(org_id=org_id).all()
+    return jsonify({"roles": [role.to_dict() for role in roles]}), 200
+
+
+@collaboration_bp.route("/organizations/<int:org_id>/members", methods=["POST"])
+@jwt_required()
+def add_member(org_id):
+    if not _organization_for_admin(org_id, _user_id()):
+        return jsonify({"error": "Organization not found."}), 404
+    data = request.get_json(silent=True) or {}
+    email = str(data.get("email") or "").strip().lower()
+    user = User.query.filter_by(email=email, status="Active").first()
+    role = OrganizationRole.query.filter_by(id=data.get("role_id"), org_id=org_id).first()
+    if not user:
+        return jsonify({"error": "An active registered user with that email is required."}), 404
+    if not role:
+        return jsonify({"error": "Role not found."}), 404
+    member = OrganizationMember.query.filter_by(org_id=org_id, user_id=user.id).first()
+    if member:
+        member.role_id = role.id
+        member.status = "Active"
+    else:
+        member = OrganizationMember(org_id=org_id, user_id=user.id, role_id=role.id, status="Active")
+        db.session.add(member)
+    db.session.commit()
+    return jsonify({"message": "Member added.", "member": _member_payload(member)}), 201
+
+
+@collaboration_bp.route("/organizations/<int:org_id>/members/<int:member_id>", methods=["PATCH", "DELETE"])
+@jwt_required()
+def manage_member(org_id, member_id):
+    org = _organization_for_admin(org_id, _user_id())
+    if not org:
+        return jsonify({"error": "Organization not found."}), 404
+    member = OrganizationMember.query.filter_by(id=member_id, org_id=org_id).first()
+    if not member:
+        return jsonify({"error": "Member not found."}), 404
+    if member.user_id == org.owner_id:
+        return jsonify({"error": "Organization ownership cannot be changed through member management."}), 409
+    if request.method == "DELETE":
+        db.session.delete(member)
+        db.session.commit()
+        return jsonify({"message": "Member removed."}), 200
+    data = request.get_json(silent=True) or {}
+    if "status" in data:
+        if data["status"] not in {"Active", "Suspended"}:
+            return jsonify({"error": "Status must be Active or Suspended."}), 400
+        member.status = data["status"]
+    if "role_id" in data:
+        role = OrganizationRole.query.filter_by(id=data["role_id"], org_id=org_id).first()
+        if not role:
+            return jsonify({"error": "Role not found."}), 404
+        member.role_id = role.id
+    db.session.commit()
+    return jsonify({"message": "Member updated.", "member": _member_payload(member)}), 200
+
+
+@collaboration_bp.route("/organizations/<int:org_id>/usage", methods=["GET"])
+@jwt_required()
+def organization_usage(org_id):
+    if not _organization_for_owner(org_id, _user_id()):
+        return jsonify({"error": "Organization not found."}), 404
+    member_ids = [row[0] for row in db.session.query(OrganizationMember.user_id).filter_by(org_id=org_id, status="Active").all()]
+    users = User.query.filter(User.id.in_(member_ids)).all() if member_ids else []
+    return jsonify({
+        "usage": "Usage unavailable",
+        "members": [{"user_id": user.id, "name": user.name, "tokens_used": user.tokens_used} for user in users],
+        "tokens_used": sum(user.tokens_used or 0 for user in users),
+    }), 200
 
 
 @collaboration_bp.route("/organizations/<int:org_id>/invite", methods=["POST"])
