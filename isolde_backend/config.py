@@ -123,6 +123,32 @@ class Config:
         )
     )
 
+    REQUIRE_EMAIL_VERIFICATION = _env_bool(
+        "REQUIRE_EMAIL_VERIFICATION", default=IS_PRODUCTION
+    )
+    EMAIL_VERIFICATION_TOKEN_MINUTES = _env_int("EMAIL_VERIFICATION_TOKEN_MINUTES", 1440)
+    PASSWORD_RESET_TOKEN_MINUTES = _env_int("PASSWORD_RESET_TOKEN_MINUTES", 15)
+    EXPOSE_TEST_AUTH_TOKENS = _env_bool("EXPOSE_TEST_AUTH_TOKENS", default=True)
+
+    # OAuth/OIDC authorization-code integrations. Empty values disable the
+    # corresponding provider; credentials always remain server-side.
+    GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "").strip()
+    GOOGLE_OAUTH_CLIENT_SECRET = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "").strip()
+    GOOGLE_OAUTH_REDIRECT_URI = os.getenv("GOOGLE_OAUTH_REDIRECT_URI", "").strip()
+    GITHUB_OAUTH_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID", "").strip()
+    GITHUB_OAUTH_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET", "").strip()
+    GITHUB_OAUTH_REDIRECT_URI = os.getenv("GITHUB_OAUTH_REDIRECT_URI", "").strip()
+    APPLE_OAUTH_CLIENT_ID = os.getenv("APPLE_CLIENT_ID", "").strip()
+    APPLE_OAUTH_REDIRECT_URI = os.getenv("APPLE_OAUTH_REDIRECT_URI", "").strip()
+    APPLE_TEAM_ID = os.getenv("APPLE_TEAM_ID", "").strip()
+    APPLE_KEY_ID = os.getenv("APPLE_KEY_ID", "").strip()
+    APPLE_PRIVATE_KEY = os.getenv("APPLE_PRIVATE_KEY", "").strip()
+    MICROSOFT_OAUTH_CLIENT_ID = os.getenv("MICROSOFT_CLIENT_ID", "").strip()
+    MICROSOFT_OAUTH_CLIENT_SECRET = os.getenv("MICROSOFT_CLIENT_SECRET", "").strip()
+    MICROSOFT_OAUTH_REDIRECT_URI = os.getenv("MICROSOFT_OAUTH_REDIRECT_URI", "").strip()
+    MICROSOFT_OAUTH_TENANT = os.getenv("MICROSOFT_TENANT", "").strip()
+    OAUTH_HTTP_TIMEOUT_SECONDS = _env_int("OAUTH_HTTP_TIMEOUT_SECONDS", 10)
+
     # ==========================================================
     # Gemini
     # ==========================================================
@@ -229,6 +255,17 @@ class Config:
         "SAAS_API_KEY_RATE_LIMIT",
         "10 per minute",
     ).strip()
+    RATELIMIT_STORAGE_URI = os.getenv(
+        "RATELIMIT_STORAGE_URI", "memory://"
+    ).strip()
+
+    MAIL_SERVER = os.getenv("MAIL_SERVER", "").strip()
+    MAIL_PORT = _env_int("MAIL_PORT", 587)
+    MAIL_USE_TLS = _env_bool("MAIL_USE_TLS", default=True)
+    MAIL_USERNAME = os.getenv("MAIL_USERNAME", "").strip()
+    MAIL_PASSWORD = os.getenv("MAIL_PASSWORD", "").strip()
+    MAIL_DEFAULT_SENDER = os.getenv("MAIL_DEFAULT_SENDER", "").strip()
+    PUBLIC_APP_URL = os.getenv("PUBLIC_APP_URL", "http://127.0.0.1:5000").strip().rstrip("/")
 
     # ==========================================================
     # Application Paths
@@ -345,6 +382,11 @@ class Config:
             raise RuntimeError(
                 "Production secrets must not use empty or insecure placeholder values: "
                 + ", ".join(unsafe)
+            )
+
+        if cls.RATELIMIT_STORAGE_URI == "memory://":
+            raise RuntimeError(
+                "RATELIMIT_STORAGE_URI must use shared storage such as Redis in production."
             )
 
 

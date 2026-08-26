@@ -7,10 +7,21 @@ services:
       - "5000:5000"
     env_file:
       - .env
+    environment:
+      RATELIMIT_STORAGE_URI: redis://redis:6379/0
     volumes:
       - ./uploads:/app/uploads
       - ./logs:/app/logs
       - ./vector_store:/app/vector_store
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  redis:
+    image: redis:8.2-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
     restart: unless-stopped
 
   # Swap SQLite for Postgres in production by uncommenting this service
@@ -24,5 +35,6 @@ services:
   #   volumes:
   #     - pgdata:/var/lib/postgresql/data
 
-# volumes:
-#   pgdata:
+volumes:
+  redis-data:
+  # pgdata:

@@ -63,6 +63,7 @@ class TestProductionConfigValidation:
             GEMINI_API_KEY = "test-gemini-api-key"
             GEMINI_MODEL = "gemini-1.5-flash"
             CORS_ORIGINS = ["https://example.com"]
+            RATELIMIT_STORAGE_URI = "redis://redis:6379/0"
 
         for key, value in overrides.items():
             setattr(ProductionConfig, key, value)
@@ -113,6 +114,11 @@ class TestProductionConfigValidation:
     def test_production_wildcard_cors_fails(self):
         production_config = self._make_production_config(CORS_ORIGINS=["*"])
         with pytest.raises(RuntimeError, match="CORS_ORIGINS"):
+            production_config.validate()
+
+    def test_production_in_memory_rate_limit_storage_fails(self):
+        production_config = self._make_production_config(RATELIMIT_STORAGE_URI="memory://")
+        with pytest.raises(RuntimeError, match="RATELIMIT_STORAGE_URI"):
             production_config.validate()
 
 

@@ -6,7 +6,7 @@ from app.models.conversation import Conversation, Message
 from app.models.user import User, Setting, Broadcast
 from app.models.memory_model import UserMemory
 
-from app.services.provider_router import generate_reply
+from app.services.provider_router import generate_reply, generate_reply_stream, generate_reply_with_usage
 from app.services.rag_service import search as rag_search, build_context_block
 from app.services.feedback_service import find_relevant_corrections, build_correction_context
 from app.services.language_service import detect_language, language_instruction
@@ -391,11 +391,12 @@ def chat():
             return jsonify({"error": "Database error while loading conversation."}), 500
 
     try:
-        reply_text = generate_reply(
+        provider_result = generate_reply_with_usage(
             message,
             history=history,
             system_context=system_context,
         )
+        reply_text = provider_result.text
     except RuntimeError as e:
         current_app.logger.error(f"AI Service not configured: {e}")
         return jsonify({"error": "AI service is not configured on the server."}), 503
@@ -433,9 +434,8 @@ def chat():
         try:
             user = db.session.get(User, user_id)
 
-            if user:
-                estimated_tokens = (len(message) + len(reply_text)) // 4
-                user.tokens_used = (user.tokens_used or 0) + estimated_tokens
+            if user and provider_result.tokens_used is not None:
+                user.tokens_used = (user.tokens_used or 0) + provider_result.tokens_used
                 db.session.commit()
 
         except Exception as e:
@@ -466,7 +466,13 @@ def chat():
         "language": lang_code,
         "sources": [c["filename"] for c in rag_chunks] if rag_chunks else [],
         "broadcast": broadcast_msg,
-        "model": selected_model
+        "model": selected_model,
+        "provider": provider_result.provider,
+        "usage": {
+            "input_tokens": provider_result.input_tokens,
+            "output_tokens": provider_result.output_tokens,
+            "total_tokens": provider_result.tokens_used,
+        } if provider_result.tokens_used is not None else "Usage unavailable"
     })
 
 
@@ -570,9 +576,8 @@ def stream_chat():
             except Exception:
                 pass
 
-        app_obj = current_app._get_current_object()
-
         def generate():
+            provider_stream = None
             try:
                 yield f": generation_id {generation_id}\n\n"
 
@@ -581,43 +586,25 @@ def stream_chat():
                     yield "data: [DONE]\n\n"
                     return
 
-                future = _CHAT_GENERATION_EXECUTOR.submit(
-                    _generate_reply_in_app_context,
-                    app_obj,
+                chunks = []
+                provider_stream = generate_reply_stream(
                     message,
-                    history,
-                    system_context
+                    history=history,
+                    system_context=system_context,
+                    cancel_event=stop_event,
                 )
-
-                while not future.done():
+                for chunk in provider_stream:
                     if stop_event.is_set():
-                        future.cancel()
-
+                        close = getattr(provider_stream, "close", None)
+                        if callable(close):
+                            close()
                         yield "data: [Generation Stopped by User]\n\n"
                         yield "data: [DONE]\n\n"
                         return
+                    chunks.append(chunk)
+                    yield f"data: {json.dumps({'delta': chunk})}\n\n"
 
-                    time.sleep(0.05)
-
-                if stop_event.is_set():
-                    future.cancel()
-
-                    yield "data: [Generation Stopped by User]\n\n"
-                    yield "data: [DONE]\n\n"
-                    return
-
-                reply_text = future.result()
-
-                words = reply_text.split(" ")
-
-                for word in words:
-                    if stop_event.is_set():
-                        yield "data: [Generation Stopped by User]\n\n"
-                        yield "data: [DONE]\n\n"
-                        return
-
-                    yield f"data: {word}\n\n"
-                    time.sleep(0.02)
+                reply_text = "".join(chunks)
 
                 if rag_chunks:
                     source_files = list(dict.fromkeys(c["filename"] for c in rag_chunks))
@@ -654,31 +641,29 @@ def stream_chat():
                         db.session.rollback()
                         current_app.logger.error(f"Error saving messages in stream: {e}")
 
-                    try:
-                        user = db.session.get(User, user_id)
-
-                        if user:
-                            estimated_tokens = (len(message) + len(reply_text)) // 4
-                            user.tokens_used = (user.tokens_used or 0) + estimated_tokens
-                            db.session.commit()
-
-                    except Exception as e:
-                        db.session.rollback()
-                        current_app.logger.error(f"Error updating token analytics in stream: {e}")
+                    # Streaming usage remains unavailable unless a provider's
+                    # terminal event supplies authoritative metadata.
 
             except Exception as e:
                 current_app.logger.error(f"Streaming error: {e}")
                 yield "data: [ERROR]\n\n"
 
             finally:
+                close = getattr(provider_stream, "close", None)
+                if callable(close):
+                    close()
                 _unregister_generation(generation_id)
 
         response_started = True
 
-        return Response(
+        response = Response(
             stream_with_context(generate()),
             mimetype="text/event-stream",
         )
+        response.headers["X-Generation-ID"] = generation_id
+        response.headers["Cache-Control"] = "no-cache, no-store"
+        response.headers["X-Accel-Buffering"] = "no"
+        return response
 
     finally:
         if not response_started:

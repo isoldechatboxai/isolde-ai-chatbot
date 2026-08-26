@@ -10,7 +10,7 @@ class Organization(db.Model):
     name = db.Column(db.String(255), nullable=False)
     description = db.Column(db.Text, nullable=True)
     logo_url = db.Column(db.String(500), nullable=True)
-    owner_id = db.Column(db.Integer, nullable=False) # User ID of the creator
+    owner_id = db.Column(db.String(36), nullable=False, index=True)
     status = db.Column(db.String(50), default='Active') # Active, Suspended, Archived
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
@@ -46,7 +46,7 @@ class OrganizationMember(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     org_id = db.Column(db.Integer, db.ForeignKey('organizations.id', ondelete='CASCADE'), nullable=False)
-    user_id = db.Column(db.Integer, nullable=False)
+    user_id = db.Column(db.String(36), nullable=False, index=True)
     role_id = db.Column(db.Integer, db.ForeignKey('organization_roles.id', ondelete='SET NULL'), nullable=True)
     status = db.Column(db.String(50), default='Active') # Active, Suspended
     joined_at = db.Column(db.DateTime, default=datetime.utcnow)

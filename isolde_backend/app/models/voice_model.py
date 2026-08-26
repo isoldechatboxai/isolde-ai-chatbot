@@ -6,7 +6,7 @@ class VoiceProfile(db.Model):
     __tablename__ = 'voice_profiles'
     
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, nullable=True) # Linked to User
+    user_id = db.Column(db.String(36), nullable=False, index=True)
     provider = db.Column(db.String(50), default='openai') # openai, google, elevenlabs
     voice_id = db.Column(db.String(50), default='alloy') # alloy, echo, fable, onyx, nova, shimmer
     speed = db.Column(db.Float, default=1.0)
@@ -29,7 +29,7 @@ class AudioSettings(db.Model):
     __tablename__ = 'audio_settings'
     
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, nullable=True)
+    user_id = db.Column(db.String(36), nullable=False, index=True)
     auto_detect_language = db.Column(db.Boolean, default=True)
     noise_reduction = db.Column(db.Boolean, default=True)
     continuous_listening = db.Column(db.Boolean, default=False)
@@ -48,7 +48,7 @@ class VoiceSession(db.Model):
     __tablename__ = 'voice_sessions'
     
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, nullable=True)
+    user_id = db.Column(db.String(36), nullable=False, index=True)
     workspace_id = db.Column(db.Integer, db.ForeignKey('workspaces.id'), nullable=True)
     agent_id = db.Column(db.Integer, db.ForeignKey('agents.id'), nullable=True)
     status = db.Column(db.String(50), default='Active') # Active, Ended, Paused
@@ -71,6 +71,7 @@ class Meeting(db.Model):
     __tablename__ = 'meetings'
     
     id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.String(36), nullable=False, index=True)
     workspace_id = db.Column(db.Integer, db.ForeignKey('workspaces.id'), nullable=True)
     title = db.Column(db.String(255), default='Untitled Meeting')
     status = db.Column(db.String(50), default='Recording') # Recording, Processing, Completed

@@ -2,7 +2,6 @@
 from datetime import datetime
 import hashlib
 import secrets
-import uuid
 
 from werkzeug.security import generate_password_hash
 
@@ -104,16 +103,15 @@ class APIKey(db.Model):
     __tablename__ = 'saas_api_keys'
 
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, nullable=False)
+    user_id = db.Column(db.String(36), nullable=False, index=True)
     key_name = db.Column(db.String(100), nullable=False)
 
     # Existing plaintext secret column.
     # PRESERVED intentionally. Phase 4 legacy backfill/removal is out of scope.
     key_secret = db.Column(
         db.String(255),
-        default=lambda: f"isk_{uuid.uuid4().hex}",
         unique=True,
-        nullable=False
+        nullable=True
     )
 
     # Phase 2 / Phase 3 verification hash.

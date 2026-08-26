@@ -21,7 +21,7 @@ from flask_jwt_extended import verify_jwt_in_request, get_jwt_identity
 
 from app.extensions import db
 from app.models.conversation import Conversation, Message
-from app.services.provider_router import generate_reply
+from app.services.provider_router import generate_reply_with_usage
 from app.services.saas_engine import check_and_deduct_tokens, save_chat_history
 from app.utils.validators import sanitize_text, is_non_empty
 
@@ -147,16 +147,16 @@ def _try_legacy_history_save(user_id, conversation_id, role, content):
         )
 
 
-def _try_token_tracking(user_id: str, message: str) -> None:
+def _try_token_tracking(user_id: str, tokens_used) -> None:
     """
     Best-effort token usage tracking.
     NEVER blocks the chat request.  When hard billing is required in
     the future, replace the body with a mandatory check.
     """
     try:
-        allowed, reason = check_and_deduct_tokens(
-            user_id, estimated_tokens=len(message)
-        )
+        if tokens_used is None:
+            return
+        allowed, reason = check_and_deduct_tokens(user_id, estimated_tokens=tokens_used)
         if not allowed:
             current_app.logger.warning(
                 f"Token quota note for user {user_id}: {reason} "
@@ -168,7 +168,7 @@ def _try_token_tracking(user_id: str, message: str) -> None:
         )
 
 
-def _track_api_key_usage() -> None:
+def _track_api_key_usage(tokens_used=None) -> None:
     """
     Best-effort API key usage tracking.
     Updates total_requests counter for the authenticated API key.
@@ -179,7 +179,7 @@ def _track_api_key_usage() -> None:
         return
     try:
         from app.services.api_key_service import track_api_usage
-        track_api_usage(api_key_record.key_hash, tokens_used=0, cost=0.0)
+        track_api_usage(api_key_record.key_hash, tokens_used=tokens_used or 0, cost=0.0)
     except Exception as exc:
         current_app.logger.debug(
             f"API key usage tracking skipped (non-fatal): {exc}"
@@ -216,13 +216,7 @@ def handle_unified_chat():
 
     message = sanitize_text(raw_message)
 
-    # -- 3. Best-effort token usage tracking (non-blocking) ----------------
-    _try_token_tracking(current_user_id, message)
-
-    # -- 4. Best-effort API key usage tracking (non-blocking) --------------
-    _track_api_key_usage()
-
-    # -- 5. Resolve or create the conversation -----------------------------
+    # -- 3. Resolve or create the conversation -----------------------------
     try:
         convo = _get_or_create_conversation(current_user_id, conversation_id)
     except Exception as exc:
@@ -249,7 +243,8 @@ def handle_unified_chat():
 
     # -- 8. Generate the AI reply ------------------------------------------
     try:
-        ai_reply = generate_reply(message, history=history)
+        provider_result = generate_reply_with_usage(message, history=history)
+        ai_reply = provider_result.text
     except RuntimeError as exc:
         current_app.logger.error(f"AI service not configured: {exc}")
         return jsonify({"error": "AI service is not configured on the server."}), 503
@@ -267,6 +262,9 @@ def handle_unified_chat():
 
     _try_legacy_history_save(current_user_id, convo.id, "assistant", ai_reply)
 
+    _try_token_tracking(current_user_id, provider_result.tokens_used)
+    _track_api_key_usage(provider_result.tokens_used)
+
     # -- 10. Auto-title the conversation on first exchange -------------------
     try:
         if convo.title == "New Conversation":
@@ -280,4 +278,10 @@ def handle_unified_chat():
         "status": "success",
         "reply": ai_reply,
         "conversation_id": convo.id,
+        "provider": provider_result.provider,
+        "usage": {
+            "input_tokens": provider_result.input_tokens,
+            "output_tokens": provider_result.output_tokens,
+            "total_tokens": provider_result.tokens_used,
+        } if provider_result.tokens_used is not None else "Usage unavailable",
     }), 200

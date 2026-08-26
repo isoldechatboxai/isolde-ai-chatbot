@@ -1,0 +1,84 @@
+from flask_jwt_extended import create_access_token
+
+from app.models.collaboration_model import Organization, OrganizationMember, OrganizationRole
+from app.models.productivity_model import Task
+from app.models.user import User
+from app.models.workspace_model import Workspace
+
+
+def _user(db, email):
+    user = User(name=email, email=email, status="Active")
+    user.set_password("StrongPass123!")
+    db.session.add(user)
+    db.session.commit()
+    return user
+
+
+def _headers(user):
+    return {"Authorization": f"Bearer {create_access_token(identity=user.id)}"}
+
+
+def test_productivity_tasks_are_tenant_scoped(client, db):
+    owner = _user(db, "task-owner@example.com")
+    attacker = _user(db, "task-attacker@example.com")
+    task = Task(user_id=owner.id, title="Private task")
+    db.session.add(task)
+    db.session.commit()
+
+    assert client.get("/api/productivity/tasks", headers=_headers(attacker)).get_json()["tasks"] == []
+    assert client.put(
+        f"/api/productivity/tasks/{task.id}", headers=_headers(attacker), json={"title": "stolen"}
+    ).status_code == 404
+    assert client.delete(f"/api/productivity/tasks/{task.id}", headers=_headers(attacker)).status_code == 404
+
+
+def test_productivity_rejects_foreign_workspace(client, db):
+    owner = _user(db, "workspace-owner@example.com")
+    attacker = _user(db, "workspace-attacker@example.com")
+    workspace = Workspace(user_id=owner.id, name="Private")
+    db.session.add(workspace)
+    db.session.commit()
+    response = client.post(
+        "/api/productivity/tasks", headers=_headers(attacker),
+        json={"title": "Intrusion", "workspace_id": workspace.id},
+    )
+    assert response.status_code == 404
+
+
+def test_organization_membership_and_admin_permissions_are_enforced(client, db):
+    owner = _user(db, "org-owner@example.com")
+    member = _user(db, "org-member@example.com")
+    attacker = _user(db, "org-attacker@example.com")
+    org = Organization(name="Private Org", owner_id=owner.id)
+    db.session.add(org)
+    db.session.flush()
+    viewer = OrganizationRole(org_id=org.id, name="Viewer", permissions="[]")
+    db.session.add(viewer)
+    db.session.flush()
+    db.session.add(OrganizationMember(org_id=org.id, user_id=member.id, role_id=viewer.id))
+    db.session.commit()
+
+    assert client.get(f"/api/organizations/{org.id}/members", headers=_headers(attacker)).status_code == 404
+    assert client.get(f"/api/organizations/{org.id}/members", headers=_headers(member)).status_code == 200
+    assert client.post(
+        f"/api/organizations/{org.id}/teams", headers=_headers(member), json={"name": "Unauthorized"}
+    ).status_code == 404
+    assert client.post(
+        f"/api/organizations/{org.id}/invite", headers=_headers(attacker), json={"email": "victim@example.com"}
+    ).status_code == 404
+
+
+def test_saas_routes_no_longer_share_anonymous_identity(client):
+    assert client.get("/api/saas/apikeys").status_code == 401
+    assert client.post("/api/saas/apikeys", json={"key_name": "anonymous"}).status_code == 401
+
+
+def test_normal_user_cannot_execute_or_load_host_plugins(client, db):
+    user = _user(db, "plugin-client@example.com")
+    headers = _headers(user)
+    assert client.post(
+        "/api/plugins/registry/load", headers=headers, json={"directory": "C:\\"}
+    ).status_code == 403
+    assert client.post(
+        "/api/plugins/registry/anything/execute", headers=headers, json={}
+    ).status_code == 403

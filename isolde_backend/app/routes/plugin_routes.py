@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required
 from app.plugin_manager import plugin_manager
+from app.security.authorization import admin_required
 
 
 plugin_bp = Blueprint("plugin_bp", __name__)
@@ -78,10 +79,9 @@ def install_plugin():
             }), 404
 
         return jsonify({
-            "status": "success",
-            "message": f"Plugin '{plugin_name}' installed successfully.",
-            "plugin_name": plugin_name
-        }), 200
+            "status": "unavailable",
+            "error": "Persistent plugin installation is not configured."
+        }), 501
 
     except Exception as e:
         return jsonify({
@@ -91,7 +91,7 @@ def install_plugin():
 
 
 @plugin_bp.route("/plugins/registry/load", methods=["POST"])
-@jwt_required()
+@admin_required
 def load_plugins():
     try:
         data = request.get_json(silent=True) or {}
@@ -121,7 +121,7 @@ def load_plugins():
     "/plugins/registry/<string:plugin_name>/execute",
     methods=["POST"]
 )
-@jwt_required()
+@admin_required
 def execute_plugin(plugin_name):
     try:
         data = request.get_json(silent=True) or {}
@@ -169,7 +169,7 @@ def execute_plugin(plugin_name):
     "/plugins/registry/<string:plugin_name>",
     methods=["DELETE"]
 )
-@jwt_required()
+@admin_required
 def unregister_plugin(plugin_name):
     try:
         ok = plugin_manager.unregister_plugin(plugin_name)

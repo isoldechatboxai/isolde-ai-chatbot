@@ -18,6 +18,16 @@ the project's existing `app` and `client` fixtures.
 import pytest
 
 from app.models.saas_cloud_model import APIKey
+from app.models.user import User
+from flask_jwt_extended import create_access_token
+
+
+def _authenticated_user(db):
+    user = User(name="SaaS User", email="saas@example.com", status="Active")
+    user.set_password("StrongPass123!")
+    db.session.add(user)
+    db.session.commit()
+    return user, {"Authorization": f"Bearer {create_access_token(identity=user.id)}"}
 
 
 # ---------------------------------------------------------------------------
@@ -183,16 +193,17 @@ def test_verify_key_does_not_crash_on_legacy_null_hash(app):
 
 def test_list_api_keys_route_does_not_expose_secrets(app, client):
     from app.extensions import db
+    user, headers = _authenticated_user(db)
     raw_key, key_hash, key_prefix = APIKey.generate_key()
     key = APIKey(
-        user_id=1, key_name="phase3-list",
+        user_id=user.id, key_name="phase3-list",
         key_secret=raw_key, key_hash=key_hash, key_prefix=key_prefix,
         scopes="read,write,ai", is_active=True,
     )
     db.session.add(key)
     db.session.commit()
 
-    resp = client.get("/api/saas/apikeys")
+    resp = client.get("/api/saas/apikeys", headers=headers)
     assert resp.status_code == 200
     serialized = str(resp.get_json())
 
@@ -204,9 +215,12 @@ def test_list_api_keys_route_does_not_expose_secrets(app, client):
 
 
 def test_create_api_key_route_returns_raw_key_once_and_safe_metadata(app, client):
+    from app.extensions import db
+    _, headers = _authenticated_user(db)
     resp = client.post(
         "/api/saas/apikeys",
         json={"key_name": "phase3-create", "scopes": "read,write,ai"},
+        headers=headers,
     )
     assert resp.status_code == 201
     body = resp.get_json()
@@ -221,3 +235,6 @@ def test_create_api_key_route_returns_raw_key_once_and_safe_metadata(app, client
     assert "key_hash" not in metadata
     assert metadata.get("key_prefix")
     assert body["raw_key"] not in str(metadata)
+
+    stored = APIKey.query.get(metadata["id"])
+    assert stored.key_secret is None

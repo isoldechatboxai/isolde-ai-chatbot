@@ -16,7 +16,7 @@ class User(db.Model):
     id = db.Column(db.String(36), primary_key=True, default=_uuid)
     name = db.Column(db.String(120), nullable=False)
     email = db.Column(db.String(180), unique=True, nullable=False, index=True)
-    password_hash = db.Column(db.String(255), nullable=False)
+    password_hash = db.Column(db.String(255), nullable=True)
     is_verified = db.Column(db.Boolean, default=False)
     verification_token = db.Column(db.String(64), nullable=True)
     reset_otp = db.Column(db.String(10), nullable=True)
@@ -67,7 +67,7 @@ class User(db.Model):
         self.password_hash = generate_password_hash(password)
 
     def check_password(self, password: str) -> bool:
-        return check_password_hash(self.password_hash, password)
+        return bool(self.password_hash) and check_password_hash(self.password_hash, password)
 
     def to_dict(self):
         """

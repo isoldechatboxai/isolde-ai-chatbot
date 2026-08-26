@@ -250,6 +250,7 @@
       abortController: null,
       streamingBotMsgObj: null,
       streamingTextEl: null,
+      generationId: null,
       webSearchEnabled: false,
     };
 
@@ -360,8 +361,19 @@
         stopBtn.addEventListener("mouseout", () => {
           stopBtn.classList.remove("is-hover");
         });
-        stopBtn.addEventListener("click", (e) => {
+        stopBtn.addEventListener("click", async (e) => {
           e.preventDefault();
+          if (state.generationId) {
+            try {
+              await fetch("/api/chat/stop", {
+                method: "POST",
+                headers: getAuthHeaders(true),
+                body: JSON.stringify({ generation_id: state.generationId }),
+              });
+            } catch (err) {
+              console.warn("Backend cancellation request failed", err);
+            }
+          }
           if (state.abortController) {
             try { state.abortController.abort(); } catch (err) {}
           }
@@ -1239,11 +1251,14 @@
         throw new Error("Server Error / Network Error");
       }
 
+      state.generationId = response.headers.get("X-Generation-ID");
+
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let accumulatedText = "";
       let wasAborted = false;
       let streamDone = false;
+      let eventBuffer = "";
 
       try {
         while (true) {
@@ -1261,8 +1276,9 @@
           const { value, done } = readResult;
           if (done) break;
 
-          const chunk = decoder.decode(value, { stream: true });
-          const lines = chunk.split("\n\n");
+          eventBuffer += decoder.decode(value, { stream: true });
+          const lines = eventBuffer.split("\n\n");
+          eventBuffer = lines.pop() || "";
           for (const line of lines) {
             if (line.startsWith("data: ")) {
               const dataText = line.replace("data: ", "").trim();
@@ -1275,7 +1291,12 @@
                 }
                 continue;
               }
-              accumulatedText += dataText + " ";
+              let delta = dataText;
+              try {
+                const parsed = JSON.parse(dataText);
+                if (parsed && typeof parsed.delta === "string") delta = parsed.delta;
+              } catch (err) {}
+              accumulatedText += delta;
               botMsgObj.text = accumulatedText;
               if (typeof marked !== "undefined") textEl.innerHTML = sanitizeHtml(marked.parse(accumulatedText));
               else textEl.innerHTML = escapeHtml(accumulatedText).replace(/\n/g, "<br>");
@@ -1293,6 +1314,7 @@
         state.abortController = null;
         state.streamingBotMsgObj = null;
         state.streamingTextEl = null;
+        state.generationId = null;
       }
 
       if (wasAborted) {

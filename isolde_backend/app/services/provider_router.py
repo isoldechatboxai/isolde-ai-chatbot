@@ -37,10 +37,10 @@ KNOWN_PROVIDERS = frozenset({
     "openrouter", "deepseek", "mistral",
 })
 
-DEFAULT_PRIORITY: List[str] = ["gemini", "groq", "openai", "claude"]
+DEFAULT_PRIORITY: List[str] = []
 
 DEFAULT_MODELS: Dict[str, str] = {
-    "gemini": "gemini-3.5-flash",
+    "gemini": "gemini-3.7-flash",
     "groq": "llama-3.3-70b-versatile",
     "openai": "gpt-4o",
     "claude": "claude-sonnet-4-20250514",
@@ -140,7 +140,9 @@ class ProviderResponse:
     provider: str = ""
     model: str = ""
     latency_ms: float = 0.0
-    tokens_used: int = 0
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    tokens_used: Optional[int] = None
     error: str = ""
     raw: Any = None
 
@@ -332,7 +334,9 @@ class ProviderManager:
         return ordered
 
     def _get_provider_priority(self) -> List[str]:
-        raw = self._get_setting("provider_priority")
+        # Fallback is opt-in. An absent setting means one provider call only,
+        # preventing surprise token/cost multiplication.
+        raw = self._get_setting("provider_fallbacks") or self._get_setting("provider_priority")
         if raw:
             try:
                 parsed = json.loads(raw)
@@ -378,6 +382,10 @@ class ProviderManager:
             value = self._get_setting(setting_key)
             if value:
                 return value.strip()
+        if provider == "gemini":
+            configured = current_app.config.get("GEMINI_MODEL", "")
+            if configured:
+                return configured.strip()
         return DEFAULT_MODELS.get(provider, DEFAULT_MODELS["gemini"])
 
     # -- base-URL resolution ------------------------------------------------
@@ -426,6 +434,9 @@ class ProviderManager:
             start = time.time()
             try:
                 result = func(timeout)
+                usage = {}
+                if isinstance(result, tuple):
+                    result, usage = result
                 latency = (time.time() - start) * 1000
                 self.metrics.record(provider, latency, True)
                 breaker.record_success()
@@ -435,6 +446,9 @@ class ProviderManager:
                     provider=provider,
                     model=self.get_model_for_provider(provider),
                     latency_ms=latency,
+                    input_tokens=usage.get("input_tokens"),
+                    output_tokens=usage.get("output_tokens"),
+                    tokens_used=usage.get("total_tokens"),
                 )
             except RuntimeError as conf_err:
                 # Configuration errors (missing key, invalid URL) should not be retried
@@ -463,7 +477,7 @@ class ProviderManager:
     # -----------------------------------------------------------------------
     # Provider call implementations
     # -----------------------------------------------------------------------
-    def _call_gemini(self, prompt: str, history, sys_prompt: str, timeout: int) -> str:
+    def _call_gemini(self, prompt: str, history, sys_prompt: str, timeout: int):
         try:
             from google import genai
             from google.genai import types
@@ -472,14 +486,22 @@ class ProviderManager:
 
         api_key    = self.get_api_key_for_provider("gemini")
         model_name = self.get_model_for_provider("gemini")
-        client = genai.Client(api_key=api_key)
+        client = genai.Client(
+            api_key=api_key,
+            http_options=types.HttpOptions(api_version="v1beta", timeout=int(timeout * 1000)),
+        )
         chat = client.chats.create(
             model=model_name,
             history=_to_content_history(history),
             config=types.GenerateContentConfig(system_instruction=sys_prompt),
         )
         response = chat.send_message(message=prompt)
-        return (response.text or "").strip()
+        usage = response.usage_metadata
+        return (response.text or "").strip(), {
+            "input_tokens": getattr(usage, "prompt_token_count", None),
+            "output_tokens": getattr(usage, "candidates_token_count", None),
+            "total_tokens": getattr(usage, "total_token_count", None),
+        }
 
     def _call_gemini_stream(self, prompt: str, history, sys_prompt: str, timeout: int) -> Generator[str, None, None]:
         try:
@@ -490,7 +512,10 @@ class ProviderManager:
 
         api_key    = self.get_api_key_for_provider("gemini")
         model_name = self.get_model_for_provider("gemini")
-        client = genai.Client(api_key=api_key)
+        client = genai.Client(
+            api_key=api_key,
+            http_options=types.HttpOptions(api_version="v1beta", timeout=int(timeout * 1000)),
+        )
         chat = client.chats.create(
             model=model_name,
             history=_to_content_history(history),
@@ -553,35 +578,38 @@ class ProviderManager:
                 data = resp.json()
                 if "error" in data:
                     raise RuntimeError(f"{provider} API Error: {data['error'].get('message', str(data['error']))}")
-                return data["choices"][0]["message"]["content"].strip()
+                usage = data.get("usage") or {}
+                return data["choices"][0]["message"]["content"].strip(), {
+                    "input_tokens": usage.get("prompt_tokens"),
+                    "output_tokens": usage.get("completion_tokens"),
+                    "total_tokens": usage.get("total_tokens"),
+                }
             except (KeyError, IndexError, TypeError, ValueError):
                 raise RuntimeError(f"{provider} API returned malformed response: {resp.text[:200]}")
 
         def gen():
-            for line in resp.iter_lines(decode_unicode=True):
-                if not line:
-                    continue
-                if line.startswith("data: "):
-                    data_str = line[6:]
-                    if data_str.strip() == "[DONE]":
-                        break
-                    try:
-                        obj = json.loads(data_str)
-                        if "error" in obj:
-                            err_msg = obj["error"].get("message", str(obj["error"]))
-                            raise RuntimeError(f"{provider} Stream Error: {err_msg}")
-                        choices = obj.get("choices")
-                        if choices and len(choices) > 0:
-                            delta = choices[0].get("delta") or {}
-                            content = delta.get("content", "")
-                            if content:
-                                yield content
-                    except json.JSONDecodeError:
+            try:
+                for line in resp.iter_lines(decode_unicode=True):
+                    if not line:
                         continue
-                    except RuntimeError:
-                        raise
-                    except Exception:
-                        continue
+                    if line.startswith("data: "):
+                        data_str = line[6:]
+                        if data_str.strip() == "[DONE]":
+                            break
+                        try:
+                            obj = json.loads(data_str)
+                            if "error" in obj:
+                                err_msg = obj["error"].get("message", str(obj["error"]))
+                                raise RuntimeError(f"{provider} Stream Error: {err_msg}")
+                            choices = obj.get("choices")
+                            if choices:
+                                content = (choices[0].get("delta") or {}).get("content", "")
+                                if content:
+                                    yield content
+                        except json.JSONDecodeError:
+                            continue
+            finally:
+                resp.close()
         return gen()
 
     # -- Concrete provider wrappers ----------------------------------------
@@ -652,7 +680,19 @@ class ProviderManager:
             resp_data = resp.json()
             if "error" in resp_data:
                 raise RuntimeError(f"Claude API Error: {resp_data['error'].get('message', str(resp_data['error']))}")
-            return resp_data["content"][0]["text"].strip()
+            usage = resp_data.get("usage") or {}
+            input_tokens = usage.get("input_tokens")
+            output_tokens = usage.get("output_tokens")
+            total_tokens = (
+                input_tokens + output_tokens
+                if isinstance(input_tokens, int) and isinstance(output_tokens, int)
+                else None
+            )
+            return resp_data["content"][0]["text"].strip(), {
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "total_tokens": total_tokens,
+            }
         except (KeyError, IndexError, TypeError, ValueError):
             raise RuntimeError(f"Claude API returned malformed response: {resp.text[:200]}")
 
@@ -765,7 +805,9 @@ class ProviderManager:
 
         return ProviderResponse(success=False, error="All providers failed or unavailable.")
 
-    def generate_stream(self, prompt, history=None, system_context="", timeout=None) -> Generator[str, None, None]:
+    def generate_stream(
+        self, prompt, history=None, system_context="", timeout=None, cancel_event=None
+    ) -> Generator[str, None, None]:
         sys_prompt = self._get_system_instruction(system_context)
         providers  = self.get_available_providers()
 
@@ -784,6 +826,11 @@ class ProviderManager:
             try:
                 stream = fn(prompt, history, sys_prompt, timeout or DEFAULT_TIMEOUT)
                 for chunk in stream:
+                    if cancel_event is not None and cancel_event.is_set():
+                        close = getattr(stream, "close", None)
+                        if callable(close):
+                            close()
+                        return
                     yield chunk
                 latency = (time.time() - start) * 1000
                 self.metrics.record(provider, latency, True)
@@ -930,6 +977,20 @@ def generate_reply(
         return result.text
     raise RuntimeError(result.error or "AI service unavailable.")
 
+
+def generate_reply_with_usage(
+    prompt: str,
+    history=None,
+    system_context: str = "",
+) -> ProviderResponse:
+    """Generate a reply while preserving authoritative provider usage metadata."""
+    result = get_provider_manager().generate(
+        prompt, history=history, system_context=system_context
+    )
+    if not result.success:
+        raise RuntimeError(result.error or "AI service unavailable.")
+    return result
+
 def generate_reply_stream(
     prompt: str,
     history=None,
@@ -937,6 +998,7 @@ def generate_reply_stream(
     agent_id=None,
     workspace_id=None,
     project_id=None,
+    cancel_event=None,
 ) -> Generator[str, None, None]:
     phase4_context  = _build_agent_workspace_context(agent_id, workspace_id, project_id)
     combined_context = system_context or ""
@@ -944,7 +1006,10 @@ def generate_reply_stream(
         combined_context = f"{combined_context}\n\n{phase4_context}".strip()
 
     manager = get_provider_manager()
-    yield from manager.generate_stream(prompt, history=history, system_context=combined_context)
+    yield from manager.generate_stream(
+        prompt, history=history, system_context=combined_context,
+        cancel_event=cancel_event,
+    )
 
 def embed_text(text: str):
     manager  = get_provider_manager()

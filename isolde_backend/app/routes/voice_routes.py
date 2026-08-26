@@ -4,16 +4,17 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app import db
 from app.models.voice_model import VoiceProfile, AudioSettings, VoiceSession, Meeting, Transcript
+from app.models.workspace_model import Workspace, Agent
 
 voice_bp = Blueprint("voice_bp", __name__)
 
 # --- VOICE PROFILES & SETTINGS ---
 @voice_bp.route("/voice/profile", methods=["GET"])
-@jwt_required(optional=True)
+@jwt_required()
 def get_voice_profile():
     try:
         # Defaulting to 1 for generic implementation, replace with get_jwt_identity()
-        user_id = get_jwt_identity() or 1 
+        user_id = str(get_jwt_identity())
         profile = VoiceProfile.query.filter_by(user_id=user_id).first()
         if not profile:
             profile = VoiceProfile(user_id=user_id)
@@ -24,10 +25,10 @@ def get_voice_profile():
         return jsonify({"error": str(e)}), 500
 
 @voice_bp.route("/voice/profile", methods=["PUT"])
-@jwt_required(optional=True)
+@jwt_required()
 def update_voice_profile():
     try:
-        user_id = get_jwt_identity() or 1 
+        user_id = str(get_jwt_identity())
         data = request.get_json() or {}
         profile = VoiceProfile.query.filter_by(user_id=user_id).first()
         
@@ -49,16 +50,24 @@ def update_voice_profile():
 
 # --- REAL-TIME VOICE SESSIONS ---
 @voice_bp.route("/voice/session/start", methods=["POST"])
-@jwt_required(optional=True)
+@jwt_required()
 def start_voice_session():
     try:
-        user_id = get_jwt_identity() or 1 
+        user_id = str(get_jwt_identity())
         data = request.get_json() or {}
+        workspace_id = data.get("workspace_id")
+        agent_id = data.get("agent_id")
+        if workspace_id and not Workspace.query.filter_by(id=workspace_id, user_id=user_id).first():
+            return jsonify({"error": "Workspace not found"}), 404
+        if agent_id and not Agent.query.join(Workspace).filter(
+            Agent.id == agent_id, Workspace.user_id == user_id
+        ).first():
+            return jsonify({"error": "Agent not found"}), 404
         
         session = VoiceSession(
             user_id=user_id,
-            workspace_id=data.get("workspace_id"),
-            agent_id=data.get("agent_id")
+            workspace_id=workspace_id,
+            agent_id=agent_id
         )
         db.session.add(session)
         db.session.commit()
@@ -68,10 +77,10 @@ def start_voice_session():
         return jsonify({"error": str(e)}), 500
 
 @voice_bp.route("/voice/session/<int:session_id>/end", methods=["POST"])
-@jwt_required(optional=True)
+@jwt_required()
 def end_voice_session(session_id):
     try:
-        session = VoiceSession.query.get(session_id)
+        session = VoiceSession.query.filter_by(id=session_id, user_id=str(get_jwt_identity())).first()
         if not session:
             return jsonify({"error": "Session not found"}), 404
         
@@ -89,21 +98,26 @@ def end_voice_session(session_id):
 
 # --- MEETING ASSISTANT ---
 @voice_bp.route("/voice/meetings", methods=["GET"])
-@jwt_required(optional=True)
+@jwt_required()
 def list_meetings():
     try:
-        meetings = Meeting.query.order_by(Meeting.start_time.desc()).all()
+        meetings = Meeting.query.filter_by(user_id=str(get_jwt_identity())).order_by(Meeting.start_time.desc()).all()
         return jsonify({"meetings": [m.to_dict() for m in meetings]}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 @voice_bp.route("/voice/meetings/start", methods=["POST"])
-@jwt_required(optional=True)
+@jwt_required()
 def start_meeting():
     try:
         data = request.get_json() or {}
+        user_id = str(get_jwt_identity())
+        workspace_id = data.get("workspace_id")
+        if workspace_id and not Workspace.query.filter_by(id=workspace_id, user_id=user_id).first():
+            return jsonify({"error": "Workspace not found"}), 404
         meeting = Meeting(
-            workspace_id=data.get("workspace_id"),
+            user_id=user_id,
+            workspace_id=workspace_id,
             title=data.get("title", "New AI Meeting")
         )
         db.session.add(meeting)
@@ -115,9 +129,14 @@ def start_meeting():
 
 # --- TRANSCRIPTS & HISTORY ---
 @voice_bp.route("/voice/session/<int:session_id>/transcripts", methods=["GET"])
-@jwt_required(optional=True)
+@jwt_required()
 def get_session_transcripts(session_id):
     try:
+        owned_session = VoiceSession.query.filter_by(
+            id=session_id, user_id=str(get_jwt_identity())
+        ).first()
+        if not owned_session:
+            return jsonify({"error": "Session not found"}), 404
         transcripts = Transcript.query.filter_by(session_id=session_id).order_by(Transcript.timestamp.asc()).all()
         return jsonify({"transcripts": [t.to_dict() for t in transcripts]}), 200
     except Exception as e:

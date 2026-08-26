@@ -34,7 +34,7 @@ class HealthService:
 
         # 2. Check Storage Directory Write Permissions
         try:
-            upload_dir = "uploads"
+            upload_dir = current_app.config["UPLOAD_FOLDER"]
             os.makedirs(upload_dir, exist_ok=True)
             test_file_path = os.path.join(upload_dir, "health_probe.tmp")
             with open(test_file_path, "w") as f:

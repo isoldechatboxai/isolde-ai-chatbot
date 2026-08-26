@@ -216,6 +216,19 @@ def create_app(config_class=Config):
             "error": "Token revoked."
         }), 401
 
+    @jwt.token_in_blocklist_loader
+    def token_is_revoked(jwt_header, jwt_payload):
+        from app.models.auth_model import AuthSession, RevokedToken
+
+        if db.session.get(RevokedToken, jwt_payload.get("jti")) is not None:
+            return True
+        session_id = jwt_payload.get("sid")
+        if not session_id:
+            # Compatibility for tokens issued before database-backed sessions.
+            return False
+        auth_session = db.session.get(AuthSession, session_id)
+        return not auth_session or not auth_session.is_valid
+
     @jwt.needs_fresh_token_loader
     def needs_fresh_callback(jwt_header, jwt_payload):
         return jsonify({

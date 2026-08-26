@@ -6,7 +6,7 @@ class Task(db.Model):
     __tablename__ = 'tasks'
     
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, nullable=True) # Optional association
+    user_id = db.Column(db.String(36), nullable=False, index=True)
     workspace_id = db.Column(db.Integer, db.ForeignKey('workspaces.id'), nullable=True)
     project_id = db.Column(db.Integer, db.ForeignKey('projects.id'), nullable=True)
     
@@ -44,6 +44,7 @@ class CalendarEvent(db.Model):
     __tablename__ = 'calendar_events'
 
     id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.String(36), nullable=False, index=True)
     workspace_id = db.Column(db.Integer, db.ForeignKey('workspaces.id'), nullable=True)
     title = db.Column(db.String(255), nullable=False)
     description = db.Column(db.Text, nullable=True)
@@ -71,6 +72,7 @@ class Note(db.Model):
     __tablename__ = 'notes'
 
     id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.String(36), nullable=False, index=True)
     workspace_id = db.Column(db.Integer, db.ForeignKey('workspaces.id'), nullable=True)
     title = db.Column(db.String(255), nullable=False)
     content = db.Column(db.Text, nullable=True)
@@ -98,6 +100,7 @@ class Bookmark(db.Model):
     __tablename__ = 'bookmarks'
 
     id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.String(36), nullable=False, index=True)
     title = db.Column(db.String(255), nullable=False)
     target_type = db.Column(db.String(50), default='Chat') # Chat, Project, Document, Memory, File
     target_id = db.Column(db.Integer, nullable=False)
