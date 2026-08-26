@@ -698,8 +698,18 @@ def stop_chat_generation():
 
     with _ACTIVE_GENERATIONS_LOCK:
         if generation_id and generation_id in _ACTIVE_GENERATIONS:
-            _ACTIVE_GENERATIONS[generation_id]["event"].set()
-            stopped = True
+            entry = _ACTIVE_GENERATIONS[generation_id]
+            entry_user_id = entry.get("user_id")
+            if (
+                (user_id is None and entry_user_id is None)
+                or (
+                    user_id is not None
+                    and entry_user_id is not None
+                    and str(user_id) == str(entry_user_id)
+                )
+            ):
+                entry["event"].set()
+                stopped = True
 
         elif conversation_id:
             for entry in _ACTIVE_GENERATIONS.values():
@@ -712,10 +722,13 @@ def stop_chat_generation():
                 if str(entry_conversation_id) != str(conversation_id):
                     continue
 
-                if user_id is None and entry_user_id is not None:
-                    continue
-
-                if user_id is not None and entry_user_id is not None and str(user_id) != str(entry_user_id):
+                if (
+                    (user_id is None) != (entry_user_id is None)
+                    or (
+                        user_id is not None
+                        and str(user_id) != str(entry_user_id)
+                    )
+                ):
                     continue
 
                 entry["event"].set()

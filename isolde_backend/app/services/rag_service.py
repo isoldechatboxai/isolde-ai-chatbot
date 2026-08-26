@@ -326,12 +326,11 @@ def search(query: str, top_k: int = 4, user_id: Optional[str] = None) -> List[Di
         if record_user_id is not None:
             record_user_id = str(record_user_id).strip() or None
 
-        if user_id is None:
-            if record_user_id is not None:
-                continue
-        else:
-            if record_user_id is not None and record_user_id != user_id:
-                continue
+        # Records are private to their exact owner. Legacy records without an
+        # owner are intentionally visible only to anonymous legacy flows and
+        # must never enter an authenticated tenant's context.
+        if record_user_id != user_id:
+            continue
 
         chunk_key = record.get("text", "")[:200]
         if chunk_key in seen_texts:
