@@ -48,20 +48,10 @@ def test_get_credits_default(client):
     assert res.get_json()["credits"] == 100
 
 
-def test_deduct_credits_success(client):
-    res = client.post("/api/billing/credits/deduct", json={"amount": 20})
-    assert res.status_code == 200
-    assert res.get_json()["remaining_credits"] == 80
-
-
-def test_deduct_credits_insufficient(client):
-    res = client.post("/api/billing/credits/deduct", json={"amount": 99999})
-    assert res.status_code == 400
-
-
-def test_deduct_credits_rejects_negative_amount(client):
-    res = client.post("/api/billing/credits/deduct", json={"amount": -20})
-    assert res.status_code == 400
+@pytest.mark.parametrize("amount", [20, 99999, -20])
+def test_browser_cannot_deduct_credits(client, amount):
+    res = client.post("/api/billing/credits/deduct", json={"amount": amount})
+    assert res.status_code == 403
     assert client.get("/api/billing/credits").get_json()["credits"] == 100
 
 

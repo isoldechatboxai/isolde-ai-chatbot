@@ -16,6 +16,7 @@ from app.extensions import db
 from app.models.user import User, Setting, Broadcast
 from app.models.conversation import Conversation, Message
 from app.models.feedback import Feedback
+from app.models.auth_model import AuthSession
 
 admin_bp = Blueprint("admin", __name__)
 
@@ -69,7 +70,13 @@ def admin_login():
     if user.status != "Active":
         return jsonify({"status": "error", "message": "Account is not active."}), 403
 
-    access_token = create_access_token(identity=user.id)
+    auth_session = AuthSession.create(
+        user.id, current_app.config["JWT_ACCESS_TOKEN_EXPIRES"],
+        request.headers.get("User-Agent"), request.remote_addr,
+    )
+    db.session.add(auth_session)
+    db.session.commit()
+    access_token = create_access_token(identity=user.id, additional_claims={"sid": auth_session.id})
 
     return jsonify({
         "status": "success",

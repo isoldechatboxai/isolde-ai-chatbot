@@ -76,6 +76,53 @@ def test_oauth_start_uses_state_nonce_and_pkce(client, app):
     assert "client_secret" not in location
 
 
+def test_oauth_provider_status_exposes_configuration_without_secrets(client, app):
+    app.config.update({
+        "GOOGLE_OAUTH_CLIENT_ID": "test-client",
+        "GOOGLE_OAUTH_CLIENT_SECRET": "test-secret",
+        "GOOGLE_OAUTH_REDIRECT_URI": "https://example.test/api/oauth/google/callback",
+    })
+    response = client.get("/api/oauth/providers")
+    assert response.status_code == 200
+    assert response.get_json() == {"providers": {
+        "google": True, "github": False, "apple": False, "microsoft": False,
+    }}
+    assert "test-secret" not in response.get_data(as_text=True)
+
+
+def test_oauth_browser_exchange_is_http_only_and_single_use(client, db, monkeypatch):
+    user = User(name="OAuth User", email="oauth@example.com", is_verified=True)
+    db.session.add(user)
+    db.session.flush()
+    db.session.add(OAuthAccount(
+        user_id=user.id, provider="google", provider_subject="subject-existing",
+        provider_email=user.email,
+    ))
+    db.session.commit()
+    identity = OAuthIdentity("google", "subject-existing", user.email, True, user.name)
+    monkeypatch.setattr(
+        "app.routes.auth_routes.complete_authorization", lambda provider, code, state: (identity, None)
+    )
+
+    callback = client.get("/api/oauth/google/callback?code=test&state=test")
+    assert callback.status_code == 302
+    assert callback.headers["Location"].endswith("/login.html?oauth=complete")
+    cookie = callback.headers["Set-Cookie"]
+    assert "oauth_exchange=" in cookie
+    assert "HttpOnly" in cookie
+    assert "Path=/api/oauth/session" in cookie
+    assert not any(item.is_valid for item in AuthSession.query.all())
+
+    exchange = client.post("/api/oauth/session")
+    assert exchange.status_code == 200
+    payload = exchange.get_json()
+    assert payload["user"]["id"] == user.id
+    decoded = decode_token(payload["access_token"])
+    assert decoded["sub"] == user.id
+    assert AuthSession.query.filter_by(id=decoded["sid"], user_id=user.id).one().is_valid
+    assert client.post("/api/oauth/session").status_code == 401
+
+
 def test_oauth_does_not_auto_merge_matching_email(client, monkeypatch):
     _register(client, "existing@example.com")
     identity = OAuthIdentity("google", "subject-1", "existing@example.com", True, "Existing")

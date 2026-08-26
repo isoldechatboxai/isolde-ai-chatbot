@@ -237,6 +237,7 @@
             <button type="button" class="guest-btn" id="guest-btn">
                 Continue as Guest
             </button>
+            <div id="oauth-options" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px;"></div>
         </form>
 
         <div class="switch-page">
@@ -276,6 +277,9 @@
 
             form.addEventListener('submit', async (e) => {
                 e.preventDefault();
+                const loginButton = document.getElementById('login-btn');
+                if (loginButton.disabled) return;
+                loginButton.disabled = true;
                 const email = document.getElementById('email').value.trim();
                 const password = document.getElementById('password').value;
 
@@ -299,8 +303,39 @@
                 } catch(err) {
                     msg.textContent = "Server connection error.";
                     msg.className = "message error";
+                } finally {
+                    loginButton.disabled = false;
                 }
             });
+
+            const oauthStatus = new URLSearchParams(window.location.search).get('oauth');
+            if (oauthStatus === 'complete') {
+                fetch('/api/oauth/session', {method: 'POST'}).then(async (res) => {
+                    const data = await res.json();
+                    if (!res.ok || !data.access_token) throw new Error(data.error || 'OAuth login failed.');
+                    localStorage.setItem('access_token', data.access_token);
+                    localStorage.setItem('user', JSON.stringify(data.user || {}));
+                    history.replaceState({}, '', '/login.html');
+                    window.location.replace('/');
+                }).catch((error) => {
+                    msg.textContent = error.message;
+                    msg.className = 'message error';
+                });
+            }
+
+            fetch('/api/oauth/providers').then((res) => res.json()).then((data) => {
+                const container = document.getElementById('oauth-options');
+                Object.entries(data.providers || {}).forEach(([provider, configured]) => {
+                    const button = document.createElement('button');
+                    button.type = 'button';
+                    button.className = 'guest-btn';
+                    button.textContent = `Continue with ${provider[0].toUpperCase() + provider.slice(1)}`;
+                    button.disabled = !configured;
+                    button.title = configured ? '' : `${provider} login is not configured`;
+                    button.addEventListener('click', () => window.location.assign(`/api/oauth/${provider}/start`));
+                    container.appendChild(button);
+                });
+            }).catch(() => {});
 
             document.getElementById('guest-btn').addEventListener('click', () => {
                 localStorage.removeItem('access_token');

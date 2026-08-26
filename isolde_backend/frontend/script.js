@@ -1248,7 +1248,14 @@
         state.abortController = null;
         state.streamingBotMsgObj = null;
         state.streamingTextEl = null;
-        throw new Error("Server Error / Network Error");
+        const errorData = await response.json().catch(() => ({}));
+        if (response.status === 401) {
+          localStorage.removeItem("access_token");
+          localStorage.removeItem("user");
+          window.location.assign("/login.html");
+        }
+        if (response.status === 429) throw new Error("Rate limit reached. Please wait before retrying.");
+        throw new Error(errorData.error || "AI service unavailable.");
       }
 
       state.generationId = response.headers.get("X-Generation-ID");
@@ -1739,11 +1746,11 @@ onDocumentReady(() => {
 
     if (type === "image") {
       if (title) title.textContent = "🎨 Images Studio Workspace";
-      if (desc) desc.textContent = "Transform text prompts into stunning high-definition AI artworks instantly.";
+      if (desc) desc.textContent = "Image generation requires a configured external provider.";
       if (input) input.placeholder = "e.g., A futuristic cyberpunk city in neon lights, 4k...";
     } else {
       if (title) title.textContent = "🎬 Videos Generation Suite";
-      if (desc) desc.textContent = "Synthesize high-framerate dynamic videos from textual descriptions.";
+      if (desc) desc.textContent = "Video generation requires a configured external provider.";
       if (input) input.placeholder = "e.g., Drone shot flying across snow-capped mountains at sunrise...";
     }
 
@@ -1786,7 +1793,7 @@ onDocumentReady(() => {
         const endpoint = isImage ? "/api/studio/generate-image" : "/api/studio/generate-video";
         const res = await fetch(endpoint, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: getAuthHeaders(),
           body: JSON.stringify({ prompt: promptText }),
         });
         const data = await res.json();
@@ -1796,7 +1803,7 @@ onDocumentReady(() => {
           if (isImage && imgOutput) { imgOutput.src = data.image_url; imgOutput.style.display = "block"; }
           else if (loader) { loader.style.display = "block"; loader.textContent = "✅ Job Completed Successfully! Pipeline output ready."; }
         } else if (loader) {
-          loader.textContent = "⚠ Generation failed: " + (data.message || "Unknown error");
+          loader.textContent = "⚠ " + (data.message || data.error || "Generation is not configured.");
         }
       } catch (err) {
         if (loader) loader.textContent = "⚠ Network connection error during generation.";

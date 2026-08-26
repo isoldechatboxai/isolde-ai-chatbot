@@ -1,7 +1,7 @@
 import os
 from datetime import datetime, timezone
 
-from flask import Blueprint, current_app, jsonify, redirect, request, send_from_directory
+from flask import Blueprint, current_app, jsonify, make_response, redirect, request, send_from_directory
 from flask_jwt_extended import create_access_token, get_jwt, get_jwt_identity, jwt_required
 from sqlalchemy.exc import IntegrityError
 
@@ -62,10 +62,21 @@ def _create_login(user):
 def _consume_token(raw, purpose):
     if not raw:
         return None
-    record = AuthToken.query.filter_by(token_hash=token_digest(raw), purpose=purpose).first()
-    if not record or not record.is_valid:
+    now = utcnow()
+    digest = token_digest(raw)
+    record = AuthToken.query.filter_by(token_hash=digest, purpose=purpose).first()
+    if not record or record.used_at is not None or record.expires_at <= now:
         return None
-    record.used_at = utcnow()
+    # The conditional update makes consumption single-use even when two
+    # workers receive the same reset/verification/OAuth exchange token.
+    consumed = AuthToken.query.filter(
+        AuthToken.id == record.id,
+        AuthToken.used_at.is_(None),
+        AuthToken.expires_at > now,
+    ).update({"used_at": now}, synchronize_session=False)
+    if consumed != 1:
+        return None
+    record.used_at = now
     return record
 
 
@@ -294,6 +305,20 @@ def oauth_start(provider):
         return jsonify({"error": str(error)}), 400
 
 
+@auth_bp.route("/oauth/providers", methods=["GET"])
+def oauth_providers():
+    required = {
+        "google": ("GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET", "GOOGLE_OAUTH_REDIRECT_URI"),
+        "github": ("GITHUB_OAUTH_CLIENT_ID", "GITHUB_OAUTH_CLIENT_SECRET", "GITHUB_OAUTH_REDIRECT_URI"),
+        "apple": ("APPLE_OAUTH_CLIENT_ID", "APPLE_OAUTH_REDIRECT_URI", "APPLE_TEAM_ID", "APPLE_KEY_ID", "APPLE_PRIVATE_KEY"),
+        "microsoft": ("MICROSOFT_OAUTH_CLIENT_ID", "MICROSOFT_OAUTH_CLIENT_SECRET", "MICROSOFT_OAUTH_REDIRECT_URI", "MICROSOFT_OAUTH_TENANT"),
+    }
+    return jsonify({"providers": {
+        provider: all(bool(current_app.config.get(key)) for key in keys)
+        for provider, keys in required.items()
+    }}), 200
+
+
 @auth_bp.route("/oauth/<provider>/link", methods=["GET"])
 @jwt_required()
 def oauth_link_start(provider):
@@ -313,13 +338,52 @@ def oauth_callback(provider):
         identity, link_user_id = complete_authorization(
             provider, request.values.get("code"), request.values.get("state")
         )
-        return _oauth_result(identity, link_user_id)
+        result = _oauth_result(identity, link_user_id)
+        response, status = result
+        if status >= 400:
+            return response, status
+        if link_user_id:
+            return redirect("/?oauth_linked=1")
+        payload = response.get_json() or {}
+        user = db.session.get(User, str((payload.get("user") or {}).get("id")))
+        if not user:
+            return jsonify({"error": "OAuth login could not be completed."}), 500
+        latest_session = AuthSession.query.filter_by(user_id=user.id, revoked_at=None).order_by(AuthSession.created_at.desc()).first()
+        if latest_session:
+            latest_session.revoked_at = utcnow()
+        raw, exchange = AuthToken.issue(user.id, "oauth_exchange", 5)
+        db.session.add(exchange)
+        db.session.commit()
+        browser_response = make_response(redirect("/login.html?oauth=complete"))
+        browser_response.set_cookie(
+            "oauth_exchange", raw, max_age=300, httponly=True,
+            secure=current_app.config.get("SESSION_COOKIE_SECURE", False),
+            samesite="Lax", path="/api/oauth/session",
+        )
+        return browser_response
     except RuntimeError as exc:
         current_app.logger.warning("OAuth provider is not configured: %s", exc)
         return jsonify({"error": str(exc)}), 503
     except Exception:
         current_app.logger.exception("OAuth callback validation failed for %s.", provider)
         return jsonify({"error": "OAuth response could not be verified."}), 400
+
+
+@auth_bp.route("/oauth/session", methods=["POST"])
+def oauth_session_exchange():
+    record = _consume_token(request.cookies.get("oauth_exchange"), "oauth_exchange")
+    if not record:
+        response = jsonify({"error": "OAuth login session is invalid or expired."})
+        response.delete_cookie("oauth_exchange", path="/api/oauth/session")
+        return response, 401
+    user = db.session.get(User, record.user_id)
+    if not user or not user.is_active:
+        db.session.rollback()
+        return jsonify({"error": "Authentication failed."}), 401
+    token, _ = _create_login(user)
+    response = jsonify({"message": "Login successful.", "access_token": token, "user": user.to_dict()})
+    response.delete_cookie("oauth_exchange", path="/api/oauth/session")
+    return response, 200
 
 
 @auth_bp.route("/oauth/accounts", methods=["GET"])

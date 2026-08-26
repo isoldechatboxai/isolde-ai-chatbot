@@ -12,16 +12,13 @@
 
   <section style="border:1px solid var(--border-color,#333);border-radius:10px;padding:16px;margin-bottom:20px;">
     <h2>Custom Models</h2>
-    <input id="model-name" placeholder="Model name">
-    <input id="base-model" placeholder="Base model (e.g. gemini-flash)">
-    <input id="dataset-uri" placeholder="Dataset URI">
-    <button id="create-model-btn">Create Model</button>
+    <p>Fine-tuning is not configured. Existing model records are shown read-only.</p>
     <ul id="model-list"></ul>
   </section>
 
   <section style="border:1px solid var(--border-color,#333);border-radius:10px;padding:16px;">
     <h2>Playground</h2>
-    <input id="playground-model-id" placeholder="Model ID">
+    <input id="playground-model-id" placeholder="Configured model ID (optional)">
     <textarea id="playground-prompt" placeholder="Enter prompt..." rows="4" style="width:100%;"></textarea>
     <button id="run-prompt-btn">Run</button>
     <pre id="playground-output"></pre>

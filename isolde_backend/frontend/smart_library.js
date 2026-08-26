@@ -119,6 +119,7 @@
             });
 
             if (!response.ok) {
+                if (response.status === 401) return window.location.replace("/login.html");
                 throw new Error(`Server returned ${response.status}`);
             }
 
@@ -165,6 +166,7 @@
             const data = await response.json().catch(() => ({}));
 
             if (!response.ok) {
+                if (response.status === 401) return window.location.replace("/login.html");
                 throw new Error(data.message || "Upload failed due to a server error.");
             }
 
@@ -202,6 +204,7 @@
             const data = await response.json().catch(() => ({}));
 
             if (!response.ok) {
+                if (response.status === 401) return window.location.replace("/login.html");
                 throw new Error(data.message || "Deletion failed due to a server error.");
             }
 

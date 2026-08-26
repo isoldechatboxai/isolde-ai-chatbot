@@ -2,6 +2,8 @@
 Tests for marketplace, workspace, and workflow routes.
 Focus on authentication, authorization, ownership checks, and input validation.
 """
+import os
+
 import pytest
 from app import create_app
 from app.extensions import db
@@ -13,9 +15,10 @@ class TestConfig(Config):
     TESTING = True
     SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
     JWT_SECRET_KEY = "test-secret-key-for-testing"
-    UPLOAD_FOLDER = "/tmp/test-uploads"
-    LOG_DIR = "/tmp/test-logs"
-    VECTOR_STORE_DIR = "/tmp/test-vector-store"
+    _TEST_RUNTIME_ROOT = os.path.join(os.path.dirname(__file__), ".runtime")
+    UPLOAD_FOLDER = os.path.join(_TEST_RUNTIME_ROOT, "uploads")
+    LOG_DIR = os.path.join(_TEST_RUNTIME_ROOT, "logs")
+    VECTOR_STORE_DIR = os.path.join(_TEST_RUNTIME_ROOT, "vector-store")
     # Override engine options for SQLite in-memory compatibility
     SQLALCHEMY_ENGINE_OPTIONS = {}
 

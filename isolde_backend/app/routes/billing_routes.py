@@ -58,23 +58,9 @@ def get_credits():
 @billing_bp.route("/billing/credits/deduct", methods=["POST"])
 @jwt_required()
 def deduct_credits():
-    try:
-        user_id = str(get_jwt_identity())
-        data = request.get_json() or {}
-        amount = int(data.get("amount", 0))
-        if amount <= 0:
-            return jsonify({"error": "Amount must be a positive integer."}), 400
-
-        balance = _get_or_create_balance(user_id)
-        if balance.credits < amount:
-            return jsonify({"error": "Insufficient credits", "available": balance.credits}), 400
-
-        balance.credits -= amount
-        db.session.commit()
-        return jsonify({"status": "success", "remaining_credits": balance.credits}), 200
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({"error": str(e)}), 500
+    return jsonify({
+        "error": "Credit deductions are server-authoritative and cannot be submitted by clients."
+    }), 403
 
 
 @billing_bp.route("/billing/invoices", methods=["GET"])

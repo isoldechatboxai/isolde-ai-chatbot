@@ -1,51 +1,56 @@
 function authHeaders() {
-  const headers = { "Content-Type": "application/json" };
   const token = localStorage.getItem("access_token");
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  return headers;
+  return { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+}
+
+async function api(path, options = {}) {
+  const response = await fetch(path, { ...options, headers: { ...authHeaders(), ...(options.headers || {}) } });
+  const data = await response.json().catch(() => ({}));
+  if (response.status === 401) {
+    localStorage.removeItem("access_token");
+    window.location.replace("/login.html");
+    throw new Error("Session expired.");
+  }
+  if (!response.ok) throw new Error(data.error || "Request failed.");
+  return data;
 }
 
 async function loadModels() {
-  const res = await fetch("/api/ai-studio/models", { headers: authHeaders() });
-  const data = await res.json();
+  const data = await api("/api/ai-studio/models");
+  const items = (data.models || []).map((model) => {
+    const item = document.createElement("li");
+    item.textContent = `${model.model_id} — ${model.name} (${model.status})`;
+    return item;
+  });
   const list = document.getElementById("model-list");
-  list.innerHTML = "";
-  (data.models || []).forEach(m => {
-    const li = document.createElement("li");
-    li.textContent = `${m.model_id} — ${m.name} (${m.status})`;
-    list.appendChild(li);
-  });
-}
-
-async function createModel() {
-  const model_name = document.getElementById("model-name").value;
-  const base_model = document.getElementById("base-model").value;
-  const dataset_uri = document.getElementById("dataset-uri").value;
-
-  const res = await fetch("/api/ai-studio/models", {
-    method: "POST",
-    headers: authHeaders(),
-    body: JSON.stringify({ model_name, base_model, dataset_uri })
-  });
-  const data = await res.json();
-  alert(data.message || "Model created");
-  loadModels();
+  list.replaceChildren(...items);
+  if (!items.length) list.textContent = "No custom models.";
 }
 
 async function runPrompt() {
-  const model_id = document.getElementById("playground-model-id").value || "default";
-  const prompt = document.getElementById("playground-prompt").value;
-
-  const res = await fetch("/api/ai-studio/playground/test", {
-    method: "POST",
-    headers: authHeaders(),
-    body: JSON.stringify({ model_id, prompt, parameters: { temperature: 0.7 } })
-  });
-  const data = await res.json();
-  document.getElementById("playground-output").textContent = JSON.stringify(data, null, 2);
+  const button = document.getElementById("run-prompt-btn");
+  if (button.disabled) return;
+  const prompt = document.getElementById("playground-prompt").value.trim();
+  if (!prompt) return;
+  button.disabled = true;
+  const output = document.getElementById("playground-output");
+  output.textContent = "Running…";
+  try {
+    const data = await api("/api/ai-studio/playground/test", {
+      method: "POST",
+      body: JSON.stringify({
+        model_id: document.getElementById("playground-model-id").value.trim() || "default",
+        prompt,
+        parameters: { temperature: 0.7 }
+      })
+    });
+    output.textContent = `${data.output}\n\nUsage: ${typeof data.usage === "string" ? data.usage : JSON.stringify(data.usage)}`;
+  } catch (error) {
+    output.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
 }
 
-document.getElementById("create-model-btn").addEventListener("click", createModel);
 document.getElementById("run-prompt-btn").addEventListener("click", runPrompt);
-
-loadModels();
+loadModels().catch((error) => { document.getElementById("model-list").textContent = error.message; });

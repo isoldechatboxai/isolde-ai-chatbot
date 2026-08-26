@@ -13,18 +13,13 @@
     <h2>Current Plan</h2>
     <p id="plan-name">Loading...</p>
     <p id="credits-left">Credits: --</p>
-    <select id="plan-select">
-      <option value="Free">Free</option>
-      <option value="Pro">Pro</option>
-      <option value="Enterprise">Enterprise</option>
-    </select>
-    <button id="subscribe-btn">Subscribe</button>
+    <p id="billing-status">Plan changes are unavailable until a payment provider is configured.</p>
   </section>
 
   <section id="invoices-card" style="border:1px solid var(--border-color,#333);border-radius:10px;padding:16px;">
     <h2>Invoices</h2>
-    <button id="generate-invoice-btn">Generate Test Invoice</button>
     <ul id="invoice-list"></ul>
+    <p id="invoice-empty" hidden>No invoices.</p>
   </section>
 </div>
 

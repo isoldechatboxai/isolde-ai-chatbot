@@ -76,13 +76,11 @@ def start_email_worker(app, subject: str, recipient: str, body: str, html_body: 
                     'MAIL_DEFAULT_SENDER': app.config.get('MAIL_DEFAULT_SENDER', 'admin@isolde.ai')
                 }
                 
-                # 🛑 SAFETY CHECK: If passwords aren't set yet, just mock the email sending to avoid server crashes
-                if not smtp_config['MAIL_USERNAME']:
-                    app.logger.warning(f"[EMAIL MOCK] No SMTP credentials configured. Mocking email send to {recipient}")
-                    time.sleep(1.5) # Simulate network delay
-                else:
-                    _send_email_task(subject, recipient, body, html_body, smtp_config)
-                    
+                if not smtp_config['MAIL_USERNAME'] or not smtp_config['MAIL_PASSWORD']:
+                    app.logger.error("[WORKER FAILED] SMTP credentials are not configured; email was not sent.")
+                    return
+
+                _send_email_task(subject, recipient, body, html_body, smtp_config)
                 app.logger.info(f"[WORKER SUCCESS] Email processing completed for: {recipient}")
                 
             except Exception as e:
