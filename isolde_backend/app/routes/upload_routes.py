@@ -13,8 +13,7 @@ from app.services.provider_router import analyze_image
 from app.utils.validators import allowed_file
 from app.utils.logger import log_event
 
-# 🌟 Phase 4: Import the new Background Worker
-from app.workers.embedding_worker import start_embedding_worker
+from app.services.rag_service import index_document
 
 upload_bp = Blueprint("upload", __name__)
 
@@ -107,14 +106,11 @@ def upload_file():
     record.extracted_chars = len(text)
 
     if text.strip():
-        # 🌟 Phase 4: Pass to the Background Worker instead of waiting synchronously
-        start_embedding_worker(
-            current_app._get_current_object(), 
-            text, 
-            filename, 
-            user_id
-        )
-        record.indexed = True
+        try:
+            record.indexed = index_document(record.id, filename, text, user_id) > 0
+        except Exception as error:
+            current_app.logger.error("Document indexing failed for %s: %s", filename, error)
+            return jsonify({"error": "Document indexing failed."}), 502
 
     # Handle second database commit with rollback
     try:
@@ -126,6 +122,6 @@ def upload_file():
     log_event(current_app, "FILE_UPLOAD", f"{filename} ({file_type})", user_id)
 
     return jsonify({
-        "message": "File uploaded successfully. Processing in background.",
+        "message": "File uploaded successfully.",
         "file": record.to_dict(),
     }), 201

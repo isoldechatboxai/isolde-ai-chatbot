@@ -99,19 +99,49 @@ const API_URL = "http://127.0.0.1:5000/api/chat";
 and make sure your frontend's origin (e.g. `http://127.0.0.1:5500`) is
 listed in `CORS_ORIGINS` in `.env`.
 
+## Production deployment
+
+Production requires PostgreSQL and Redis. Set `DATABASE_URL`,
+`RATELIMIT_STORAGE_URI`, and `CANCELLATION_REDIS_URL`; never use SQLite or
+`memory://` with multiple workers. Configure explicit HTTPS CORS origins and
+set `TRUST_PROXY_HOPS=1` only when exactly one trusted reverse proxy sits in
+front of Gunicorn.
+
+For an existing migration-managed database:
+
+```powershell
+flask db upgrade
+```
+
+For a brand-new, completely empty database only:
+
+```powershell
+flask db-bootstrap
+```
+
+The bootstrap command refuses non-empty unversioned databases. The historical
+Alembic baseline remains a no-op for installations that predate migrations.
+
+RAG documents, chunks, ownership, and embeddings now live in transactional
+database tables. To migrate the former JSON store after backing it up:
+
+```powershell
+flask rag-import-json vector_store/index.json
+```
+
+Ownerless legacy chunks are reported and skipped rather than exposed to an
+authenticated tenant. Keep the legacy file until the reported counts have
+been verified.
+
+Use `/api/live` for process liveness and `/api/ready` for dependency readiness.
+
 ## Remaining known issues / things to be aware of
 
 - **No real Gemini key ships with this project** — you must add your own in
   `.env` (see step 5). Without it, `/api/chat` returns a clear `503` error
   rather than crashing, but obviously won't generate replies.
-- **RAG vector store is a flat JSON file**, not a real vector database —
-  fine for a handful of documents, will get slow at scale. See
-  `app/services/rag_service.py` for the two functions to swap out if you
-  later add ChromaDB/FAISS/Pinecone.
-- **Email delivery isn't wired up.** `/api/forgot-password` returns the OTP
-  directly in the JSON response (`dev_otp` field) instead of emailing it.
-  Fine for local testing; before putting this in front of real users, add
-  an SMTP integration (e.g. Flask-Mail) and remove that field.
+- **Email verification and reset delivery require SMTP configuration.** Test
+  tokens are exposed only when the explicit testing configuration enables it.
 - **SQLite by default** (`isolde.db`, created automatically on first run).
   Swap `DATABASE_URL` in `.env` for a Postgres connection string for
   production use.
@@ -119,8 +149,7 @@ listed in `CORS_ORIGINS` in `.env`.
   `transcript` string — it doesn't do its own speech-to-text. Pair it with
   the browser's built-in Web Speech API on the frontend, or a server-side
   STT provider if you want it fully server-driven.
-- **No admin dashboard / streaming responses / OCR** — see the earlier
-  project notes; these are still just extension points, not implemented.
+- **OCR is not included.** Scanned documents require an external OCR pipeline.
 
 ## Project structure
 

@@ -8,8 +8,8 @@ from werkzeug.utils import secure_filename
 
 from app.services.rag_service import (
     process_and_index_file,
-    _load_index,
-    _save_index
+    list_documents as list_owned_documents,
+    delete_document as delete_owned_document,
 )
 
 rag_bp = Blueprint("rag", __name__)
@@ -94,6 +94,12 @@ def upload_rag_file():
             f"RAG file indexed: {original_filename} ({indexed_chunks} chunks) by user: {user_id}"
         )
 
+        try:
+            os.remove(file_path)
+            file_path = None
+        except OSError as cleanup_error:
+            current_app.logger.warning("Indexed RAG upload cleanup failed: %s", cleanup_error)
+
         return jsonify({
             "status": "success",
             "message": "File uploaded and indexed successfully. You can now ask questions about this document.",
@@ -121,24 +127,11 @@ def upload_rag_file():
 def list_documents():
     user_id = str(get_jwt_identity())
 
-    records = _load_index()
-
-    docs = {}
-
-    for record in records:
-        if str(record.get("user_id")) != user_id:
-            continue
-
-        file_id = record["file_id"]
-
-        if file_id not in docs:
-            docs[file_id] = {
-                "id": file_id,
-                "filename": record["filename"]
-            }
-
     return jsonify({
-        "documents": list(docs.values())
+        "documents": [
+            {"id": document.id, "filename": document.filename, "chunks": document.chunk_count}
+            for document in list_owned_documents(user_id)
+        ]
     })
 
 
@@ -147,17 +140,9 @@ def list_documents():
 def delete_document(file_id):
     user_id = str(get_jwt_identity())
 
-    records = _load_index()
-
-    new_records = [
-        r for r in records
-        if not (
-            r["file_id"] == file_id and
-            str(r.get("user_id")) == user_id
-        )
-    ]
-
-    _save_index(new_records)
+    deleted = delete_owned_document(file_id, user_id)
+    if not deleted:
+        return jsonify({"error": "Document not found."}), 404
 
     return jsonify({
         "message": "Document deleted successfully."

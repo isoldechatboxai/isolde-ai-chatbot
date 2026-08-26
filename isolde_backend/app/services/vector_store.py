@@ -12,9 +12,7 @@ class BaseVectorStore(ABC):
 
 class PineconeVectorStore(BaseVectorStore):
     def upsert(self, vector_id: str, vector: list, metadata: dict):
-        # Pinecone SDK implementation
-        pass
+        raise NotImplementedError("Pinecone storage is not configured.")
 
     def query(self, vector: list, top_k: int = 5):
-        # Pinecone query execution
-        return [{"id": "doc_1", "score": 0.94}]
+        raise NotImplementedError("Pinecone storage is not configured.")

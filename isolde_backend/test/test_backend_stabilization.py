@@ -64,6 +64,9 @@ class TestProductionConfigValidation:
             GEMINI_MODEL = "gemini-1.5-flash"
             CORS_ORIGINS = ["https://example.com"]
             RATELIMIT_STORAGE_URI = "redis://redis:6379/0"
+            CANCELLATION_REDIS_URL = "redis://redis:6379/1"
+            RAG_STORAGE_BACKEND = "database"
+            SQLALCHEMY_DATABASE_URI = "postgresql://isolde:secret@db/isolde"
 
         for key, value in overrides.items():
             setattr(ProductionConfig, key, value)
@@ -119,6 +122,16 @@ class TestProductionConfigValidation:
     def test_production_in_memory_rate_limit_storage_fails(self):
         production_config = self._make_production_config(RATELIMIT_STORAGE_URI="memory://")
         with pytest.raises(RuntimeError, match="RATELIMIT_STORAGE_URI"):
+            production_config.validate()
+
+    def test_production_sqlite_database_fails(self):
+        production_config = self._make_production_config(SQLALCHEMY_DATABASE_URI="sqlite:///isolde.db")
+        with pytest.raises(RuntimeError, match="DATABASE_URL"):
+            production_config.validate()
+
+    def test_production_requires_shared_cancellation(self):
+        production_config = self._make_production_config(CANCELLATION_REDIS_URL="")
+        with pytest.raises(RuntimeError, match="CANCELLATION_REDIS_URL"):
             production_config.validate()
 
 

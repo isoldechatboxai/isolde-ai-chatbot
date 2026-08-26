@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required
 from app.plugin_manager import plugin_manager
 from app.security.authorization import admin_required
@@ -10,6 +10,8 @@ plugin_bp = Blueprint("plugin_bp", __name__)
 @plugin_bp.route("/plugins/registry", methods=["GET"])
 @jwt_required(optional=True)
 def list_registered_plugins():
+    if current_app.config.get("IS_PRODUCTION"):
+        return jsonify({"status": "error", "error": "Runtime plugins are disabled in production."}), 501
     try:
         return jsonify({
             "status": "success",
@@ -25,6 +27,8 @@ def list_registered_plugins():
 @plugin_bp.route("/plugins/registry/installed", methods=["GET"])
 @jwt_required(optional=True)
 def list_installed_plugins():
+    if current_app.config.get("IS_PRODUCTION"):
+        return jsonify({"status": "error", "error": "Runtime plugins are disabled in production."}), 501
     """
     Return currently registered/installed plugins.
     """
@@ -93,6 +97,8 @@ def install_plugin():
 @plugin_bp.route("/plugins/registry/load", methods=["POST"])
 @admin_required
 def load_plugins():
+    if current_app.config.get("IS_PRODUCTION"):
+        return jsonify({"status": "error", "error": "Runtime plugin loading is disabled in production."}), 501
     try:
         data = request.get_json(silent=True) or {}
         directory = data.get("directory")
@@ -123,6 +129,8 @@ def load_plugins():
 )
 @admin_required
 def execute_plugin(plugin_name):
+    if current_app.config.get("IS_PRODUCTION"):
+        return jsonify({"status": "error", "error": "Runtime plugins are disabled in production."}), 501
     try:
         data = request.get_json(silent=True) or {}
 
@@ -171,6 +179,8 @@ def execute_plugin(plugin_name):
 )
 @admin_required
 def unregister_plugin(plugin_name):
+    if current_app.config.get("IS_PRODUCTION"):
+        return jsonify({"status": "error", "error": "Runtime plugins are disabled in production."}), 501
     try:
         ok = plugin_manager.unregister_plugin(plugin_name)
 

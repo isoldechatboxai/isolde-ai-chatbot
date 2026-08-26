@@ -216,6 +216,7 @@ class Config:
             "vector_store",
         ).strip(),
     )
+    RAG_STORAGE_BACKEND = os.getenv("RAG_STORAGE_BACKEND", "database").strip().lower()
 
     # ==========================================================
     # Logging
@@ -227,6 +228,7 @@ class Config:
             "logs",
         ).strip(),
     )
+    LOG_TO_FILE = _env_bool("LOG_TO_FILE", default=not IS_PRODUCTION)
 
     # ==========================================================
     # Security
@@ -255,9 +257,20 @@ class Config:
         "SAAS_API_KEY_RATE_LIMIT",
         "10 per minute",
     ).strip()
+    PERMANENT_SESSION_LIFETIME = timedelta(hours=_env_int("SESSION_LIFETIME_HOURS", 12))
+    SESSION_REFRESH_EACH_REQUEST = False
+    PREFERRED_URL_SCHEME = "https" if IS_PRODUCTION else "http"
+    TRUST_PROXY_HOPS = _env_int("TRUST_PROXY_HOPS", 0)
     RATELIMIT_STORAGE_URI = os.getenv(
         "RATELIMIT_STORAGE_URI", "memory://"
     ).strip()
+    CANCELLATION_REDIS_URL = os.getenv("CANCELLATION_REDIS_URL", RATELIMIT_STORAGE_URI if RATELIMIT_STORAGE_URI.startswith("redis") else "").strip()
+    CANCELLATION_TTL_SECONDS = _env_int("CANCELLATION_TTL_SECONDS", 900)
+    REDIS_CONNECT_TIMEOUT_SECONDS = _env_int("REDIS_CONNECT_TIMEOUT_SECONDS", 2)
+    REDIS_SOCKET_TIMEOUT_SECONDS = _env_int("REDIS_SOCKET_TIMEOUT_SECONDS", 2)
+    CHAT_RATE_LIMIT = os.getenv("CHAT_RATE_LIMIT", "20 per minute").strip()
+    UPLOAD_RATE_LIMIT = os.getenv("UPLOAD_RATE_LIMIT", "10 per minute").strip()
+    OAUTH_RATE_LIMIT = os.getenv("OAUTH_RATE_LIMIT", "20 per minute").strip()
 
     MAIL_SERVER = os.getenv("MAIL_SERVER", "").strip()
     MAIL_PORT = _env_int("MAIL_PORT", 587)
@@ -388,6 +401,12 @@ class Config:
             raise RuntimeError(
                 "RATELIMIT_STORAGE_URI must use shared storage such as Redis in production."
             )
+        if not cls.CANCELLATION_REDIS_URL.startswith(("redis://", "rediss://")):
+            raise RuntimeError("CANCELLATION_REDIS_URL must use Redis in production.")
+        if cls.RAG_STORAGE_BACKEND != "database":
+            raise RuntimeError("RAG_STORAGE_BACKEND must be 'database' in production.")
+        if cls.SQLALCHEMY_DATABASE_URI.startswith("sqlite:"):
+            raise RuntimeError("DATABASE_URL must use a multi-worker production database, not SQLite.")
 
 
 def ensure_runtime_directories() -> None:

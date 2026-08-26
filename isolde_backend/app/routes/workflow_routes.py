@@ -174,28 +174,9 @@ def execute_workflow(workflow_id):
         if not workflow.is_active:
             return jsonify({"error": "Workflow is not active"}), 400
         
-        # Record execution start
-        started_at = datetime.utcnow()
-        execution = WorkflowExecution(
-            workflow_id=workflow.id,
-            status="Running",
-            started_at=started_at
-        )
-        db.session.add(execution)
-        db.session.flush()  # Get execution ID
-        
-        # TODO: Implement real workflow execution engine
-        # For now, mark as completed with placeholder status
-        # The actual execution logic should be implemented based on workflow definition
-        execution.status = "Success"
-        execution.completed_at = datetime.utcnow()
-        execution.execution_time_ms = int((execution.completed_at - started_at).total_seconds() * 1000)
-        
-        db.session.commit()
         return jsonify({
-            "message": "Workflow execution initiated",
-            "execution": execution.to_dict()
-        }), 200
+            "error": "Workflow execution is not configured."
+        }), 501
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": "Failed to execute workflow"}), 500

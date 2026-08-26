@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify, current_app, Response, stream_with_context
+from flask import Blueprint, request, jsonify, current_app, Response, stream_with_context, session
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
 from app.extensions import db
@@ -10,6 +10,7 @@ from app.services.provider_router import generate_reply, generate_reply_stream, 
 from app.services.rag_service import search as rag_search, build_context_block
 from app.services.feedback_service import find_relevant_corrections, build_correction_context
 from app.services.language_service import detect_language, language_instruction
+from app.services.cancellation_service import cancellation_store, CancellationStoreUnavailable
 
 from app.utils.validators import sanitize_text, is_non_empty
 from app.utils.logger import log_event
@@ -33,6 +34,37 @@ _CHAT_GENERATION_EXECUTOR = ThreadPoolExecutor(
 
 _ACTIVE_GENERATIONS = {}
 _ACTIVE_GENERATIONS_LOCK = threading.Lock()
+
+
+def _request_generation_owner(user_id):
+    if user_id is not None:
+        return f"user:{user_id}"
+    guest_id = session.get("generation_guest_id")
+    if not guest_id:
+        guest_id = str(uuid.uuid4())
+        session["generation_guest_id"] = guest_id
+    return f"guest:{guest_id}"
+
+
+class _SharedCancellationEvent:
+    def __init__(self, generation_id, owner):
+        self.generation_id = generation_id
+        self.owner = owner
+        self.local_event = threading.Event()
+        self.failed = False
+
+    def set(self):
+        self.local_event.set()
+
+    def is_set(self):
+        if self.local_event.is_set():
+            return True
+        try:
+            return cancellation_store.is_cancelled(self.generation_id, self.owner)
+        except CancellationStoreUnavailable:
+            self.failed = True
+            self.local_event.set()
+            return True
 
 _MODEL_ALIASES = {
     "default": "default-ai",
@@ -148,17 +180,25 @@ def _web_search_context(message: str, max_results: int = 3):
 
 
 def _register_generation(generation_id, stop_event, user_id, conversation_id):
+    owner = f"user:{user_id}" if user_id is not None else "guest:legacy"
+    cancellation_store.register(generation_id, owner, conversation_id)
     with _ACTIVE_GENERATIONS_LOCK:
         _ACTIVE_GENERATIONS[generation_id] = {
             "event": stop_event,
             "user_id": user_id,
+            "owner": owner,
             "conversation_id": conversation_id,
         }
 
 
 def _unregister_generation(generation_id):
     with _ACTIVE_GENERATIONS_LOCK:
-        _ACTIVE_GENERATIONS.pop(generation_id, None)
+        entry = _ACTIVE_GENERATIONS.pop(generation_id, None)
+    if entry:
+        try:
+            cancellation_store.unregister(generation_id, entry["owner"])
+        except CancellationStoreUnavailable:
+            current_app.logger.error("Unable to clean shared cancellation state for generation %s", generation_id)
 
 
 def _generate_reply_in_app_context(app, prompt, history, system_context):
@@ -504,14 +544,17 @@ def stream_chat():
     user_id = get_jwt_identity()
 
     generation_id = str(uuid.uuid4())
-    stop_event = threading.Event()
-
-    _register_generation(
-        generation_id,
-        stop_event,
-        user_id,
-        conversation_id,
-    )
+    owner = _request_generation_owner(user_id)
+    stop_event = _SharedCancellationEvent(generation_id, owner)
+    try:
+        cancellation_store.register(generation_id, owner, conversation_id)
+    except CancellationStoreUnavailable:
+        return jsonify({"error": "Cancellation service unavailable."}), 503
+    with _ACTIVE_GENERATIONS_LOCK:
+        _ACTIVE_GENERATIONS[generation_id] = {
+            "event": stop_event, "user_id": user_id, "owner": owner,
+            "conversation_id": conversation_id,
+        }
 
     response_started = False
 
@@ -582,7 +625,7 @@ def stream_chat():
                 yield f": generation_id {generation_id}\n\n"
 
                 if stop_event.is_set():
-                    yield "data: [Generation Stopped by User]\n\n"
+                    yield "data: [ERROR]\n\n" if stop_event.failed else "data: [Generation Stopped by User]\n\n"
                     yield "data: [DONE]\n\n"
                     return
 
@@ -598,7 +641,7 @@ def stream_chat():
                         close = getattr(provider_stream, "close", None)
                         if callable(close):
                             close()
-                        yield "data: [Generation Stopped by User]\n\n"
+                        yield "data: [ERROR]\n\n" if stop_event.failed else "data: [Generation Stopped by User]\n\n"
                         yield "data: [DONE]\n\n"
                         return
                     chunks.append(chunk)
@@ -676,48 +719,20 @@ def stop_chat_generation():
     data = request.get_json(silent=True) or {}
 
     generation_id = data.get("generation_id")
-    conversation_id = data.get("conversation_id")
     user_id = get_jwt_identity()
-
-    stopped = False
-
-    with _ACTIVE_GENERATIONS_LOCK:
-        if generation_id and generation_id in _ACTIVE_GENERATIONS:
-            entry = _ACTIVE_GENERATIONS[generation_id]
-            entry_user_id = entry.get("user_id")
-            if (
-                (user_id is None and entry_user_id is None)
-                or (
-                    user_id is not None
-                    and entry_user_id is not None
-                    and str(user_id) == str(entry_user_id)
-                )
-            ):
+    if not generation_id:
+        return jsonify({"error": "generation_id is required."}), 400
+    owner = _request_generation_owner(user_id)
+    try:
+        result = cancellation_store.cancel(generation_id, owner)
+    except CancellationStoreUnavailable:
+        return jsonify({"error": "Cancellation service unavailable."}), 503
+    stopped = result == 1
+    if stopped:
+        with _ACTIVE_GENERATIONS_LOCK:
+            entry = _ACTIVE_GENERATIONS.get(generation_id)
+            if entry and entry.get("owner") == owner:
                 entry["event"].set()
-                stopped = True
-
-        elif conversation_id:
-            for entry in _ACTIVE_GENERATIONS.values():
-                entry_conversation_id = entry.get("conversation_id")
-                entry_user_id = entry.get("user_id")
-
-                if not entry_conversation_id:
-                    continue
-
-                if str(entry_conversation_id) != str(conversation_id):
-                    continue
-
-                if (
-                    (user_id is None) != (entry_user_id is None)
-                    or (
-                        user_id is not None
-                        and str(user_id) != str(entry_user_id)
-                    )
-                ):
-                    continue
-
-                entry["event"].set()
-                stopped = True
 
     return jsonify({
         "status": "success",

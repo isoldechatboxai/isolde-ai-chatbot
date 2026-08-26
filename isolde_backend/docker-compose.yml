@@ -8,13 +8,18 @@ services:
     env_file:
       - .env
     environment:
+      FLASK_ENV: production
+      FLASK_DEBUG: "false"
       RATELIMIT_STORAGE_URI: redis://redis:6379/0
+      CANCELLATION_REDIS_URL: redis://redis:6379/1
+      DATABASE_URL: postgresql://isolde:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@db:5432/isolde
+      RAG_STORAGE_BACKEND: database
     volumes:
       - ./uploads:/app/uploads
       - ./logs:/app/logs
-      - ./vector_store:/app/vector_store
     depends_on:
       - redis
+      - db
     restart: unless-stopped
 
   redis:
@@ -24,17 +29,16 @@ services:
       - redis-data:/data
     restart: unless-stopped
 
-  # Swap SQLite for Postgres in production by uncommenting this service
-  # and setting DATABASE_URL=postgresql://isolde:isolde@db:5432/isolde in .env
-  # db:
-  #   image: postgres:16-alpine
-  #   environment:
-  #     POSTGRES_USER: isolde
-  #     POSTGRES_PASSWORD: isolde
-  #     POSTGRES_DB: isolde
-  #   volumes:
-  #     - pgdata:/var/lib/postgresql/data
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: isolde
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: isolde
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
 
 volumes:
   redis-data:
-  # pgdata:
+  pgdata:

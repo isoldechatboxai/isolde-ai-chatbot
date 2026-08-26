@@ -1,8 +1,10 @@
 import os
+import click
 from flask import Flask, jsonify, send_from_directory, request
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-from sqlalchemy import text
+from sqlalchemy import text, inspect
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 try:
     from flask_jwt_extended.exceptions import UserLookupError
@@ -85,46 +87,49 @@ def _apply_part1_targeted_rate_limits(app):
         endpoint_l = endpoint.lower()
         view_name = getattr(view_func, "__name__", "").lower()
         module_name = getattr(view_func, "__module__", "") or ""
-
         is_api_key_endpoint = (
-            endpoint_l.startswith(
-                (
-                    "api_key.",
-                    "api_keys.",
-                    "apikey.",
-                )
-            )
+            endpoint_l.startswith(("api_key.", "api_keys.", "apikey."))
             or module_name.endswith("app.routes.api_key_routes")
         )
-
         is_saas_api_key_endpoint = (
             endpoint_l.startswith("saas_cloud.")
             or module_name.endswith("app.routes.saas_cloud_routes")
-        ) and (
-            "api_key" in endpoint_l
-            or "api_key" in view_name
-            or "apikey" in endpoint_l
-            or "apikey" in view_name
-            or "keys" in endpoint_l
-            or "keys" in view_name
-        )
+        ) and any(token in endpoint_l or token in view_name for token in ("api_key", "apikey", "keys"))
 
-        if is_api_key_endpoint:
-            limited_view = limiter.limit(api_key_limit)(view_func)
-            try:
-                limited_view.__part1_rate_limited__ = True
-            except Exception:
-                pass
+        limit_value = api_key_limit if is_api_key_endpoint else saas_api_key_limit if is_saas_api_key_endpoint else None
+        if limit_value:
+            limited_view = limiter.limit(limit_value)(view_func)
+            limited_view.__part1_rate_limited__ = True
             app.view_functions[endpoint] = limited_view
             wrapped_endpoints.add(endpoint)
-        elif is_saas_api_key_endpoint:
-            limited_view = limiter.limit(saas_api_key_limit)(view_func)
-            try:
-                limited_view.__part1_rate_limited__ = True
-            except Exception:
-                pass
-            app.view_functions[endpoint] = limited_view
-            wrapped_endpoints.add(endpoint)
+
+
+def _apply_security_sensitive_rate_limits(app):
+    limits = {
+        "auth.login": app.config["AUTH_RATE_LIMIT"],
+        "auth.register": app.config["AUTH_RATE_LIMIT"],
+        "auth.verify_email": app.config["AUTH_RATE_LIMIT"],
+        "auth.forgot_password": app.config["AUTH_RATE_LIMIT"],
+        "auth.reset_password": app.config["AUTH_RATE_LIMIT"],
+        "auth.oauth_start": app.config["OAUTH_RATE_LIMIT"],
+        "auth.oauth_callback": app.config["OAUTH_RATE_LIMIT"],
+        "chat.chat": app.config["CHAT_RATE_LIMIT"],
+        "chat.stream_chat": app.config["CHAT_RATE_LIMIT"],
+        "upload.upload_file": app.config["UPLOAD_RATE_LIMIT"],
+        "rag.upload_rag_file": app.config["UPLOAD_RATE_LIMIT"],
+        "ai_studio_bp.test_playground_prompt": app.config["CHAT_RATE_LIMIT"],
+        "admin.admin_login": app.config["AUTH_RATE_LIMIT"],
+        "unified_engine_bp.handle_unified_chat": app.config["CHAT_RATE_LIMIT"],
+        "memory_bp.save_memory": app.config["CHAT_RATE_LIMIT"],
+        "studio_bp.generate_image": app.config["CHAT_RATE_LIMIT"],
+        "studio_bp.generate_video": app.config["CHAT_RATE_LIMIT"],
+    }
+    for endpoint, limit_value in limits.items():
+        view = app.view_functions.get(endpoint)
+        if view is not None and not getattr(view, "__security_rate_limited__", False):
+            wrapped = limiter.limit(limit_value)(view)
+            wrapped.__security_rate_limited__ = True
+            app.view_functions[endpoint] = wrapped
 
 
 def create_app(config_class=Config):
@@ -157,6 +162,9 @@ def create_app(config_class=Config):
     # Configuration
     # ----------------------------------------------------------------
     app.config.from_object(config_class)
+    proxy_hops = int(app.config.get("TRUST_PROXY_HOPS", 0))
+    if proxy_hops:
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=proxy_hops, x_proto=proxy_hops, x_host=proxy_hops, x_port=proxy_hops)
 
     # ----------------------------------------------------------------
     # Runtime directories
@@ -363,16 +371,6 @@ def create_app(config_class=Config):
     from app.studio_routes import studio_bp
 
     # ----------------------------------------------------------------
-    # Authentication rate limit
-    # ----------------------------------------------------------------
-    limiter.limit(
-        app.config.get(
-            "AUTH_RATE_LIMIT",
-            "10 per minute",
-        )
-    )(auth_bp)
-
-    # ----------------------------------------------------------------
     # Core API blueprints
     # ----------------------------------------------------------------
     app.register_blueprint(
@@ -495,6 +493,32 @@ def create_app(config_class=Config):
     # Part 1 targeted API-key rate limiting
     # ----------------------------------------------------------------
     _apply_part1_targeted_rate_limits(app)
+    _apply_security_sensitive_rate_limits(app)
+
+    @app.cli.command("db-bootstrap")
+    def db_bootstrap():
+        """Initialize an entirely empty database and stamp it at migration head."""
+        inspector = inspect(db.engine)
+        tables = set(inspector.get_table_names())
+        if "alembic_version" in tables:
+            raise click.ClickException("Database is already migration-managed; run 'flask db upgrade'.")
+        if tables:
+            raise click.ClickException("Refusing to bootstrap a non-empty unversioned database.")
+        db.create_all()
+        from flask_migrate import stamp
+        stamp(revision="head")
+        click.echo("Empty database initialized and stamped at migration head.")
+
+    @app.cli.command("rag-import-json")
+    @click.argument("path", type=click.Path(exists=True, dir_okay=False, readable=True))
+    def rag_import_json(path):
+        """Import an owned legacy RAG index.json into database storage."""
+        from app.services.rag_service import import_legacy_json
+        result = import_legacy_json(path)
+        click.echo(
+            f"Imported {result['documents']} documents and {result['chunks']} chunks; "
+            f"skipped {result['ownerless_skipped']} ownerless records."
+        )
 
     # ----------------------------------------------------------------
     # Error handlers
@@ -579,22 +603,24 @@ def create_app(config_class=Config):
             "database": False,
             "storage": False,
             "vector_store": False,
-            "logs": False,
+            "cancellation": False,
+            "logs": not app.config.get("LOG_TO_FILE", False),
         }
         try:
             db.session.execute(text("SELECT 1"))
             checks["database"] = True
+            from app.models.rag_model import RAGDocument
+            db.session.query(RAGDocument.id).limit(1).all()
+            checks["vector_store"] = True
         except Exception as error:
             app.logger.error(
                 "Readiness database check failed: %s",
                 error,
             )
 
-        required_directories = {
-            "storage": app.config["UPLOAD_FOLDER"],
-            "vector_store": app.config["VECTOR_STORE_DIR"],
-            "logs": app.config["LOG_DIR"],
-        }
+        required_directories = {"storage": app.config["UPLOAD_FOLDER"]}
+        if app.config.get("LOG_TO_FILE", False):
+            required_directories["logs"] = app.config["LOG_DIR"]
         for check_name, directory in required_directories.items():
             try:
                 checks[check_name] = os.path.isdir(directory)
@@ -604,6 +630,21 @@ def create_app(config_class=Config):
                     check_name,
                     error,
                 )
+
+        try:
+            cancellation_url = app.config.get("CANCELLATION_REDIS_URL", "")
+            if cancellation_url:
+                import redis
+                redis.Redis.from_url(
+                    cancellation_url,
+                    socket_connect_timeout=app.config.get("REDIS_CONNECT_TIMEOUT_SECONDS", 2),
+                    socket_timeout=app.config.get("REDIS_SOCKET_TIMEOUT_SECONDS", 2),
+                ).ping()
+                checks["cancellation"] = True
+            else:
+                checks["cancellation"] = not app.config.get("IS_PRODUCTION", False)
+        except Exception as error:
+            app.logger.error("Readiness cancellation check failed: %s", error)
 
         ready = all(checks.values())
         return jsonify({

@@ -20,8 +20,8 @@ def health_check():
             "data": status_data
         }), status_code
 
-    except Exception as e:
+    except Exception:
         return jsonify({
             "success": False,
-            "error": str(e)
+            "error": "Health check failed."
         }), 500

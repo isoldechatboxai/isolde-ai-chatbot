@@ -72,7 +72,7 @@ def test_authenticated_rag_search_excludes_unowned_and_other_tenant(monkeypatch)
     monkeypatch.setattr(
         rag_service,
         "_load_index",
-        lambda: [
+        lambda user_id=None: [
             {"text": "legacy", "filename": "legacy.txt", "vector": [1.0, 0.0], "user_id": None},
             {"text": "mine", "filename": "mine.txt", "vector": [1.0, 0.0], "user_id": "user-a"},
             {"text": "theirs", "filename": "theirs.txt", "vector": [1.0, 0.0], "user_id": "user-b"},
