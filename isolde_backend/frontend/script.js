@@ -4,10 +4,6 @@
 (() => {
   "use strict";
 
-  if (localStorage.getItem("access_token") === "guest_token_isolde_2026") {
-    localStorage.removeItem("access_token");
-  }
-
   function escapeText(str) {
     const div = document.createElement("div");
     div.textContent = str ?? "";
@@ -151,7 +147,6 @@
     const init = () => {
       const loginForm = document.getElementById("login-form");
       const loginBtn = document.getElementById("login-btn");
-      const guestBtn = document.getElementById("guest-btn");
       const btnText = loginBtn?.querySelector(".btn-text");
       const spinner = loginBtn?.querySelector(".spinner");
       const messageContainer = document.getElementById("message-container");
@@ -213,12 +208,6 @@
         });
       }
 
-      if (guestBtn) {
-        guestBtn.addEventListener("click", () => {
-          localStorage.removeItem("access_token");
-          window.location.href = "/";
-        });
-      }
     };
 
     if (document.readyState === "loading") {
@@ -363,19 +352,24 @@
         });
         stopBtn.addEventListener("click", async (e) => {
           e.preventDefault();
-          if (state.generationId) {
-            try {
-              await fetch("/api/chat/stop", {
+          if (!state.generationId) {
+            appendBotMessage("Cancellation is not yet available for this request.");
+            return;
+          }
+          try {
+              const response = await fetch("/api/chat/stop", {
                 method: "POST",
                 headers: getAuthHeaders(true),
                 body: JSON.stringify({ generation_id: state.generationId }),
               });
-            } catch (err) {
-              console.warn("Backend cancellation request failed", err);
-            }
-          }
-          if (state.abortController) {
-            try { state.abortController.abort(); } catch (err) {}
+              const data = await response.json().catch(() => ({}));
+              if (!response.ok || data.stopped !== true) {
+                appendBotMessage(data.error || "This generation could not be cancelled.");
+                return;
+              }
+              if (state.abortController) state.abortController.abort();
+          } catch (err) {
+            appendBotMessage("Cancellation service could not be reached.");
           }
         });
 
@@ -898,11 +892,12 @@
 
     async function submitFeedback(rating, comment) {
       try {
-        await fetch("/api/feedback", {
+        const response = await fetch("/api/feedback", {
           method: "POST",
           headers: getAuthHeaders(true),
           body: JSON.stringify({ rating, comment }),
         });
+        if (!response.ok) throw new Error("Feedback was not accepted.");
       } catch (err) {
         console.error("Isolde: Feedback submission failed", err);
       }
@@ -939,8 +934,9 @@
 
     async function deleteMemory(id) {
       try {
-        await fetch(`/api/memory/${id}`, { method: "DELETE", headers: getAuthHeaders() });
-        loadMemories();
+        const response = await fetch(`/api/memory/${id}`, { method: "DELETE", headers: getAuthHeaders() });
+        if (!response.ok) throw new Error("Memory was not deleted.");
+        await loadMemories();
       } catch (err) {
         console.error("Failed to delete memory", err);
       }
@@ -948,8 +944,9 @@
 
     async function clearAllMemories() {
       try {
-        await fetch("/api/memory/all", { method: "DELETE", headers: getAuthHeaders() });
-        loadMemories();
+        const response = await fetch("/api/memory/all", { method: "DELETE", headers: getAuthHeaders() });
+        if (!response.ok) throw new Error("Memories were not cleared.");
+        await loadMemories();
       } catch (err) {
         console.error("Failed to clear memories", err);
       }
@@ -1499,11 +1496,15 @@
           headers: { Authorization: `Bearer ${localStorage.getItem("access_token") || ""}` },
           body: formData,
         });
-        const data = await response.json();
+        const data = await response.json().catch(() => ({}));
+        if (response.status === 401) {
+          localStorage.removeItem("access_token"); localStorage.removeItem("user");
+          window.location.assign("/login.html"); return;
+        }
         if (response.ok && data.status === "success") {
           appendBotMessage(`✅ Document **${file.name}** Indexed successfully! You can now ask questions about this document.`);
         } else {
-          appendBotMessage(`⚠ Failed to upload document: ${data.message}`);
+          appendBotMessage(`⚠ Failed to upload document: ${data.message || data.error || `HTTP ${response.status}`}`);
         }
       } catch (err) {
         console.error("File upload error:", err);
@@ -1798,10 +1799,12 @@ onDocumentReady(() => {
         });
         const data = await res.json();
 
-        if (res.ok && data.status === "success") {
+        if (res.ok && data.status === "success" && (data.image_url || data.video_url)) {
           if (loader) loader.style.display = "none";
           if (isImage && imgOutput) { imgOutput.src = data.image_url; imgOutput.style.display = "block"; }
-          else if (loader) { loader.style.display = "block"; loader.textContent = "✅ Job Completed Successfully! Pipeline output ready."; }
+          else if (loader) { loader.style.display = "block"; loader.textContent = `Video ready: ${data.video_url}`; }
+        } else if (res.ok && data.status === "success") {
+          if (loader) loader.textContent = "⚠ Provider response did not include a generated asset.";
         } else if (loader) {
           loader.textContent = "⚠ " + (data.message || data.error || "Generation is not configured.");
         }
@@ -2555,15 +2558,20 @@ document.addEventListener("click", async (e) => {
       try {
         const token = localStorage.getItem("access_token");
         if (token && token !== "null" && token !== "undefined") {
-          await fetch("/api/history", {
+          const response = await fetch("/api/history", {
             method: "DELETE",
             headers: {
               Authorization: `Bearer ${token}`,
             },
           });
+          if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
+            throw new Error(data.error || "Backend chat history was not deleted.");
+          }
         }
       } catch (err) {
-        console.error("Failed to clear backend history", err);
+        alert(err.message || "Failed to clear chat history.");
+        return;
       }
       localStorage.removeItem("isolde-conversations");
       localStorage.removeItem("isolde-active-conversation");

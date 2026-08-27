@@ -24,6 +24,14 @@ IMAGE_TYPES = {"png", "jpg", "jpeg"}
 MIME_MAP = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg"}
 
 
+def _has_valid_image_signature(path, file_type):
+    with open(path, "rb") as handle:
+        header = handle.read(12)
+    if file_type == "png":
+        return header.startswith(b"\x89PNG\r\n\x1a\n")
+    return header.startswith(b"\xff\xd8\xff")
+
+
 @upload_bp.route("/upload", methods=["POST"])
 @jwt_required()
 def upload_file():
@@ -73,6 +81,9 @@ def upload_file():
         if max_size and os.path.getsize(save_path) > max_size:
             os.remove(save_path)
             return jsonify({"error": "Image file size exceeds the configured limit."}), 413
+        if not _has_valid_image_signature(save_path, file_type):
+            os.remove(save_path)
+            return jsonify({"error": "Image content does not match the file type."}), 422
         if question:
             try:
                 with open(save_path, "rb") as image_file:

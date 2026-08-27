@@ -116,3 +116,26 @@ class OrganizationProject(db.Model):
             "access_level": self.access_level,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
+
+
+class OrganizationPolicy(db.Model):
+    __tablename__ = "organization_policies"
+
+    id = db.Column(db.Integer, primary_key=True)
+    org_id = db.Column(db.Integer, db.ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    allowed_providers = db.Column(db.Text, nullable=False, default="[]")
+    billing_enabled = db.Column(db.Boolean, nullable=False, default=True)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    def to_dict(self):
+        import json
+        try:
+            providers = json.loads(self.allowed_providers or "[]")
+        except (TypeError, ValueError):
+            providers = []
+        return {
+            "org_id": self.org_id,
+            "allowed_providers": providers,
+            "billing_enabled": self.billing_enabled,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }

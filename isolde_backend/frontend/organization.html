@@ -10,6 +10,12 @@
     <form id="member-form"><input id="member-email" type="email" placeholder="member@example.com" required>
       <select id="member-role" required></select><button type="submit">Add member</button></form>
     <h2>Tenant usage</h2><div id="tenant-usage">Usage unavailable</div>
+    <h2>Tenant policy</h2>
+    <form id="policy-form">
+      <label>Allowed AI providers <input id="policy-providers" placeholder="gemini, openai"></label>
+      <label><input id="policy-billing" type="checkbox" checked> Billing enabled</label>
+      <button type="submit">Save tenant policy</button>
+    </form>
     <h2>Share an owned project</h2>
     <form id="project-share-form"><input id="project-share-id" type="number" min="1" placeholder="Project ID" required>
       <select id="project-share-access"><option value="view">View</option><option value="edit">Edit</option></select>

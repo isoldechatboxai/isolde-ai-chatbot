@@ -4,10 +4,12 @@ function authHeaders() {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(path, {
-    ...options,
-    headers: {"Content-Type": "application/json", ...authHeaders(), ...(options.headers || {})},
-  });
+  let response;
+  try { response = await fetch(path, {
+      ...options,
+      headers: {"Content-Type": "application/json", ...authHeaders(), ...(options.headers || {})},
+    });
+  } catch (_) { throw new Error("Network request failed."); }
   const data = await response.json().catch(() => ({}));
   if (response.status === 401) {
     localStorage.removeItem("access_token");
@@ -51,6 +53,7 @@ function renderCheckout(config, subscription) {
     });
     actions.append(cancel);
   }
+  if (!config.tenant_billing_enabled) { status.textContent = "Checkout is disabled by your tenant policy."; return; }
   if (!config.checkout_available) { status.textContent = "Payment provider: Not configured"; return; }
   status.textContent = `Payment provider: ${config.provider}`;
   for (const plan of config.plans || []) {

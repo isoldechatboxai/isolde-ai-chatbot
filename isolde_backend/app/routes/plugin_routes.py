@@ -17,10 +17,11 @@ def list_registered_plugins():
             "status": "success",
             "plugins": plugin_manager.list_plugins()
         }), 200
-    except Exception as e:
+    except Exception:
+        current_app.logger.exception("Plugin registry listing failed.")
         return jsonify({
             "status": "error",
-            "error": str(e)
+            "error": "Plugin registry is unavailable."
         }), 500
 
 
@@ -40,10 +41,11 @@ def list_installed_plugins():
             "installed_plugins": plugins
         }), 200
 
-    except Exception as e:
+    except Exception:
+        current_app.logger.exception("Installed plugin listing failed.")
         return jsonify({
             "status": "error",
-            "error": str(e)
+            "error": "Installed plugins are unavailable."
         }), 500
 
 
@@ -87,10 +89,11 @@ def install_plugin():
             "error": "Persistent plugin installation is not configured."
         }), 501
 
-    except Exception as e:
+    except Exception:
+        current_app.logger.exception("Plugin installation lookup failed.")
         return jsonify({
             "status": "error",
-            "error": str(e)
+            "error": "Plugin installation is unavailable."
         }), 500
 
 
@@ -116,10 +119,11 @@ def load_plugins():
             "loaded": count
         }), 200
 
-    except Exception as e:
+    except Exception:
+        current_app.logger.exception("Runtime plugin loading failed.")
         return jsonify({
             "status": "error",
-            "error": str(e)
+            "error": "Runtime plugin loading failed."
         }), 500
 
 
@@ -166,10 +170,11 @@ def execute_plugin(plugin_name):
             "error": str(e)
         }), 404
 
-    except Exception as e:
+    except Exception:
+        current_app.logger.exception("Runtime plugin execution failed.")
         return jsonify({
             "status": "error",
-            "error": str(e)
+            "error": "Runtime plugin execution failed."
         }), 500
 
 
@@ -195,8 +200,9 @@ def unregister_plugin(plugin_name):
             "message": f"Plugin '{plugin_name}' unregistered."
         }), 200
 
-    except Exception as e:
+    except Exception:
+        current_app.logger.exception("Runtime plugin removal failed.")
         return jsonify({
             "status": "error",
-            "error": str(e)
+            "error": "Runtime plugin removal failed."
         }), 500

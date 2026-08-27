@@ -1,4 +1,5 @@
 import threading
+import pytest
 
 from flask_jwt_extended import create_access_token
 
@@ -52,7 +53,7 @@ def test_stop_generation_requires_exact_owner(client, db):
             headers=_auth_header(attacker.id),
             json={"generation_id": generation_id},
         )
-        assert response.status_code == 200
+        assert response.status_code == 404
         assert response.get_json()["stopped"] is False
         assert stop_event.is_set() is False
 
@@ -65,6 +66,13 @@ def test_stop_generation_requires_exact_owner(client, db):
         assert stop_event.is_set() is True
     finally:
         chat_routes._unregister_generation(generation_id)
+
+
+def test_generation_and_rag_require_authenticated_owner(monkeypatch):
+    with pytest.raises(ValueError):
+        chat_routes._register_generation("anonymous", threading.Event(), None, None)
+    monkeypatch.setattr(rag_service, "_load_index", lambda user_id=None: pytest.fail("must not load"))
+    assert rag_service.search("question", user_id=None) == []
 
 
 def test_authenticated_rag_search_excludes_unowned_and_other_tenant(monkeypatch):

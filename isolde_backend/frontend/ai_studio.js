@@ -4,14 +4,16 @@ function authHeaders() {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(path, { ...options, headers: { ...authHeaders(), ...(options.headers || {}) } });
+  let response;
+  try { response = await fetch(path, { ...options, headers: { ...authHeaders(), ...(options.headers || {}) } }); }
+  catch (_) { throw new Error("Network request failed."); }
   const data = await response.json().catch(() => ({}));
   if (response.status === 401) {
     localStorage.removeItem("access_token");
     window.location.replace("/login.html");
     throw new Error("Session expired.");
   }
-  if (!response.ok) throw new Error(data.error || "Request failed.");
+  if (!response.ok) throw new Error(data.error || `Request failed (${response.status}).`);
   return data;
 }
 

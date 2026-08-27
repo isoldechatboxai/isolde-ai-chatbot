@@ -1,7 +1,6 @@
 # app/workers/email_worker.py
 
 import time
-import threading
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -46,7 +45,10 @@ def _send_email_task(subject: str, recipient: str, body: str, html_body: str, sm
         msg.attach(MIMEText(html_body, 'html'))
 
     # Connect to Mail Server and Send
-    with smtplib.SMTP(smtp_config['MAIL_SERVER'], smtp_config['MAIL_PORT']) as server:
+    with smtplib.SMTP(
+        smtp_config['MAIL_SERVER'], smtp_config['MAIL_PORT'],
+        timeout=smtp_config.get('MAIL_TIMEOUT_SECONDS', 10),
+    ) as server:
         if smtp_config.get('MAIL_USE_TLS'):
             server.starttls()
             
@@ -60,33 +62,30 @@ def _send_email_task(subject: str, recipient: str, body: str, html_body: str, sm
 
 def start_email_worker(app, subject: str, recipient: str, body: str, html_body: str = None):
     """
-    Kicks off the long-running email process in a background thread.
+    Deliver an authentication email synchronously with bounded retries.
+
+    In-process daemon threads can be terminated during worker recycling and
+    silently lose verification/reset messages. Callers receive a truthful
+    success value and can surface delivery failure without exposing details.
     """
-    def background_task():
-        with app.app_context():
-            app.logger.info(f"[WORKER START] Sending email to: {recipient}")
-            try:
-                # Fetching SMTP settings securely from Flask Config (.env)
-                smtp_config = {
-                    'MAIL_SERVER': app.config.get('MAIL_SERVER', 'smtp.gmail.com'),
-                    'MAIL_PORT': app.config.get('MAIL_PORT', 587),
-                    'MAIL_USE_TLS': app.config.get('MAIL_USE_TLS', True),
-                    'MAIL_USERNAME': app.config.get('MAIL_USERNAME'),
-                    'MAIL_PASSWORD': app.config.get('MAIL_PASSWORD'),
-                    'MAIL_DEFAULT_SENDER': app.config.get('MAIL_DEFAULT_SENDER', 'admin@isolde.ai')
-                }
-                
-                if not smtp_config['MAIL_USERNAME'] or not smtp_config['MAIL_PASSWORD']:
-                    app.logger.error("[WORKER FAILED] SMTP credentials are not configured; email was not sent.")
-                    return
-
-                _send_email_task(subject, recipient, body, html_body, smtp_config)
-                app.logger.info(f"[WORKER SUCCESS] Email processing completed for: {recipient}")
-                
-            except Exception as e:
-                app.logger.error(f"[WORKER FAILED] Email task failed for {recipient} after retries. Error: {str(e)}")
-
-    # Initialize and start a daemon thread
-    thread = threading.Thread(target=background_task)
-    thread.daemon = True
-    thread.start()
+    with app.app_context():
+        smtp_config = {
+            'MAIL_SERVER': app.config.get('MAIL_SERVER'),
+            'MAIL_PORT': app.config.get('MAIL_PORT', 587),
+            'MAIL_USE_TLS': app.config.get('MAIL_USE_TLS', True),
+            'MAIL_USERNAME': app.config.get('MAIL_USERNAME'),
+            'MAIL_PASSWORD': app.config.get('MAIL_PASSWORD'),
+            'MAIL_DEFAULT_SENDER': app.config.get('MAIL_DEFAULT_SENDER'),
+            'MAIL_TIMEOUT_SECONDS': app.config.get('MAIL_TIMEOUT_SECONDS', 10),
+        }
+        if not all((smtp_config['MAIL_SERVER'], smtp_config['MAIL_USERNAME'],
+                    smtp_config['MAIL_PASSWORD'], smtp_config['MAIL_DEFAULT_SENDER'])):
+            app.logger.error("Authentication email delivery is not configured.")
+            return False
+        try:
+            _send_email_task(subject, recipient, body, html_body, smtp_config)
+            app.logger.info("Authentication email delivered.")
+            return True
+        except Exception:
+            app.logger.exception("Authentication email delivery failed after bounded retries.")
+            return False

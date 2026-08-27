@@ -6,6 +6,7 @@ from app.models.billing_model import Subscription, CreditBalance, Invoice, Payme
 from app.services.payment_service import get_payment_provider, PaymentNotConfigured
 from sqlalchemy.exc import IntegrityError
 from app.utils.logger import log_event
+from app.services.organization_policy_service import effective_policy_for_user
 
 billing_bp = Blueprint("billing_bp", __name__)
 
@@ -32,8 +33,9 @@ def get_subscription():
             db.session.add(sub)
             db.session.commit()
         return jsonify({"subscription": sub.to_dict()}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        current_app.logger.exception("Subscription lookup failed.")
+        return jsonify({"error": "Subscription data is unavailable."}), 500
 
 
 @billing_bp.route("/billing/subscription", methods=["POST"])
@@ -54,8 +56,9 @@ def get_credits():
         user_id = str(get_jwt_identity())
         balance = _get_or_create_balance(user_id)
         return jsonify({"user_id": user_id, "credits": balance.credits}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        current_app.logger.exception("Credit balance lookup failed.")
+        return jsonify({"error": "Credit data is unavailable."}), 500
 
 
 @billing_bp.route("/billing/credits/deduct", methods=["POST"])
@@ -73,8 +76,9 @@ def list_invoices():
         user_id = str(get_jwt_identity())
         invoices = Invoice.query.filter_by(user_id=user_id).order_by(Invoice.created_at.desc()).all()
         return jsonify({"invoices": [i.to_dict() for i in invoices]}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        current_app.logger.exception("Invoice lookup failed.")
+        return jsonify({"error": "Invoice data is unavailable."}), 500
 
 
 @billing_bp.route("/billing/invoices", methods=["POST"])
@@ -90,6 +94,7 @@ def generate_invoice():
 @billing_bp.route("/billing/config", methods=["GET"])
 @jwt_required()
 def billing_config():
+    policy = effective_policy_for_user(get_jwt_identity())
     configured = bool(
         current_app.config.get("PAYMENT_PROVIDER") == "stripe"
         and current_app.config.get("STRIPE_SECRET_KEY")
@@ -97,7 +102,8 @@ def billing_config():
     )
     return jsonify({
         "provider": "stripe" if configured else "Not configured",
-        "checkout_available": configured,
+        "checkout_available": configured and policy["billing_enabled"],
+        "tenant_billing_enabled": policy["billing_enabled"],
         "plans": [name for name in ("Pro", "Enterprise") if current_app.config.get(f"STRIPE_PRICE_{name.upper()}")],
     }), 200
 
@@ -108,6 +114,8 @@ def create_checkout():
     plan = str((request.get_json(silent=True) or {}).get("plan") or "")
     if plan not in {"Pro", "Enterprise"}:
         return jsonify({"error": "Unknown plan."}), 400
+    if not effective_policy_for_user(get_jwt_identity())["billing_enabled"]:
+        return jsonify({"error": "Billing is disabled by tenant policy."}), 403
     try:
         checkout = get_payment_provider().create_checkout(str(get_jwt_identity()), plan)
         return jsonify(checkout), 201

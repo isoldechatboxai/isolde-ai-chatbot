@@ -3,6 +3,7 @@ from flask_jwt_extended import decode_token
 from app.models.auth_model import AuthSession, AuthToken, OAuthAccount, token_digest
 from app.models.user import User
 from app.services.oauth_service import OAuthIdentity
+from app.workers.email_worker import start_email_worker
 
 
 def _register(client, email="auth@example.com"):
@@ -29,6 +30,29 @@ def test_password_hash_and_single_use_email_verification(client, db):
     assert user.is_verified is True
 
 
+def test_auth_email_delivery_is_bounded_and_reports_result(app, monkeypatch):
+    app.config.update({
+        "MAIL_SERVER": "smtp.example.test", "MAIL_PORT": 587,
+        "MAIL_USE_TLS": True, "MAIL_USERNAME": "mailer",
+        "MAIL_PASSWORD": "secret", "MAIL_DEFAULT_SENDER": "noreply@example.test",
+        "MAIL_TIMEOUT_SECONDS": 7,
+    })
+    captured = {}
+
+    def fake_send(subject, recipient, body, html_body, smtp_config):
+        captured.update(smtp_config)
+
+    monkeypatch.setattr("app.workers.email_worker._send_email_task", fake_send)
+    assert start_email_worker(app, "Verify", "user@example.test", "body") is True
+    assert captured["MAIL_TIMEOUT_SECONDS"] == 7
+
+    def failed_send(*args, **kwargs):
+        raise OSError("unavailable")
+
+    monkeypatch.setattr("app.workers.email_worker._send_email_task", failed_send)
+    assert start_email_worker(app, "Verify", "user@example.test", "body") is False
+
+
 def test_logout_revokes_current_session(client):
     _register(client)
     login = _login(client).get_json()
@@ -47,8 +71,9 @@ def test_logout_all_revokes_every_database_session(client):
     assert all(not item.is_valid for item in AuthSession.query.all())
 
 
-def test_password_reset_is_hashed_single_use_and_revokes_sessions(client):
+def test_password_reset_is_hashed_single_use_and_revokes_sessions(client, db):
     _register(client)
+    user = User.query.filter_by(email="auth@example.com").one()
     access_token = _login(client).get_json()["access_token"]
     reset = client.post("/api/forgot-password", json={"email": "auth@example.com"}).get_json()["reset_token"]
     record = AuthToken.query.filter_by(token_hash=token_digest(reset)).one()
@@ -56,6 +81,8 @@ def test_password_reset_is_hashed_single_use_and_revokes_sessions(client):
 
     response = client.post("/api/reset-password", json={"token": reset, "new_password": "NewStrong456!"})
     assert response.status_code == 200
+    db.session.refresh(user)
+    assert user.is_verified is True
     assert client.post("/api/reset-password", json={"token": reset, "new_password": "Another789!"}).status_code == 400
     assert client.get("/api/sessions", headers={"Authorization": f"Bearer {access_token}"}).status_code == 401
     assert _login(client, password="NewStrong456!").status_code == 200

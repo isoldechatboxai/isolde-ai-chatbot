@@ -335,6 +335,18 @@ class ProviderManager:
         for p in priority:
             if p not in ordered:
                 ordered.append(p)
+        try:
+            from flask import has_request_context
+            from flask_jwt_extended import get_jwt_identity
+            from app.services.organization_policy_service import effective_policy_for_user
+            identity = get_jwt_identity() if has_request_context() else None
+            if identity:
+                allowed = effective_policy_for_user(identity)["allowed_providers"]
+                if allowed is not None:
+                    ordered = [provider for provider in ordered if provider in allowed]
+        except Exception:
+            _get_logger().exception("Tenant provider policy resolution failed.")
+            return []
         return ordered
 
     def _get_provider_priority(self) -> List[str]:

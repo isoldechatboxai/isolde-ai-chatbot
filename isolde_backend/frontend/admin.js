@@ -1,13 +1,16 @@
 const tokenKey = "admin_access_token";
+const supportedProviders = ["gemini", "groq", "openai", "claude", "openrouter", "deepseek", "mistral"];
 
 async function adminApi(path, options = {}) {
   const token = localStorage.getItem(tokenKey);
-  const response = await fetch(path, {
-    ...options,
-    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(options.headers || {}) }
-  });
+  let response;
+  try { response = await fetch(path, {
+      ...options,
+      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(options.headers || {}) }
+    });
+  } catch (_) { throw new Error("Network request failed."); }
   const data = await response.json().catch(() => ({}));
-  if (response.status === 401 || response.status === 403) {
+  if (response.status === 401) {
     localStorage.removeItem(tokenKey);
     document.getElementById("admin-dashboard").hidden = true;
     document.getElementById("admin-login").hidden = false;
@@ -34,7 +37,11 @@ async function loadDashboard() {
   const body = document.getElementById("admin-users");
   body.replaceChildren(...(users.users || []).map((user) => {
     const row = document.createElement("tr");
-    [user.name, user.email, user.role, user.status].forEach((value) => { const cell = document.createElement("td"); cell.textContent = value || "—"; row.appendChild(cell); });
+    [user.name, user.email, user.role].forEach((value) => { const cell = document.createElement("td"); cell.textContent = value || "—"; row.appendChild(cell); });
+    const statusCell = document.createElement("td"); const status = document.createElement("select");
+    for (const value of ["Active", "Suspended", "Disabled"]) { const option = document.createElement("option"); option.value = value; option.textContent = value; option.selected = value === user.status; status.append(option); }
+    status.addEventListener("change", async () => { try { await adminApi(`/api/admin/users/${user.id}`, {method: "PATCH", body: JSON.stringify({status: status.value})}); } catch (error) { document.getElementById("admin-message").textContent = error.message; await loadDashboard(); } });
+    statusCell.append(status); row.append(statusCell);
     return row;
   }));
   document.getElementById("admin-empty").hidden = (users.users || []).length !== 0;
@@ -42,8 +49,13 @@ async function loadDashboard() {
     const row = document.createElement("p"); row.append(document.createTextNode(`${tenant.name} — ${tenant.member_count} members — `));
     const status = document.createElement("select");
     for (const value of ["Active", "Suspended", "Archived"]) { const option = document.createElement("option"); option.value = value; option.textContent = value; option.selected = value === tenant.status; status.append(option); }
-    status.addEventListener("change", () => adminApi(`/api/admin/tenants/${tenant.id}`, {method: "PATCH", body: JSON.stringify({status: status.value})}).catch(error => { document.getElementById("admin-message").textContent = error.message; }));
-    row.append(status); return row;
+    status.addEventListener("change", () => adminApi(`/api/admin/tenants/${tenant.id}`, {method: "PATCH", body: JSON.stringify({status: status.value})}).catch(async error => { document.getElementById("admin-message").textContent = error.message; await loadDashboard(); }));
+    const policy = tenant.policy || {allowed_providers: [], billing_enabled: true};
+    const providers = document.createElement("input"); providers.value = (policy.allowed_providers?.length ? policy.allowed_providers : supportedProviders).join(", "); providers.placeholder = "gemini, openai";
+    const billingEnabled = document.createElement("input"); billingEnabled.type = "checkbox"; billingEnabled.checked = policy.billing_enabled;
+    const save = document.createElement("button"); save.type = "button"; save.textContent = "Save policy";
+    save.addEventListener("click", async () => { try { await adminApi(`/api/admin/tenants/${tenant.id}/policy`, {method: "PATCH", body: JSON.stringify({allowed_providers: providers.value.split(",").map(value => value.trim()).filter(Boolean), billing_enabled: billingEnabled.checked})}); document.getElementById("admin-message").textContent = "Tenant policy saved."; } catch (error) { document.getElementById("admin-message").textContent = error.message; } });
+    row.append(status, document.createTextNode(" Providers: "), providers, document.createTextNode(" Billing: "), billingEnabled, save); return row;
   }));
   renderDefinitionList("admin-providers", providers.providers || {});
   renderDefinitionList("admin-billing", billing.billing || {});

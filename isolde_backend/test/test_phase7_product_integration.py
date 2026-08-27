@@ -1,10 +1,11 @@
-from flask_jwt_extended import decode_token
+from flask_jwt_extended import create_access_token, decode_token
 
 from app.models.auth_model import AuthSession
 from app.models.user import User
-from app.models.collaboration_model import Organization
+from app.models.collaboration_model import Organization, OrganizationPolicy
 from app.models.user import Setting
 from app.services.provider_router import ProviderManager
+from app.models.marketplace_model import Developer, Plugin, PluginInstallation
 
 
 def test_admin_login_creates_revocable_database_session(client, db):
@@ -43,6 +44,13 @@ def test_admin_login_creates_revocable_database_session(client, db):
     assert updated.status_code == 200
     assert updated.get_json()["tenant"]["status"] == "Suspended"
 
+    policy = client.patch(
+        f"/api/admin/tenants/{tenant.id}/policy", headers=headers,
+        json={"allowed_providers": ["gemini"], "billing_enabled": False},
+    )
+    assert policy.status_code == 200
+    assert OrganizationPolicy.query.filter_by(org_id=tenant.id).one().billing_enabled is False
+
     saved = client.post(
         "/api/admin/settings", headers=headers,
         json={"key": "openai_api_key", "value": "provider-secret-value"},
@@ -54,6 +62,30 @@ def test_admin_login_creates_revocable_database_session(client, db):
     assert ProviderManager()._get_setting("openai_api_key") == "provider-secret-value"
     assert client.post("/api/logout", headers=headers).status_code == 200
     assert client.get("/api/admin/dashboard", headers=headers).status_code == 401
+
+
+def test_admin_user_status_mutation_is_validated_and_returns_payload(client, db):
+    admin = User(name="Admin", email="status-admin@example.com", role="Admin", status="Active")
+    target = User(name="Target", email="status-target@example.com", role="Client", status="Active")
+    admin.set_password("StrongAdminPass123!")
+    target.set_password("StrongTargetPass123!")
+    db.session.add_all([admin, target])
+    db.session.commit()
+    token = client.post("/api/admin/login", json={
+        "email": admin.email, "password": "StrongAdminPass123!",
+    }).get_json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    response = client.patch(
+        f"/api/admin/users/{target.id}", headers=headers, json={"status": "Suspended"},
+    )
+    assert response.status_code == 200
+    assert response.get_json()["user"]["status"] == "Suspended"
+    assert client.patch(
+        f"/api/admin/users/{target.id}", headers=headers, json={"status": "anything"},
+    ).status_code == 400
+    assert client.patch(
+        f"/api/admin/users/{admin.id}", headers=headers, json={"status": "Suspended"},
+    ).status_code == 409
 
 
 def test_phase7_pages_are_real_api_clients_without_fake_paid_actions(client):
@@ -83,3 +115,25 @@ def test_frontend_scripts_use_server_authoritative_product_endpoints(client):
     assert b"/api/admin/login" in admin_script.data
     assert b"/api/admin/dashboard" in admin_script.data
     assert b"/api/admin/users" in admin_script.data
+
+    marketplace_script = client.get("/marketplace.js")
+    assert marketplace_script.status_code == 200
+    assert b"card.innerHTML" not in marketplace_script.data
+    assert b"if (!response.ok)" in marketplace_script.data
+
+
+def test_marketplace_installation_preserves_string_user_ownership(client, db):
+    user = User(name="Marketplace User", email="marketplace-owner@example.com", status="Active")
+    user.set_password("StrongPass123!")
+    db.session.add(user)
+    db.session.flush()
+    developer = Developer(user_id=user.id, developer_name="Developer")
+    db.session.add(developer)
+    db.session.flush()
+    plugin = Plugin(developer_id=developer.id, name="Real Plugin", plugin_key="real-plugin")
+    db.session.add(plugin)
+    db.session.commit()
+    headers = {"Authorization": f"Bearer {create_access_token(identity=user.id)}"}
+    response = client.post(f"/api/marketplace/install/{plugin.id}", headers=headers)
+    assert response.status_code == 201
+    assert PluginInstallation.query.filter_by(plugin_id=plugin.id, user_id=user.id).one()

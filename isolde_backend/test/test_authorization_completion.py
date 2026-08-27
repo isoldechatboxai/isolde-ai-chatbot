@@ -1,6 +1,6 @@
 from flask_jwt_extended import create_access_token
 
-from app.models.collaboration_model import Organization, OrganizationMember, OrganizationRole
+from app.models.collaboration_model import Organization, OrganizationMember, OrganizationRole, OrganizationPolicy
 from app.models.productivity_model import Task
 from app.models.user import User
 from app.models.workspace_model import Workspace, Project
@@ -63,6 +63,10 @@ def test_organization_membership_and_admin_permissions_are_enforced(client, db):
     assert client.post(
         f"/api/organizations/{org.id}/teams", headers=_headers(member), json={"name": "Unauthorized"}
     ).status_code == 404
+
+    org.status = "Suspended"
+    db.session.commit()
+    assert client.get(f"/api/organizations/{org.id}/members", headers=_headers(member)).status_code == 404
     assert client.post(
         f"/api/organizations/{org.id}/invite", headers=_headers(attacker), json={"email": "victim@example.com"}
     ).status_code == 404
@@ -113,6 +117,59 @@ def test_master_can_manage_members_but_subaccount_cannot_escalate(client, db):
     ).status_code == 200
 
 
+def test_delegated_manager_cannot_grant_stronger_role(client, db):
+    owner = _user(db, "role-owner@example.com")
+    manager_user = _user(db, "role-manager@example.com")
+    target = _user(db, "role-target@example.com")
+    org = Organization(name="Role Boundaries", owner_id=owner.id)
+    db.session.add(org)
+    db.session.flush()
+    manager = OrganizationRole(org_id=org.id, name="Manager", permissions='["manage_users"]')
+    administrator = OrganizationRole(org_id=org.id, name="Administrator", permissions='["all"]')
+    db.session.add_all([manager, administrator])
+    db.session.flush()
+    db.session.add(OrganizationMember(org_id=org.id, user_id=manager_user.id, role_id=manager.id))
+    db.session.commit()
+    response = client.post(
+        f"/api/organizations/{org.id}/members", headers=_headers(manager_user),
+        json={"email": target.email, "role_id": administrator.id},
+    )
+    assert response.status_code == 403
+
+
+def test_tenant_provider_and_billing_policy_is_owner_scoped_and_enforced(client, db):
+    owner = _user(db, "policy-owner@example.com")
+    member = _user(db, "policy-member@example.com")
+    outsider = _user(db, "policy-outsider@example.com")
+    org = Organization(name="Policy Org", owner_id=owner.id)
+    db.session.add(org)
+    db.session.flush()
+    role = OrganizationRole(org_id=org.id, name="Viewer", permissions="[]")
+    db.session.add(role)
+    db.session.flush()
+    db.session.add(OrganizationMember(org_id=org.id, user_id=member.id, role_id=role.id))
+    db.session.commit()
+
+    updated = client.patch(
+        f"/api/organizations/{org.id}/policy", headers=_headers(owner),
+        json={"allowed_providers": ["openai"], "billing_enabled": False},
+    )
+    assert updated.status_code == 200
+    assert updated.get_json()["policy"]["allowed_providers"] == ["openai"]
+    assert client.get(f"/api/organizations/{org.id}/policy", headers=_headers(member)).status_code == 200
+    assert client.patch(
+        f"/api/organizations/{org.id}/policy", headers=_headers(member),
+        json={"allowed_providers": ["gemini"]},
+    ).status_code == 403
+    assert client.get(f"/api/organizations/{org.id}/policy", headers=_headers(outsider)).status_code == 404
+    billing = client.get("/api/billing/config", headers=_headers(member))
+    assert billing.status_code == 200
+    assert billing.get_json()["tenant_billing_enabled"] is False
+    assert client.post(
+        "/api/billing/checkout", headers=_headers(member), json={"plan": "Pro"}
+    ).status_code == 403
+
+
 def test_organization_project_sharing_enforces_tenant_and_role_permissions(client, db):
     owner = _user(db, "project-master@example.com")
     viewer_user = _user(db, "project-viewer@example.com")
@@ -156,6 +213,18 @@ def test_organization_project_sharing_enforces_tenant_and_role_permissions(clien
 def test_saas_routes_no_longer_share_anonymous_identity(client):
     assert client.get("/api/saas/apikeys").status_code == 401
     assert client.post("/api/saas/apikeys", json={"key_name": "anonymous"}).status_code == 401
+
+
+def test_user_data_and_generation_routes_reject_anonymous_requests(client):
+    assert client.post("/api/chat", json={"message": "anonymous"}).status_code == 401
+    assert client.post("/api/chat/stream", json={"message": "anonymous"}).status_code == 401
+    assert client.post("/api/chat/stop", json={"generation_id": "unknown"}).status_code == 401
+    assert client.get("/api/history").status_code == 401
+    assert client.get("/api/memory/list").status_code == 401
+    assert client.post(
+        "/api/feedback/correction",
+        json={"question": "q", "bot_answer": "a", "is_correct": True},
+    ).status_code == 401
 
 
 def test_normal_user_cannot_execute_or_load_host_plugins(client, db):

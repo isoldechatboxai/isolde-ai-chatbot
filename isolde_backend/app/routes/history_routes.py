@@ -60,7 +60,7 @@ def _get_owned_conversation(conversation_id, user_id):
     methods=["GET"],
     strict_slashes=False,
 )
-@jwt_required(optional=True)
+@jwt_required()
 def get_history():
     user_id = _get_authenticated_user_id()
 
@@ -128,7 +128,7 @@ def get_history():
     methods=["GET"],
     strict_slashes=False,
 )
-@jwt_required(optional=True)
+@jwt_required()
 def get_conversation(conversation_id):
     user_id = _get_authenticated_user_id()
 
@@ -177,7 +177,7 @@ def get_conversation(conversation_id):
     methods=["PATCH"],
     strict_slashes=False,
 )
-@jwt_required(optional=True)
+@jwt_required()
 def update_conversation(conversation_id):
     user_id = _get_authenticated_user_id()
 
@@ -264,7 +264,7 @@ def update_conversation(conversation_id):
     methods=["DELETE"],
     strict_slashes=False,
 )
-@jwt_required(optional=True)
+@jwt_required()
 def delete_conversation(conversation_id):
     user_id = _get_authenticated_user_id()
 
@@ -378,7 +378,7 @@ def delete_all_history():
     methods=["GET"],
     strict_slashes=False,
 )
-@jwt_required(optional=True)
+@jwt_required()
 def export_conversation(conversation_id):
     user_id = _get_authenticated_user_id()
 

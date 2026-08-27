@@ -292,6 +292,7 @@ class Config:
     MAIL_SERVER = os.getenv("MAIL_SERVER", "").strip()
     MAIL_PORT = _env_int("MAIL_PORT", 587)
     MAIL_USE_TLS = _env_bool("MAIL_USE_TLS", default=True)
+    MAIL_TIMEOUT_SECONDS = _env_int("MAIL_TIMEOUT_SECONDS", 10)
     MAIL_USERNAME = os.getenv("MAIL_USERNAME", "").strip()
     MAIL_PASSWORD = os.getenv("MAIL_PASSWORD", "").strip()
     MAIL_DEFAULT_SENDER = os.getenv("MAIL_DEFAULT_SENDER", "").strip()

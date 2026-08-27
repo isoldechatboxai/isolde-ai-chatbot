@@ -234,9 +234,6 @@
                 <span class="btn-text">Login</span>
             </button>
 
-            <button type="button" class="guest-btn" id="guest-btn">
-                Continue as Guest
-            </button>
             <div id="oauth-options" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px;"></div>
         </form>
 
@@ -336,11 +333,6 @@
                     container.appendChild(button);
                 });
             }).catch(() => {});
-
-            document.getElementById('guest-btn').addEventListener('click', () => {
-                localStorage.removeItem('access_token');
-                window.location.href = "/";
-            });
 
             // Modal Logic
             document.getElementById('open-forgot-modal').addEventListener('click', (e) => {

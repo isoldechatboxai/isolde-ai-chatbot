@@ -19,11 +19,19 @@ from app.models.conversation import Conversation, Message
 from app.models.feedback import Feedback
 from app.models.auth_model import AuthSession
 from app.models.billing_model import CreditBalance, Invoice, Subscription
-from app.models.collaboration_model import Organization, OrganizationMember
+from app.models.collaboration_model import Organization, OrganizationMember, OrganizationPolicy
+from app.services.organization_policy_service import SUPPORTED_PROVIDERS
+from app.utils.logger import log_event
+from app.utils.validators import is_valid_email
 
 admin_bp = Blueprint("admin", __name__)
 
 ADMIN_ROLES = ("Admin", "Super Admin")
+SECRET_SETTING_SUFFIXES = ("_api_key", "_secret", "_token", "_password", "_private_key", "_credential")
+
+
+def _is_secret_setting(key):
+    return str(key).strip().lower().endswith(SECRET_SETTING_SUFFIXES)
 
 
 # ---------------------------------------------------------------------------
@@ -128,6 +136,7 @@ def admin_tenants(admin_user):
     return jsonify({"status": "success", "tenants": [{
         **org.to_dict(),
         "member_count": OrganizationMember.query.filter_by(org_id=org.id).count(),
+        "policy": (OrganizationPolicy.query.filter_by(org_id=org.id).first() or OrganizationPolicy(org_id=org.id)).to_dict(),
     } for org in organizations]}), 200
 
 
@@ -155,14 +164,15 @@ def admin_subscriptions(admin_user):
 @jwt_required()
 @admin_required
 def admin_provider_status(admin_user):
-    providers = {
-        "gemini": bool(current_app.config.get("GEMINI_API_KEY") and current_app.config.get("GEMINI_MODEL")),
-        "openai": bool(current_app.config.get("OPENAI_API_KEY")),
-        "claude": bool(current_app.config.get("ANTHROPIC_API_KEY")),
-        "openrouter": bool(current_app.config.get("OPENROUTER_API_KEY")),
-        "deepseek": bool(current_app.config.get("DEEPSEEK_API_KEY")),
-        "mistral": bool(current_app.config.get("MISTRAL_API_KEY")),
-    }
+    from app.services.provider_router import ProviderManager
+    manager = ProviderManager()
+    providers = {}
+    for name in sorted(SUPPORTED_PROVIDERS):
+        try:
+            manager.get_api_key_for_provider(name)
+            providers[name] = True
+        except RuntimeError:
+            providers[name] = False
     return jsonify({"status": "success", "providers": {
         name: "Configured" if configured else "Not configured"
         for name, configured in providers.items()
@@ -196,7 +206,37 @@ def admin_update_tenant(admin_user, org_id):
         return jsonify({"status": "error", "message": "Invalid tenant status."}), 400
     organization.status = status
     db.session.commit()
+    log_event(current_app, "ADMIN_TENANT_STATUS", f"tenant={org_id} status={status}", admin_user.id)
     return jsonify({"status": "success", "tenant": organization.to_dict()}), 200
+
+
+@admin_bp.route("/admin/tenants/<int:org_id>/policy", methods=["PATCH"], strict_slashes=False)
+@jwt_required()
+@admin_required
+def admin_update_tenant_policy(admin_user, org_id):
+    if not db.session.get(Organization, org_id):
+        return jsonify({"status": "error", "message": "Tenant not found."}), 404
+    policy = OrganizationPolicy.query.filter_by(org_id=org_id).first()
+    if not policy:
+        policy = OrganizationPolicy(org_id=org_id)
+        db.session.add(policy)
+    data = request.get_json(silent=True) or {}
+    if "allowed_providers" in data:
+        providers = data["allowed_providers"]
+        if not isinstance(providers, list) or not providers:
+            return jsonify({"status": "error", "message": "At least one allowed provider is required."}), 400
+        normalized = sorted({str(item).strip().lower() for item in providers})
+        if not set(normalized).issubset(SUPPORTED_PROVIDERS):
+            return jsonify({"status": "error", "message": "Unsupported provider in policy."}), 400
+        import json
+        policy.allowed_providers = json.dumps(normalized)
+    if "billing_enabled" in data:
+        if not isinstance(data["billing_enabled"], bool):
+            return jsonify({"status": "error", "message": "billing_enabled must be a boolean."}), 400
+        policy.billing_enabled = data["billing_enabled"]
+    db.session.commit()
+    log_event(current_app, "ADMIN_TENANT_POLICY", f"tenant={org_id}", admin_user.id)
+    return jsonify({"status": "success", "policy": policy.to_dict()}), 200
 
 
 @admin_bp.route("/admin/billing/subscriptions/<user_id>/cancel", methods=["POST"], strict_slashes=False)
@@ -260,15 +300,22 @@ def list_users(admin_user):
 @admin_required
 def create_user(admin_user):
     data = request.get_json(silent=True) or {}
-    name = (data.get("name") or "").strip()
-    email = (data.get("email") or "").strip().lower()
+    name = str(data.get("name") or "").strip()
+    email = str(data.get("email") or "").strip().lower()
 
-    if not name or not email:
-        return jsonify({"status": "error", "message": "Name and email are required."}), 400
+    if not name or not is_valid_email(email):
+        return jsonify({"status": "error", "message": "A name and valid email are required."}), 400
 
     existing = User.query.filter_by(email=email).first()
     if existing:
         return jsonify({"status": "error", "message": "A user with this email already exists."}), 400
+
+    if not all(current_app.config.get(key) for key in (
+        "MAIL_SERVER", "MAIL_USERNAME", "MAIL_PASSWORD", "MAIL_DEFAULT_SENDER"
+    )):
+        return jsonify({
+            "status": "error", "message": "User invitations require configured email delivery."
+        }), 503
 
     temp_password = ''.join(
         secrets.choice(string.ascii_letters + string.digits) for _ in range(16)
@@ -278,7 +325,13 @@ def create_user(admin_user):
         user = User(name=name, email=email)
         user.set_password(temp_password)
         db.session.add(user)
+        db.session.flush()
+        from app.routes.auth_routes import _deliver_auth_email, _issue_user_token
+        reset_token = _issue_user_token(
+            user, "password_reset", current_app.config["PASSWORD_RESET_TOKEN_MINUTES"]
+        )
         db.session.commit()
+        _deliver_auth_email(user.email, "Set your Isolde password", "/login.html", reset_token)
     except Exception as e:
         db.session.rollback()
         current_app.logger.error(f"Admin user create error: {e}")
@@ -286,9 +339,8 @@ def create_user(admin_user):
 
     return jsonify({
         "status": "success",
-        "message": "User created.",
+        "message": "User created. Password setup instructions were issued by email.",
         "user": user.to_dict(),
-        "temporary_password": temp_password,
     }), 201
 
 
@@ -317,6 +369,9 @@ def update_user(admin_user, user_id):
         return jsonify({"status": "error", "message": "User not found."}), 404
     data = request.get_json(silent=True) or {}
 
+    if user.role in ADMIN_ROLES and admin_user.role != "Super Admin" and user.id != admin_user.id:
+        return jsonify({"status": "error", "message": "Only Super Admin can modify administrator accounts."}), 403
+
     try:
         if "role" in data:
             if admin_user.role != "Super Admin":
@@ -334,12 +389,17 @@ def update_user(admin_user, user_id):
             user.role = data["role"]
 
         if "status" in data:
+            if data["status"] not in {"Active", "Suspended", "Disabled"}:
+                return jsonify({"status": "error", "message": "Invalid account status."}), 400
+            if user.id == admin_user.id and data["status"] != "Active":
+                return jsonify({"status": "error", "message": "You cannot suspend your own account."}), 409
             user.status = data["status"]
 
         if "name" in data:
             user.name = data["name"]
 
         db.session.commit()
+        log_event(current_app, "ADMIN_USER_UPDATE", f"target={user.id}", admin_user.id)
 
     except Exception as e:
         db.session.rollback()
@@ -348,6 +408,8 @@ def update_user(admin_user, user_id):
             "status": "error",
             "message": "Failed to update user."
         }), 500
+
+    return jsonify({"status": "success", "user": user.to_dict()}), 200
 
 
 @admin_bp.route("/admin/users/<user_id>", methods=["DELETE"], strict_slashes=False)
@@ -444,7 +506,7 @@ def list_settings(admin_user):
         "status": "success",
         "settings": [{
             "key": setting.key,
-            "value": "********" if setting.key.endswith(("_api_key", "_secret", "_token")) else setting.value,
+            "value": "********" if _is_secret_setting(setting.key) else setting.value,
         } for setting in settings],
     }), 200
 
@@ -460,7 +522,7 @@ def save_setting(admin_user):
     if not key:
         return jsonify({"status": "error", "message": "Setting key is required."}), 400
 
-    if key.endswith(("_api_key", "_secret", "_token")):
+    if _is_secret_setting(key):
         if not isinstance(value, str) or not value.strip() or value == "********":
             return jsonify({"status": "error", "message": "A new secret value is required."}), 400
         from app.services.security_service import SecurityService

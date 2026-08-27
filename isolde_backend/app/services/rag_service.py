@@ -340,8 +340,9 @@ def search(query: str, top_k: int = 4, user_id: Optional[str] = None) -> List[Di
     if top_k <= 0:
         return []
 
-    if user_id is not None:
-        user_id = str(user_id).strip() or None
+    user_id = str(user_id).strip() if user_id is not None else ""
+    if not user_id:
+        return []
 
     records = _load_index(user_id=user_id)
 
@@ -367,9 +368,8 @@ def search(query: str, top_k: int = 4, user_id: Optional[str] = None) -> List[Di
         if record_user_id is not None:
             record_user_id = str(record_user_id).strip() or None
 
-        # Records are private to their exact owner. Legacy records without an
-        # owner are intentionally visible only to anonymous legacy flows and
-        # must never enter an authenticated tenant's context.
+        # Records are private to their exact authenticated owner. Unowned
+        # legacy records are never eligible for retrieval.
         if record_user_id != user_id:
             continue
 

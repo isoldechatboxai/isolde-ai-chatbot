@@ -4,7 +4,8 @@ from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 
 from app import db
-from app.models.collaboration_model import Invitation, Organization, OrganizationMember, OrganizationRole, Team, OrganizationProject
+from app.models.collaboration_model import Invitation, Organization, OrganizationMember, OrganizationRole, Team, OrganizationProject, OrganizationPolicy
+from app.services.organization_policy_service import SUPPORTED_PROVIDERS
 from app.models.user import User
 from app.models.workspace_model import Project, Workspace
 from app.utils.validators import is_valid_email
@@ -19,6 +20,7 @@ def _user_id():
 def _organization_for_member(org_id, user_id):
     return Organization.query.filter(
         Organization.id == org_id,
+        Organization.status == "Active",
         db.or_(
             Organization.owner_id == user_id,
             Organization.id.in_(db.session.query(OrganizationMember.org_id).filter_by(user_id=user_id, status="Active")),
@@ -27,7 +29,7 @@ def _organization_for_member(org_id, user_id):
 
 
 def _organization_for_admin(org_id, user_id):
-    org = Organization.query.filter_by(id=org_id).first()
+    org = Organization.query.filter_by(id=org_id, status="Active").first()
     if not org:
         return None
     if org.owner_id == user_id:
@@ -42,7 +44,15 @@ def _organization_for_admin(org_id, user_id):
 
 
 def _organization_for_owner(org_id, user_id):
-    return Organization.query.filter_by(id=org_id, owner_id=user_id).first()
+    return Organization.query.filter_by(id=org_id, owner_id=user_id, status="Active").first()
+
+
+def _permissions_for_member(member):
+    role = db.session.get(OrganizationRole, member.role_id) if member and member.role_id else None
+    try:
+        return set(json.loads(role.permissions or "[]")) if role else set()
+    except (TypeError, ValueError):
+        return set()
 
 
 def _member_payload(member):
@@ -132,7 +142,9 @@ def get_roles(org_id):
 @collaboration_bp.route("/organizations/<int:org_id>/members", methods=["POST"])
 @jwt_required()
 def add_member(org_id):
-    if not _organization_for_admin(org_id, _user_id()):
+    actor_id = _user_id()
+    org = _organization_for_admin(org_id, actor_id)
+    if not org:
         return jsonify({"error": "Organization not found."}), 404
     data = request.get_json(silent=True) or {}
     email = str(data.get("email") or "").strip().lower()
@@ -142,6 +154,15 @@ def add_member(org_id):
         return jsonify({"error": "An active registered user with that email is required."}), 404
     if not role:
         return jsonify({"error": "Role not found."}), 404
+    if org.owner_id != actor_id:
+        actor = OrganizationMember.query.filter_by(org_id=org_id, user_id=actor_id, status="Active").first()
+        actor_permissions = _permissions_for_member(actor)
+        try:
+            granted_permissions = set(json.loads(role.permissions or "[]"))
+        except (TypeError, ValueError):
+            granted_permissions = set()
+        if not granted_permissions.issubset(actor_permissions):
+            return jsonify({"error": "You cannot grant permissions you do not have."}), 403
     member = OrganizationMember.query.filter_by(org_id=org_id, user_id=user.id).first()
     if member:
         member.role_id = role.id
@@ -164,6 +185,12 @@ def manage_member(org_id, member_id):
         return jsonify({"error": "Member not found."}), 404
     if member.user_id == org.owner_id:
         return jsonify({"error": "Organization ownership cannot be changed through member management."}), 409
+    actor_id = _user_id()
+    actor = OrganizationMember.query.filter_by(org_id=org_id, user_id=actor_id, status="Active").first()
+    actor_permissions = {"all"} if org.owner_id == actor_id else _permissions_for_member(actor)
+    target_permissions = _permissions_for_member(member)
+    if "all" not in actor_permissions and not target_permissions.issubset(actor_permissions):
+        return jsonify({"error": "You cannot manage a member with stronger permissions."}), 403
     if request.method == "DELETE":
         db.session.delete(member)
         db.session.commit()
@@ -177,22 +204,66 @@ def manage_member(org_id, member_id):
         role = OrganizationRole.query.filter_by(id=data["role_id"], org_id=org_id).first()
         if not role:
             return jsonify({"error": "Role not found."}), 404
+        try:
+            new_permissions = set(json.loads(role.permissions or "[]"))
+        except (TypeError, ValueError):
+            new_permissions = set()
+        if "all" not in actor_permissions and not new_permissions.issubset(actor_permissions):
+            return jsonify({"error": "You cannot grant permissions you do not have."}), 403
         member.role_id = role.id
     db.session.commit()
     return jsonify({"message": "Member updated.", "member": _member_payload(member)}), 200
 
 
+@collaboration_bp.route("/organizations/<int:org_id>/policy", methods=["GET", "PATCH"])
+@jwt_required()
+def organization_policy(org_id):
+    user_id = _user_id()
+    org = _organization_for_member(org_id, user_id)
+    if not org:
+        return jsonify({"error": "Organization not found."}), 404
+    policy = OrganizationPolicy.query.filter_by(org_id=org_id).first()
+    if request.method == "GET":
+        return jsonify({"policy": policy.to_dict() if policy else {
+            "org_id": org_id, "allowed_providers": [], "billing_enabled": True, "updated_at": None,
+        }}), 200
+    if org.owner_id != user_id:
+        db.session.rollback()
+        return jsonify({"error": "Only the organization owner can update tenant policy."}), 403
+    data = request.get_json(silent=True) or {}
+    if not policy:
+        policy = OrganizationPolicy(org_id=org_id)
+        db.session.add(policy)
+    if "allowed_providers" in data:
+        providers = data["allowed_providers"]
+        if not isinstance(providers, list) or not providers:
+            return jsonify({"error": "At least one allowed provider is required."}), 400
+        normalized = sorted({str(item).strip().lower() for item in providers})
+        if not set(normalized).issubset(SUPPORTED_PROVIDERS):
+            return jsonify({"error": "Unsupported provider in policy."}), 400
+        policy.allowed_providers = json.dumps(normalized)
+    if "billing_enabled" in data:
+        if not isinstance(data["billing_enabled"], bool):
+            return jsonify({"error": "billing_enabled must be a boolean."}), 400
+        policy.billing_enabled = data["billing_enabled"]
+    db.session.commit()
+    return jsonify({"message": "Tenant policy updated.", "policy": policy.to_dict()}), 200
+
+
 @collaboration_bp.route("/organizations/<int:org_id>/usage", methods=["GET"])
 @jwt_required()
 def organization_usage(org_id):
-    if not _organization_for_owner(org_id, _user_id()):
+    org = _organization_for_owner(org_id, _user_id())
+    if not org:
         return jsonify({"error": "Organization not found."}), 404
-    member_ids = [row[0] for row in db.session.query(OrganizationMember.user_id).filter_by(org_id=org_id, status="Active").all()]
+    member_ids = {row[0] for row in db.session.query(OrganizationMember.user_id).filter_by(org_id=org_id, status="Active").all()}
+    member_ids.add(org.owner_id)
     users = User.query.filter(User.id.in_(member_ids)).all() if member_ids else []
     return jsonify({
         "usage": "Usage unavailable",
-        "members": [{"user_id": user.id, "name": user.name, "tokens_used": user.tokens_used} for user in users],
-        "tokens_used": sum(user.tokens_used or 0 for user in users),
+        "members": [{"user_id": user.id, "name": user.name, "account_tokens_used": user.tokens_used} for user in users],
+        "tokens_used": None,
+        "account_tokens_used": sum(user.tokens_used or 0 for user in users),
     }), 200
 
 

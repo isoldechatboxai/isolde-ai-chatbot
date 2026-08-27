@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify, current_app, Response, stream_with_context, session
+from flask import Blueprint, request, jsonify, current_app, Response, stream_with_context
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
 from app.extensions import db
@@ -39,13 +39,7 @@ _ACTIVE_GENERATIONS_LOCK = threading.Lock()
 
 
 def _request_generation_owner(user_id):
-    if user_id is not None:
-        return f"user:{user_id}"
-    guest_id = session.get("generation_guest_id")
-    if not guest_id:
-        guest_id = str(uuid.uuid4())
-        session["generation_guest_id"] = guest_id
-    return f"guest:{guest_id}"
+    return f"user:{user_id}"
 
 
 class _SharedCancellationEvent:
@@ -182,7 +176,9 @@ def _web_search_context(message: str, max_results: int = 3):
 
 
 def _register_generation(generation_id, stop_event, user_id, conversation_id):
-    owner = f"user:{user_id}" if user_id is not None else "guest:legacy"
+    if user_id is None:
+        raise ValueError("Authenticated generation owner is required.")
+    owner = f"user:{user_id}"
     cancellation_store.register(generation_id, owner, conversation_id)
     with _ACTIVE_GENERATIONS_LOCK:
         _ACTIVE_GENERATIONS[generation_id] = {
@@ -346,7 +342,7 @@ def _history_for_gemini(convo: Conversation, limit: int = 20):
 
 
 @chat_bp.route("/chat", methods=["POST"], strict_slashes=False)
-@jwt_required(optional=True)
+@jwt_required()
 def chat():
     try:
         maintenance = Setting.query.filter_by(key="maintenance_mode").first()
@@ -523,7 +519,7 @@ def chat():
 
 
 @chat_bp.route("/chat/stream", methods=["POST"], strict_slashes=False)
-@jwt_required(optional=True)
+@jwt_required()
 def stream_chat():
     try:
         maintenance = Setting.query.filter_by(key="maintenance_mode").first()
@@ -720,7 +716,7 @@ def stream_chat():
 
 
 @chat_bp.route("/chat/stop", methods=["POST"], strict_slashes=False)
-@jwt_required(optional=True)
+@jwt_required()
 def stop_chat_generation():
     data = request.get_json(silent=True) or {}
 
@@ -740,7 +736,9 @@ def stop_chat_generation():
             if entry and entry.get("owner") == owner:
                 entry["event"].set()
 
-    return jsonify({
-        "status": "success",
-        "stopped": stopped
-    }), 200
+    if not stopped:
+        return jsonify({
+            "status": "not_found", "stopped": False,
+            "error": "Generation was not found or is not owned by this session."
+        }), 404
+    return jsonify({"status": "success", "stopped": True}), 200

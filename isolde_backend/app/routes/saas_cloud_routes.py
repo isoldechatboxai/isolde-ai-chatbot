@@ -1,5 +1,5 @@
 # app/routes/saas_cloud_routes.py
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
 from app import db
@@ -33,8 +33,9 @@ def get_api_keys():
         # Safe by construction: APIKey.to_dict() never includes key_secret
         # or key_hash. No change to URL, method, or auth is required here.
         return jsonify({"api_keys": [k.to_dict() for k in keys]}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        current_app.logger.exception("SaaS API key listing failed.")
+        return jsonify({"error": "API keys are unavailable."}), 500
 
 
 @saas_cloud_bp.route("/saas/apikeys", methods=["POST"])
@@ -66,9 +67,10 @@ def create_api_key():
             "api_key": new_key.to_dict(),
             "raw_key": raw_key
         }), 201
-    except Exception as e:
+    except Exception:
         db.session.rollback()
-        return jsonify({"error": str(e)}), 500
+        current_app.logger.exception("SaaS API key creation failed.")
+        return jsonify({"error": "API key could not be created."}), 500
 
 
 # --- CLOUD MONITORING & HEALTH APIS ---

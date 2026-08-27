@@ -26,12 +26,11 @@ def _deliver_auth_email(recipient, subject, path, token):
         current_app.logger.warning("Authentication email delivery is not configured.")
         return False
     link = f"{current_app.config['PUBLIC_APP_URL']}{path}?token={token}"
-    start_email_worker(
+    return start_email_worker(
         current_app._get_current_object(), subject, recipient,
         f"Open this single-use link: {link}",
         f'<p>Open this single-use link:</p><p><a href="{link}">{link}</a></p>',
     )
-    return True
 
 
 def _issue_user_token(user, purpose, lifetime_minutes):
@@ -289,6 +288,7 @@ def reset_password():
     if not user:
         return jsonify({"error": "Reset token is invalid or expired."}), 400
     user.set_password(new_password)
+    user.is_verified = True
     AuthSession.query.filter_by(user_id=user.id, revoked_at=None).update(
         {"revoked_at": utcnow()}, synchronize_session=False
     )

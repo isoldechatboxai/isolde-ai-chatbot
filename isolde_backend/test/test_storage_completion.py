@@ -18,7 +18,7 @@ def test_private_local_upload_list_download_delete_and_ownership(client):
 
     uploaded = client.post(
         "/api/upload", headers=first_headers,
-        data={"file": (io.BytesIO(b"private image bytes"), "photo.png")},
+        data={"file": (io.BytesIO(b"\x89PNG\r\n\x1a\nprivate image bytes"), "photo.png")},
         content_type="multipart/form-data",
     )
     assert uploaded.status_code == 201
@@ -32,7 +32,7 @@ def test_private_local_upload_list_download_delete_and_ownership(client):
 
     download = client.get(f"/api/uploads/{file_id}", headers=first_headers)
     assert download.status_code == 200
-    assert download.data == b"private image bytes"
+    assert download.data == b"\x89PNG\r\n\x1a\nprivate image bytes"
     assert client.delete(f"/api/uploads/{file_id}", headers=first_headers).status_code == 200
     assert client.get(f"/api/uploads/{file_id}", headers=first_headers).status_code == 404
 
@@ -42,8 +42,18 @@ def test_s3_backend_without_bucket_fails_deterministically(client, app):
     app.config.update({"STORAGE_BACKEND": "s3", "S3_BUCKET": ""})
     response = client.post(
         "/api/upload", headers={"Authorization": f"Bearer {token}"},
-        data={"file": (io.BytesIO(b"bytes"), "photo.png")},
+        data={"file": (io.BytesIO(b"\x89PNG\r\n\x1a\nbytes"), "photo.png")},
         content_type="multipart/form-data",
     )
     assert response.status_code == 503
     assert response.get_json()["error"] == "File storage is not configured."
+
+
+def test_image_extension_does_not_bypass_content_validation(client):
+    token = _token(client, "storage-content@example.com")
+    response = client.post(
+        "/api/upload", headers={"Authorization": f"Bearer {token}"},
+        data={"file": (io.BytesIO(b"not an image"), "photo.png")},
+        content_type="multipart/form-data",
+    )
+    assert response.status_code == 422

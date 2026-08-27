@@ -1,6 +1,9 @@
 import threading
+from flask_jwt_extended import create_access_token, verify_jwt_in_request
 
 from app.services.provider_router import ProviderManager
+from app.models.collaboration_model import Organization, OrganizationMember, OrganizationPolicy
+from app.models.user import User
 
 
 def test_fallback_is_opt_in(app, monkeypatch):
@@ -90,3 +93,28 @@ def test_stream_cancellation_closes_provider_generator(app, monkeypatch):
     event.set()
     assert list(manager.generate_stream("hello", cancel_event=event)) == []
     assert closed["value"] is True
+
+
+def test_tenant_provider_policy_filters_router_candidates(app, db, monkeypatch):
+    user = User(name="Policy User", email="provider-policy@example.com", status="Active")
+    user.set_password("StrongPass123!")
+    db.session.add(user)
+    db.session.flush()
+    organization = Organization(name="Provider Policy", owner_id=user.id)
+    db.session.add(organization)
+    db.session.flush()
+    db.session.add_all([
+        OrganizationMember(org_id=organization.id, user_id=user.id, status="Active"),
+        OrganizationPolicy(org_id=organization.id, allowed_providers='["openai"]'),
+    ])
+    db.session.commit()
+    manager = ProviderManager()
+    monkeypatch.setattr(manager, "resolve_active_provider", lambda: "gemini")
+    monkeypatch.setattr(
+        manager, "_get_setting",
+        lambda key: '["openai"]' if key == "provider_fallbacks" else None,
+    )
+    token = create_access_token(identity=user.id)
+    with app.test_request_context(headers={"Authorization": f"Bearer {token}"}):
+        verify_jwt_in_request()
+        assert manager.get_available_providers() == ["openai"]

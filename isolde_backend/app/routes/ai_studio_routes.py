@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app import db
 from app.models.ai_studio_model import CustomModel, PlaygroundRun
@@ -14,8 +14,9 @@ def list_custom_models():
         user_id = str(get_jwt_identity())
         models = CustomModel.query.filter_by(user_id=user_id).order_by(CustomModel.created_at.desc()).all()
         return jsonify({"models": [m.to_dict() for m in models]}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        current_app.logger.exception("AI Studio model listing failed.")
+        return jsonify({"error": "AI Studio models are unavailable."}), 500
 
 
 @ai_studio_bp.route("/ai-studio/models", methods=["POST"])
@@ -72,9 +73,10 @@ def test_playground_prompt():
     except RuntimeError:
         db.session.rollback()
         return jsonify({"error": "AI provider is unavailable or not configured."}), 503
-    except Exception as e:
+    except Exception:
         db.session.rollback()
-        return jsonify({"error": str(e)}), 500
+        current_app.logger.exception("AI Studio playground execution failed.")
+        return jsonify({"error": "AI Studio execution failed."}), 500
 
 
 @ai_studio_bp.route("/ai-studio/playground/history", methods=["GET"])
@@ -84,5 +86,6 @@ def playground_history():
         user_id = str(get_jwt_identity())
         runs = PlaygroundRun.query.filter_by(user_id=user_id).order_by(PlaygroundRun.created_at.desc()).limit(50).all()
         return jsonify({"runs": [r.to_dict() for r in runs]}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        current_app.logger.exception("AI Studio history lookup failed.")
+        return jsonify({"error": "AI Studio history is unavailable."}), 500

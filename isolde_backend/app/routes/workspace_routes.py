@@ -3,7 +3,7 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app import db
 from app.models.workspace_model import Workspace, Project
-from app.models.collaboration_model import OrganizationMember, OrganizationProject, OrganizationRole
+from app.models.collaboration_model import Organization, OrganizationMember, OrganizationProject, OrganizationRole
 import json
 
 workspace_bp = Blueprint("workspace_bp", __name__)
@@ -24,6 +24,7 @@ def _shared_project(project_id, user_id, require_edit=False):
         OrganizationProject.project_id == project_id,
         OrganizationMember.user_id == str(user_id),
         OrganizationMember.status == "Active",
+        OrganizationProject.org_id.in_(db.session.query(Organization.id).filter_by(status="Active")),
     ).first()
     if not share:
         return None
