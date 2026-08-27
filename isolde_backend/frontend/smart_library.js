@@ -1,6 +1,11 @@
 (() => {
     'use strict';
 
+    if (!localStorage.getItem("access_token")) {
+        window.location.replace("/login.html");
+        return;
+    }
+
     const UI = {
         app: null,
         uploadBtn: null,
@@ -90,6 +95,7 @@
                     <span class="sl-card-icon">📄</span>
                     <span>${escapeHTML(doc.filename)}</span>
                 </div>
+                <div>${escapeHTML(String(doc.chunks ?? 0))} indexed chunks · ${escapeHTML(doc.status || "indexed")}</div>
                 <div class="sl-card-actions">
                     <button type="button" class="sl-btn sl-btn-danger delete-doc-btn" data-id="${escapeHTML(String(doc.id))}">
                         <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="margin-right:4px;">

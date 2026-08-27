@@ -1,4 +1,5 @@
 const token = localStorage.getItem("access_token");
+if (!token) window.location.replace("/login.html");
 const headers = {Authorization: `Bearer ${token || ""}`, "Content-Type": "application/json"};
 const message = document.getElementById("org-message");
 const select = document.getElementById("org-select");

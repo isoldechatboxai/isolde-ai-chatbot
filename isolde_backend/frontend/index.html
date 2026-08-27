@@ -184,21 +184,6 @@
               <span class="badge-new">New</span>
             </div>
 
-            <div class="attachment-divider" role="separator"></div>
-
-            <div class="attachment-menu-item" role="menuitem">
-              <span class="menu-item-icon" aria-hidden="true">🧩</span>
-              <span class="menu-item-text">Canvas</span>
-            </div>
-            <div class="attachment-menu-item" role="menuitem">
-              <span class="menu-item-icon" aria-hidden="true">🔎</span>
-              <span class="menu-item-text">Deep research</span>
-            </div>
-            <div class="attachment-menu-item" role="menuitem">
-              <span class="menu-item-icon" aria-hidden="true">🧰</span>
-              <span class="menu-item-text">More tools</span>
-              <span class="menu-item-arrow" aria-hidden="true">›</span>
-            </div>
           </div>
         </div>
 
@@ -211,11 +196,7 @@
 
         <div class="model-switcher-wrapper">
           <select id="ai-model-select" title="Model" aria-label="Model selection">
-            <option value="Flash-Lite Extended">3.5 Flash-Lite (Fastest)</option>
-            <option value="Flash">3.6 Flash</option>
-            <option value="Pro">3.1 Pro</option>
-            <option value="Extended Thinking">Extended thinking</option>
-            <option value="Isolde Omni v4.2">Isolde Omni v4.2</option>
+            <option value="default-ai">Automatic (tenant policy)</option>
           </select>
         </div>
 
@@ -232,27 +213,6 @@
   <footer class="app-footer">
     <p class="disclaimer">Isolde AI can make mistakes. Please verify important information.</p>
   </footer>
-
-  <!-- ================= MODAL: GLOBAL PREFERENCES (legacy static) ================= -->
-  <div class="modal-overlay" id="global-preferences-modal" role="dialog" aria-modal="true" aria-label="Global Preferences">
-    <div class="modal-content">
-      <div class="modal-header-bar">
-        <h3>⚙️ Global Preferences</h3>
-        <button class="modal-close" type="button" aria-label="Close">×</button>
-      </div>
-      <div class="modal-body">
-        <p class="modal-desc">Customize your Isolde AI experience.</p>
-        <div class="settings-field">
-          <label for="system-prompt-input">System Instructions (Core Prompt)</label>
-          <textarea id="system-prompt-input" class="settings-textarea"
-                    placeholder="Define how Isolde should behave…"></textarea>
-        </div>
-        <div class="settings-footer settings-footer-inline">
-          <button id="save-config-btn" class="settings-save-btn" type="button">Save &amp; Update Configuration</button>
-        </div>
-      </div>
-    </div>
-  </div>
 
   <!-- ================= MODAL: AI STUDIO WORKSPACE ================= -->
   <div class="modal-overlay studio-overlay" id="ai-studio-workspace-modal" style="display:none;"

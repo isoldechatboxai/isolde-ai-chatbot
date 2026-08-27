@@ -218,6 +218,11 @@
   }
 
   function initChatbotApp() {
+    const accessToken = localStorage.getItem("access_token");
+    if (!accessToken || accessToken === "null" || accessToken === "undefined") {
+      window.location.replace("/login.html");
+      return;
+    }
     const STORAGE_KEYS = {
       THEME: "isolde-theme",
       CONVERSATIONS: "isolde-conversations",

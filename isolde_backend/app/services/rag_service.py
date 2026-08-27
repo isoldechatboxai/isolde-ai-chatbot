@@ -274,6 +274,10 @@ def list_documents(user_id: str):
     return RAGDocument.query.filter_by(user_id=str(user_id)).order_by(RAGDocument.created_at.desc()).all()
 
 
+def get_document(file_id: str, user_id: str):
+    return RAGDocument.query.filter_by(id=str(file_id), user_id=str(user_id)).first()
+
+
 def delete_document(file_id: str, user_id: str) -> bool:
     document = RAGDocument.query.filter_by(id=str(file_id), user_id=str(user_id)).first()
     if document is None:

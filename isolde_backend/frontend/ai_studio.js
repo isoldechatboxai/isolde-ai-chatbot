@@ -1,3 +1,5 @@
+if (!localStorage.getItem("access_token")) window.location.replace("/login.html");
+
 function authHeaders() {
   const token = localStorage.getItem("access_token");
   return { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) };
@@ -41,9 +43,9 @@ async function runPrompt() {
     const data = await api("/api/ai-studio/playground/test", {
       method: "POST",
       body: JSON.stringify({
-        model_id: document.getElementById("playground-model-id").value.trim() || "default",
+        model_id: "default",
         prompt,
-        parameters: { temperature: 0.7 }
+        parameters: {}
       })
     });
     output.textContent = `${data.output}\n\nUsage: ${typeof data.usage === "string" ? data.usage : JSON.stringify(data.usage)}`;

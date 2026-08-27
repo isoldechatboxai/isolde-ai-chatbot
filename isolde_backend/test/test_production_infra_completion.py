@@ -17,6 +17,8 @@ def test_database_rag_is_tenant_scoped_and_transactional(app, db, monkeypatch):
         assert rag_service.index_document("doc-b", "b.txt", "other tenant text", "user-b") == 1
         assert RAGDocument.query.count() == 2
         assert RAGChunk.query.count() == 2
+        assert rag_service.get_document("doc-a", "user-a").filename == "a.txt"
+        assert rag_service.get_document("doc-a", "user-b") is None
         results = rag_service.search("owner question", user_id="user-a")
         assert [result["filename"] for result in results] == ["a.txt"]
         assert rag_service.delete_document("doc-b", "user-a") is False

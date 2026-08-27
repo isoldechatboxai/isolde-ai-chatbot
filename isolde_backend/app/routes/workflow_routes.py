@@ -75,11 +75,17 @@ def create_workflow():
         workspace = Workspace.query.filter_by(id=workspace_id, user_id=user_id).first()
         if not workspace:
             return jsonify({"error": "Workspace not found"}), 404
+        trigger_type = str(data.get("trigger_type") or "Manual").strip()
+        if trigger_type != "Manual":
+            return jsonify({
+                "status": "NOT_SUPPORTED",
+                "error": "Only manual workflow definitions are supported; scheduled and webhook execution are not configured."
+            }), 422
         
         workflow = Workflow(
             name=name,
             description=(data.get("description") or "").strip() or None,
-            trigger_type=(data.get("trigger_type") or "Manual").strip(),
+            trigger_type=trigger_type,
             workspace_id=workspace_id
         )
         db.session.add(workflow)
@@ -128,7 +134,13 @@ def update_workflow(workflow_id):
         if "description" in data:
             workflow.description = (data["description"] or "").strip() or None
         if "trigger_type" in data:
-            workflow.trigger_type = data["trigger_type"].strip()
+            trigger_type = str(data["trigger_type"] or "").strip()
+            if trigger_type != "Manual":
+                return jsonify({
+                    "status": "NOT_SUPPORTED",
+                    "error": "Only manual workflow definitions are supported."
+                }), 422
+            workflow.trigger_type = trigger_type
         if "is_active" in data:
             workflow.is_active = bool(data["is_active"])
         
@@ -307,34 +319,10 @@ def create_webhook(workflow_id):
         workflow = verify_workflow_ownership(workflow_id, user_id)
         if not workflow:
             return jsonify({"error": "Workflow not found"}), 404
-        
-        data = request.get_json()
-        if not data:
-            return jsonify({"error": "Request body must be JSON"}), 400
-        
-        endpoint_url = (data.get("endpoint_url") or "").strip()
-        if not endpoint_url:
-            return jsonify({"error": "Endpoint URL is required"}), 400
-        
-        # Basic URL validation
-        if not endpoint_url.startswith(("http://", "https://")):
-            return jsonify({"error": "Invalid URL format"}), 400
-        
-        webhook = Webhook(
-            workflow_id=workflow_id,
-            endpoint_url=endpoint_url,
-            secret_token=data.get("secret_token")
-        )
-        db.session.add(webhook)
-        db.session.commit()
         return jsonify({
-            "message": "Webhook created",
-            "webhook": {
-                "id": webhook.id,
-                "endpoint_url": webhook.endpoint_url,
-                "created_at": webhook.created_at.isoformat() if webhook.created_at else None
-            }
-        }), 201
+            "status": "NOT_CONFIGURED",
+            "error": "Webhook workflow execution is not configured."
+        }), 501
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": "Failed to create webhook"}), 500

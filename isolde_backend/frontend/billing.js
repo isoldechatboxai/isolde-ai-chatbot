@@ -1,3 +1,5 @@
+if (!localStorage.getItem("access_token")) window.location.replace("/login.html");
+
 function authHeaders() {
   const token = localStorage.getItem("access_token");
   return token ? { Authorization: `Bearer ${token}` } : {};

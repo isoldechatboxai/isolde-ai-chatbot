@@ -9,6 +9,7 @@ from werkzeug.utils import secure_filename
 from app.services.rag_service import (
     process_and_index_file,
     list_documents as list_owned_documents,
+    get_document as get_owned_document,
     delete_document as delete_owned_document,
 )
 
@@ -129,10 +130,31 @@ def list_documents():
 
     return jsonify({
         "documents": [
-            {"id": document.id, "filename": document.filename, "chunks": document.chunk_count}
+            {
+                "id": document.id,
+                "filename": document.filename,
+                "chunks": document.chunk_count,
+                "status": "indexed",
+                "created_at": document.created_at.isoformat() if document.created_at else None,
+            }
             for document in list_owned_documents(user_id)
         ]
     })
+
+
+@rag_bp.route("/api/rag/document/<file_id>", methods=["GET"])
+@jwt_required()
+def get_document(file_id):
+    document = get_owned_document(file_id, str(get_jwt_identity()))
+    if not document:
+        return jsonify({"error": "Document not found."}), 404
+    return jsonify({"document": {
+        "id": document.id,
+        "filename": document.filename,
+        "chunks": document.chunk_count,
+        "created_at": document.created_at.isoformat() if document.created_at else None,
+        "status": "indexed",
+    }}), 200
 
 
 @rag_bp.route("/api/rag/document/<file_id>", methods=["DELETE"])
