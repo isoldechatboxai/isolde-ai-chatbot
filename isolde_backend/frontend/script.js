@@ -1730,7 +1730,6 @@ function onDocumentReady(fn) {
 
 onDocumentReady(() => {
   const imgStudioBtn = document.getElementById("images-studio-btn");
-  const smartLibraryBtn = document.getElementById("smart-library-btn");
   const vidGenBtn = document.getElementById("videos-gen-btn");
   const modal = document.getElementById("ai-studio-workspace-modal");
   const title = document.getElementById("studio-modal-title");
@@ -1787,14 +1786,6 @@ onDocumentReady(() => {
   }
 
   if (imgStudioBtn) imgStudioBtn.addEventListener("click", (e) => openWorkspace("image", e));
-
-  if (smartLibraryBtn) {
-    smartLibraryBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      window.location.href = "/smart_library.html";
-    });
-  }
 
   if (vidGenBtn) vidGenBtn.addEventListener("click", (e) => openWorkspace("video", e));
 

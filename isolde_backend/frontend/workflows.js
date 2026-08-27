@@ -80,11 +80,11 @@ function renderWorkflows(workflows) {
   document.getElementById("workflow-empty").hidden = workflows.length !== 0;
 }
 
-async function loadWorkflows() {
-  workflowMessage.textContent = "Loading…";
+async function loadWorkflows({showLoading = true} = {}) {
+  if (showLoading) workflowMessage.textContent = "Loading…";
   const data = await workflowApi("/api/workflows");
   renderWorkflows(data.workflows || []);
-  workflowMessage.textContent = "";
+  if (showLoading) workflowMessage.textContent = "";
 }
 
 async function initializeWorkflows() {
@@ -99,6 +99,8 @@ async function initializeWorkflows() {
   if (!workspaceSelect.options.length) {
     createButton.disabled = true;
     workflowMessage.textContent = "Create a workspace before creating a workflow.";
+    await loadWorkflows({showLoading: false});
+    return;
   }
   await loadWorkflows();
 }
