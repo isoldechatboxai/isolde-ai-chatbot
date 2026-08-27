@@ -33,13 +33,24 @@ async function loadBilling() {
     return item;
   }));
   document.getElementById("invoice-empty").hidden = invoices.length !== 0;
-  renderCheckout(config);
+  renderCheckout(config, subscription);
 }
 
-function renderCheckout(config) {
+function renderCheckout(config, subscription) {
   const status = document.getElementById("billing-status");
   const actions = document.getElementById("billing-checkout-actions");
   actions.replaceChildren();
+  if (subscription.provider_managed && subscription.status === "active") {
+    const cancel = document.createElement("button");
+    cancel.type = "button"; cancel.textContent = "Cancel subscription";
+    cancel.addEventListener("click", async () => {
+      if (!window.confirm("Cancel this subscription?")) return;
+      cancel.disabled = true;
+      try { await api("/api/billing/subscription/cancel", {method: "POST"}); await loadBilling(); }
+      catch (error) { status.textContent = error.message; cancel.disabled = false; }
+    });
+    actions.append(cancel);
+  }
   if (!config.checkout_available) { status.textContent = "Payment provider: Not configured"; return; }
   status.textContent = `Payment provider: ${config.provider}`;
   for (const plan of config.plans || []) {

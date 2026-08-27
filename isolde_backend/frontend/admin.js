@@ -17,9 +17,10 @@ async function adminApi(path, options = {}) {
 }
 
 async function loadDashboard() {
-  const [dashboard, users, tenants, providers, billing, operations] = await Promise.all([
+  const [dashboard, users, tenants, providers, billing, subscriptions, operations, logs] = await Promise.all([
     adminApi("/api/admin/dashboard"), adminApi("/api/admin/users"), adminApi("/api/admin/tenants"),
-    adminApi("/api/admin/provider-status"), adminApi("/api/admin/billing-summary"), adminApi("/api/admin/operations")
+    adminApi("/api/admin/provider-status"), adminApi("/api/admin/billing-summary"), adminApi("/api/admin/billing/subscriptions"),
+    adminApi("/api/admin/operations"), adminApi("/api/admin/operations/log-summary")
   ]);
   document.getElementById("admin-login").hidden = true;
   document.getElementById("admin-dashboard").hidden = false;
@@ -38,10 +39,26 @@ async function loadDashboard() {
   }));
   document.getElementById("admin-empty").hidden = (users.users || []).length !== 0;
   document.getElementById("admin-tenants").replaceChildren(...(tenants.tenants || []).map((tenant) => {
-    const row = document.createElement("p"); row.textContent = `${tenant.name} — ${tenant.member_count} members — ${tenant.status}`; return row;
+    const row = document.createElement("p"); row.append(document.createTextNode(`${tenant.name} — ${tenant.member_count} members — `));
+    const status = document.createElement("select");
+    for (const value of ["Active", "Suspended", "Archived"]) { const option = document.createElement("option"); option.value = value; option.textContent = value; option.selected = value === tenant.status; status.append(option); }
+    status.addEventListener("change", () => adminApi(`/api/admin/tenants/${tenant.id}`, {method: "PATCH", body: JSON.stringify({status: status.value})}).catch(error => { document.getElementById("admin-message").textContent = error.message; }));
+    row.append(status); return row;
   }));
   renderDefinitionList("admin-providers", providers.providers || {});
   renderDefinitionList("admin-billing", billing.billing || {});
+  document.getElementById("admin-subscriptions").replaceChildren(...(subscriptions.subscriptions || []).map((subscription) => {
+    const row = document.createElement("p"); row.append(document.createTextNode(`${subscription.user_id} — ${subscription.plan_name} — ${subscription.status} `));
+    if (subscription.provider_managed && subscription.status === "active") {
+      const button = document.createElement("button"); button.type = "button"; button.textContent = "Cancel subscription";
+      button.addEventListener("click", async () => {
+        if (!window.confirm("Cancel this provider subscription?")) return;
+        try { await adminApi(`/api/admin/billing/subscriptions/${subscription.user_id}/cancel`, {method: "POST"}); await loadDashboard(); }
+        catch (error) { document.getElementById("admin-message").textContent = error.message; }
+      }); row.append(button);
+    }
+    return row;
+  }));
   renderDefinitionList("admin-operations", {
     storage_backend: operations.operations?.storage_backend,
     rag_backend: operations.operations?.rag_backend,
@@ -49,6 +66,7 @@ async function loadDashboard() {
     logs: operations.operations?.logs,
     health: operations.operations?.health?.status,
   });
+  renderDefinitionList("admin-log-summary", logs.summary || {});
 }
 
 function renderDefinitionList(id, values) {

@@ -285,7 +285,11 @@ class ProviderManager:
         """Read a single Setting row. Returns None when missing."""
         try:
             row = Setting.query.filter_by(key=key).first()
-            return row.value if row and row.value else None
+            value = row.value if row and row.value else None
+            if value and value.startswith("enc:"):
+                from app.services.security_service import SecurityService
+                return SecurityService().decrypt_data(value[4:])
+            return value
         except Exception:
             return None
 

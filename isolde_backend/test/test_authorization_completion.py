@@ -3,7 +3,7 @@ from flask_jwt_extended import create_access_token
 from app.models.collaboration_model import Organization, OrganizationMember, OrganizationRole
 from app.models.productivity_model import Task
 from app.models.user import User
-from app.models.workspace_model import Workspace
+from app.models.workspace_model import Workspace, Project
 
 
 def _user(db, email):
@@ -111,6 +111,46 @@ def test_master_can_manage_members_but_subaccount_cannot_escalate(client, db):
     assert client.delete(
         f"/api/organizations/{org.id}/members/{member_id}", headers=_headers(owner)
     ).status_code == 200
+
+
+def test_organization_project_sharing_enforces_tenant_and_role_permissions(client, db):
+    owner = _user(db, "project-master@example.com")
+    viewer_user = _user(db, "project-viewer@example.com")
+    editor_user = _user(db, "project-editor@example.com")
+    attacker = _user(db, "project-outsider@example.com")
+    org = Organization(name="Project Org", owner_id=owner.id)
+    workspace = Workspace(user_id=owner.id, name="Owner Workspace")
+    db.session.add_all([org, workspace])
+    db.session.flush()
+    project = Project(workspace_id=workspace.id, name="Shared Project")
+    viewer = OrganizationRole(org_id=org.id, name="Viewer", permissions="[]")
+    editor = OrganizationRole(org_id=org.id, name="Editor", permissions='["manage_projects"]')
+    db.session.add_all([project, viewer, editor])
+    db.session.flush()
+    db.session.add_all([
+        OrganizationMember(org_id=org.id, user_id=owner.id, role_id=editor.id),
+        OrganizationMember(org_id=org.id, user_id=viewer_user.id, role_id=viewer.id),
+        OrganizationMember(org_id=org.id, user_id=editor_user.id, role_id=editor.id),
+    ])
+    db.session.commit()
+
+    share = client.post(
+        f"/api/organizations/{org.id}/projects/{project.id}", headers=_headers(owner),
+        json={"access_level": "edit"},
+    )
+    assert share.status_code == 200
+    assert client.get(f"/api/project/{project.id}", headers=_headers(viewer_user)).status_code == 200
+    assert client.put(
+        f"/api/project/{project.id}", headers=_headers(viewer_user), json={"name": "Escalated"}
+    ).status_code == 404
+    assert client.put(
+        f"/api/project/{project.id}", headers=_headers(editor_user), json={"name": "Authorized edit"}
+    ).status_code == 200
+    assert client.get(f"/api/project/{project.id}", headers=_headers(attacker)).status_code == 404
+    assert client.get(f"/api/organizations/{org.id}/projects", headers=_headers(attacker)).status_code == 404
+    assert client.delete(
+        f"/api/organizations/{org.id}/projects/{project.id}", headers=_headers(viewer_user)
+    ).status_code == 404
 
 
 def test_saas_routes_no_longer_share_anonymous_identity(client):

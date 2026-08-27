@@ -10,5 +10,10 @@
     <form id="member-form"><input id="member-email" type="email" placeholder="member@example.com" required>
       <select id="member-role" required></select><button type="submit">Add member</button></form>
     <h2>Tenant usage</h2><div id="tenant-usage">Usage unavailable</div>
+    <h2>Share an owned project</h2>
+    <form id="project-share-form"><input id="project-share-id" type="number" min="1" placeholder="Project ID" required>
+      <select id="project-share-access"><option value="view">View</option><option value="edit">Edit</option></select>
+      <button type="submit">Share project</button></form>
   </section>
+  <section><h2>Shared projects</h2><div id="shared-projects">No shared projects.</div></section>
 </main></body></html>

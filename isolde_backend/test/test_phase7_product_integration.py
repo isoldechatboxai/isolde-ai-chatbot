@@ -2,6 +2,9 @@ from flask_jwt_extended import decode_token
 
 from app.models.auth_model import AuthSession
 from app.models.user import User
+from app.models.collaboration_model import Organization
+from app.models.user import Setting
+from app.services.provider_router import ProviderManager
 
 
 def test_admin_login_creates_revocable_database_session(client, db):
@@ -29,6 +32,26 @@ def test_admin_login_creates_revocable_database_session(client, db):
     operations = client.get("/api/admin/operations", headers=headers)
     assert operations.status_code == 200
     assert "operations" in operations.get_json()
+    assert client.get("/api/admin/operations/log-summary", headers=headers).status_code == 200
+
+    tenant = Organization(name="Admin Managed", owner_id=admin.id)
+    db.session.add(tenant)
+    db.session.commit()
+    updated = client.patch(
+        f"/api/admin/tenants/{tenant.id}", headers=headers, json={"status": "Suspended"}
+    )
+    assert updated.status_code == 200
+    assert updated.get_json()["tenant"]["status"] == "Suspended"
+
+    saved = client.post(
+        "/api/admin/settings", headers=headers,
+        json={"key": "openai_api_key", "value": "provider-secret-value"},
+    )
+    assert saved.status_code == 200
+    stored = Setting.query.filter_by(key="openai_api_key").one()
+    assert stored.value.startswith("enc:")
+    assert "provider-secret-value" not in client.get("/api/admin/settings", headers=headers).get_data(as_text=True)
+    assert ProviderManager()._get_setting("openai_api_key") == "provider-secret-value"
     assert client.post("/api/logout", headers=headers).status_code == 200
     assert client.get("/api/admin/dashboard", headers=headers).status_code == 401
 

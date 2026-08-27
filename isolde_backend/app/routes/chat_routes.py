@@ -7,6 +7,8 @@ from app.models.user import User, Setting, Broadcast
 from app.models.memory_model import UserMemory
 
 from app.services.provider_router import generate_reply, generate_reply_stream, generate_reply_with_usage
+from app.services.credit_service import deduct_authoritative_usage
+from app.models.billing_model import CreditBalance
 from app.services.rag_service import search as rag_search, build_context_block
 from app.services.feedback_service import find_relevant_corrections, build_correction_context
 from app.services.language_service import detect_language, language_instruction
@@ -430,6 +432,10 @@ def chat():
         except Exception:
             return jsonify({"error": "Database error while loading conversation."}), 500
 
+    balance = CreditBalance.query.filter_by(user_id=user_id).first() if user_id else None
+    if balance and balance.credits <= 0:
+        return jsonify({"error": "AI credits are exhausted."}), 402
+
     try:
         provider_result = generate_reply_with_usage(
             message,
@@ -461,26 +467,26 @@ def chat():
 
         try:
             db.session.add_all([user_msg, bot_msg])
+            db.session.flush()
 
             if convo.title == "New Conversation":
                 convo.title = message[:50]
+
+            if provider_result.tokens_used is not None:
+                deduct_authoritative_usage(
+                    user_id, provider_result.tokens_used,
+                    f"chat:{bot_msg.id}:{provider_result.provider}",
+                    current_app.config.get("CREDIT_TOKENS_PER_UNIT", 1000),
+                )
+                user = db.session.get(User, user_id)
+                if user:
+                    user.tokens_used = (user.tokens_used or 0) + provider_result.tokens_used
 
             db.session.commit()
 
         except Exception as e:
             db.session.rollback()
             current_app.logger.error(f"Error saving messages: {e}")
-
-        try:
-            user = db.session.get(User, user_id)
-
-            if user and provider_result.tokens_used is not None:
-                user.tokens_used = (user.tokens_used or 0) + provider_result.tokens_used
-                db.session.commit()
-
-        except Exception as e:
-            db.session.rollback()
-            current_app.logger.error(f"Error updating token analytics: {e}")
 
     log_event(
         current_app,

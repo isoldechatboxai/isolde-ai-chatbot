@@ -24,7 +24,10 @@ async function loadOrganizations() {
 
 async function loadOrganization(org) {
   currentOrg = org; message.textContent = "";
-  const [members, roles] = await Promise.all([api(`/api/organizations/${org.id}/members`), api(`/api/organizations/${org.id}/roles`)]);
+  const [members, roles, projects] = await Promise.all([
+    api(`/api/organizations/${org.id}/members`), api(`/api/organizations/${org.id}/roles`),
+    api(`/api/organizations/${org.id}/projects`),
+  ]);
   const list = document.getElementById("member-list"); list.replaceChildren();
   for (const member of members.members) {
     const row = document.createElement("p"); row.textContent = `${member.name || member.email} — ${member.role?.name || "No role"} — ${member.status}`; list.append(row);
@@ -33,6 +36,9 @@ async function loadOrganization(org) {
   const user = JSON.parse(localStorage.getItem("user") || "{}"); controls.hidden = org.owner_id !== user.id;
   const roleSelect = document.getElementById("member-role"); roleSelect.replaceChildren();
   for (const role of roles.roles) { const option = document.createElement("option"); option.value = role.id; option.textContent = role.name; roleSelect.append(option); }
+  const projectList = document.getElementById("shared-projects"); projectList.replaceChildren();
+  for (const project of projects.projects) { const row = document.createElement("p"); row.textContent = `${project.name} — ${project.shared_access}`; projectList.append(row); }
+  if (!projects.projects.length) projectList.textContent = "No shared projects.";
   if (!controls.hidden) {
     const usage = await api(`/api/organizations/${org.id}/usage`);
     document.getElementById("tenant-usage").textContent = `${usage.tokens_used} recorded tokens; ${usage.usage}`;
@@ -47,6 +53,15 @@ document.getElementById("member-form").addEventListener("submit", async event =>
   try {
     await api(`/api/organizations/${currentOrg.id}/members`, {method: "POST", body: JSON.stringify({email: document.getElementById("member-email").value, role_id: Number(document.getElementById("member-role").value)})});
     await loadOrganization(currentOrg); message.textContent = "Member added.";
+  } catch (error) { message.textContent = error.message; }
+});
+document.getElementById("project-share-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  try {
+    const projectId = Number(document.getElementById("project-share-id").value);
+    const access_level = document.getElementById("project-share-access").value;
+    await api(`/api/organizations/${currentOrg.id}/projects/${projectId}`, {method: "POST", body: JSON.stringify({access_level})});
+    await loadOrganization(currentOrg); message.textContent = "Project shared.";
   } catch (error) { message.textContent = error.message; }
 });
 loadOrganizations().catch(error => { message.textContent = error.message; });

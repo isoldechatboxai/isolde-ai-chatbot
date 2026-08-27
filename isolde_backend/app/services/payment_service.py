@@ -65,6 +65,26 @@ class StripePaymentProvider:
             raise ValueError("Invalid webhook payload.")
         return event
 
+    def cancel_subscription(self, subscription_id):
+        response = requests.delete(
+            f"https://api.stripe.com/v1/subscriptions/{subscription_id}",
+            auth=(self.secret, ""), timeout=15,
+        )
+        if not response.ok:
+            current_app.logger.error("Payment cancellation returned HTTP %s.", response.status_code)
+            raise RuntimeError("Payment provider rejected cancellation.")
+        return response.json()
+
+    def refund_payment(self, payment_id, idempotency_key):
+        response = requests.post(
+            "https://api.stripe.com/v1/refunds", auth=(self.secret, ""), timeout=15,
+            headers={"Idempotency-Key": idempotency_key}, data={"payment_intent": payment_id},
+        )
+        if not response.ok:
+            current_app.logger.error("Payment refund returned HTTP %s.", response.status_code)
+            raise RuntimeError("Payment provider rejected refund.")
+        return response.json()
+
 
 def get_payment_provider():
     provider = current_app.config.get("PAYMENT_PROVIDER", "").lower()

@@ -7,6 +7,7 @@ All endpoints (except admin login) require a valid JWT with role in
 
 import secrets
 import string
+import os
 from functools import wraps
 
 from flask import Blueprint, request, jsonify, current_app
@@ -142,6 +143,14 @@ def admin_billing_summary(admin_user):
     }}), 200
 
 
+@admin_bp.route("/admin/billing/subscriptions", methods=["GET"], strict_slashes=False)
+@jwt_required()
+@admin_required
+def admin_subscriptions(admin_user):
+    subscriptions = Subscription.query.order_by(Subscription.updated_at.desc()).all()
+    return jsonify({"status": "success", "subscriptions": [item.to_dict() for item in subscriptions]}), 200
+
+
 @admin_bp.route("/admin/provider-status", methods=["GET"], strict_slashes=False)
 @jwt_required()
 @admin_required
@@ -173,6 +182,62 @@ def admin_operations(admin_user):
         "rate_limit_storage": "Redis" if current_app.config.get("RATELIMIT_STORAGE_URI", "").startswith("redis") else "Not configured",
         "logs": "File logging enabled" if current_app.config.get("LOG_TO_FILE") else "Application logger",
     }}), 200
+
+
+@admin_bp.route("/admin/tenants/<int:org_id>", methods=["PATCH"], strict_slashes=False)
+@jwt_required()
+@admin_required
+def admin_update_tenant(admin_user, org_id):
+    organization = db.session.get(Organization, org_id)
+    if not organization:
+        return jsonify({"status": "error", "message": "Tenant not found."}), 404
+    status = str((request.get_json(silent=True) or {}).get("status") or "")
+    if status not in {"Active", "Suspended", "Archived"}:
+        return jsonify({"status": "error", "message": "Invalid tenant status."}), 400
+    organization.status = status
+    db.session.commit()
+    return jsonify({"status": "success", "tenant": organization.to_dict()}), 200
+
+
+@admin_bp.route("/admin/billing/subscriptions/<user_id>/cancel", methods=["POST"], strict_slashes=False)
+@jwt_required()
+@admin_required
+def admin_cancel_subscription(admin_user, user_id):
+    subscription = Subscription.query.filter_by(user_id=user_id).first()
+    if not subscription or not subscription.provider_subscription_id:
+        return jsonify({"status": "error", "message": "Cancellable subscription not found."}), 404
+    try:
+        from app.services.payment_service import get_payment_provider
+        result = get_payment_provider().cancel_subscription(subscription.provider_subscription_id)
+    except Exception:
+        current_app.logger.exception("Admin subscription cancellation failed.")
+        return jsonify({"status": "error", "message": "Subscription cancellation failed or is not configured."}), 503
+    subscription.status = str(result.get("status") or "cancellation_pending")
+    db.session.commit()
+    return jsonify({"status": "success", "subscription": subscription.to_dict()}), 200
+
+
+@admin_bp.route("/admin/operations/log-summary", methods=["GET"], strict_slashes=False)
+@jwt_required()
+@admin_required
+def admin_log_summary(admin_user):
+    counts = {"error": 0, "warning": 0}
+    if not current_app.config.get("LOG_TO_FILE"):
+        return jsonify({"status": "success", "summary": counts, "source": "Not configured"}), 200
+    log_dir = current_app.config.get("LOG_DIR", "")
+    try:
+        candidates = [os.path.join(log_dir, name) for name in os.listdir(log_dir) if name.endswith(".log")]
+        if not candidates:
+            return jsonify({"status": "success", "summary": counts, "source": "No log files"}), 200
+        latest = max(candidates, key=os.path.getmtime)
+        with open(latest, "r", encoding="utf-8", errors="replace") as handle:
+            lines = handle.readlines()[-1000:]
+        counts["error"] = sum("ERROR" in line.upper() for line in lines)
+        counts["warning"] = sum("WARNING" in line.upper() for line in lines)
+        return jsonify({"status": "success", "summary": counts, "source": "application log"}), 200
+    except OSError:
+        current_app.logger.exception("Admin log summary could not be read.")
+        return jsonify({"status": "error", "message": "Log summary unavailable."}), 503
 
 
 # ---------------------------------------------------------------------------
@@ -377,7 +442,10 @@ def list_settings(admin_user):
     settings = Setting.query.all()
     return jsonify({
         "status": "success",
-        "settings": [s.to_dict() for s in settings],
+        "settings": [{
+            "key": setting.key,
+            "value": "********" if setting.key.endswith(("_api_key", "_secret", "_token")) else setting.value,
+        } for setting in settings],
     }), 200
 
 
@@ -391,6 +459,12 @@ def save_setting(admin_user):
 
     if not key:
         return jsonify({"status": "error", "message": "Setting key is required."}), 400
+
+    if key.endswith(("_api_key", "_secret", "_token")):
+        if not isinstance(value, str) or not value.strip() or value == "********":
+            return jsonify({"status": "error", "message": "A new secret value is required."}), 400
+        from app.services.security_service import SecurityService
+        value = "enc:" + SecurityService().encrypt_data(value.strip())
 
     try:
         existing = Setting.query.filter_by(key=key).first()

@@ -3,6 +3,8 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app import db
 from app.models.workspace_model import Workspace, Project
+from app.models.collaboration_model import OrganizationMember, OrganizationProject, OrganizationRole
+import json
 
 workspace_bp = Blueprint("workspace_bp", __name__)
 
@@ -13,6 +15,28 @@ def get_current_user_id():
         return get_jwt_identity()
     except Exception:
         return None
+
+
+def _shared_project(project_id, user_id, require_edit=False):
+    share = OrganizationProject.query.join(
+        OrganizationMember, OrganizationMember.org_id == OrganizationProject.org_id
+    ).filter(
+        OrganizationProject.project_id == project_id,
+        OrganizationMember.user_id == str(user_id),
+        OrganizationMember.status == "Active",
+    ).first()
+    if not share:
+        return None
+    if require_edit:
+        member = OrganizationMember.query.filter_by(org_id=share.org_id, user_id=str(user_id), status="Active").first()
+        role = db.session.get(OrganizationRole, member.role_id) if member else None
+        try:
+            permissions = json.loads(role.permissions or "[]") if role else []
+        except (TypeError, ValueError):
+            permissions = []
+        if share.access_level != "edit" or not ({"all", "manage_projects"} & set(permissions)):
+            return None
+    return db.session.get(Project, project_id)
 
 
 # ---------------------------------------------------------------------------
@@ -206,7 +230,7 @@ def get_project(project_id: int):
         project = Project.query.join(Workspace).filter(
             Project.id == project_id,
             Workspace.user_id == user_id
-        ).first()
+        ).first() or _shared_project(project_id, user_id)
         if not project:
             return jsonify({"error": "Project not found"}), 404
 
@@ -227,7 +251,7 @@ def update_project(project_id: int):
         project = Project.query.join(Workspace).filter(
             Project.id == project_id,
             Workspace.user_id == user_id
-        ).first()
+        ).first() or _shared_project(project_id, user_id, require_edit=True)
         if not project:
             return jsonify({"error": "Project not found"}), 404
 

@@ -98,3 +98,21 @@ class Invitation(db.Model):
             "status": self.status,
             "created_at": self.created_at.isoformat() if self.created_at else None
         }
+
+
+class OrganizationProject(db.Model):
+    __tablename__ = "organization_projects"
+
+    id = db.Column(db.Integer, primary_key=True)
+    org_id = db.Column(db.Integer, db.ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    project_id = db.Column(db.Integer, db.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    shared_by = db.Column(db.String(36), nullable=False)
+    access_level = db.Column(db.String(20), nullable=False, default="view")
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    def to_dict(self):
+        return {
+            "id": self.id, "org_id": self.org_id, "project_id": self.project_id,
+            "access_level": self.access_level,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }

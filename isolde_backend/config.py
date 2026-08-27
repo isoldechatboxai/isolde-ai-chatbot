@@ -287,6 +287,7 @@ class Config:
     UPLOAD_RATE_LIMIT = os.getenv("UPLOAD_RATE_LIMIT", "10 per minute").strip()
     OAUTH_RATE_LIMIT = os.getenv("OAUTH_RATE_LIMIT", "20 per minute").strip()
     BILLING_RATE_LIMIT = os.getenv("BILLING_RATE_LIMIT", "10 per minute").strip()
+    CREDIT_TOKENS_PER_UNIT = _env_int("CREDIT_TOKENS_PER_UNIT", 1000)
 
     MAIL_SERVER = os.getenv("MAIL_SERVER", "").strip()
     MAIL_PORT = _env_int("MAIL_PORT", 587)

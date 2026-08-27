@@ -125,6 +125,9 @@ def _apply_security_sensitive_rate_limits(app):
         "studio_bp.generate_video": app.config["CHAT_RATE_LIMIT"],
         "billing_bp.create_checkout": app.config["BILLING_RATE_LIMIT"],
         "billing_bp.payment_webhook": app.config["BILLING_RATE_LIMIT"],
+        "billing_bp.cancel_subscription": app.config["BILLING_RATE_LIMIT"],
+        "billing_bp.refund_invoice": app.config["BILLING_RATE_LIMIT"],
+        "admin.admin_cancel_subscription": app.config["BILLING_RATE_LIMIT"],
     }
     for endpoint, limit_value in limits.items():
         view = app.view_functions.get(endpoint)

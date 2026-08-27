@@ -5,6 +5,7 @@ from app import db
 from app.models.billing_model import Subscription, CreditBalance, Invoice, PaymentEvent
 from app.services.payment_service import get_payment_provider, PaymentNotConfigured
 from sqlalchemy.exc import IntegrityError
+from app.utils.logger import log_event
 
 billing_bp = Blueprint("billing_bp", __name__)
 
@@ -117,6 +118,52 @@ def create_checkout():
         return jsonify({"error": "Payment checkout could not be created."}), 502
 
 
+@billing_bp.route("/billing/subscription/cancel", methods=["POST"])
+@jwt_required()
+def cancel_subscription():
+    user_id = str(get_jwt_identity())
+    subscription = Subscription.query.filter_by(user_id=user_id).first()
+    if not subscription or not subscription.provider_subscription_id:
+        return jsonify({"error": "No cancellable provider subscription exists."}), 404
+    try:
+        result = get_payment_provider().cancel_subscription(subscription.provider_subscription_id)
+    except PaymentNotConfigured as error:
+        return jsonify({"error": str(error)}), 503
+    except Exception:
+        current_app.logger.exception("Subscription cancellation failed.")
+        return jsonify({"error": "Subscription cancellation failed."}), 502
+    subscription.status = str(result.get("status") or "cancellation_pending")
+    db.session.commit()
+    log_event(current_app, "BILLING_CANCEL", subscription.provider_subscription_id, user_id)
+    return jsonify({"subscription": subscription.to_dict()}), 200
+
+
+@billing_bp.route("/billing/invoices/<int:invoice_id>/refund", methods=["POST"])
+@jwt_required()
+def refund_invoice(invoice_id):
+    user_id = str(get_jwt_identity())
+    invoice = Invoice.query.filter_by(id=invoice_id, user_id=user_id).first()
+    if not invoice:
+        return jsonify({"error": "Invoice not found."}), 404
+    if invoice.status == "refunded":
+        return jsonify({"invoice": invoice.to_dict(), "status": "already_refunded"}), 200
+    if invoice.status != "paid" or not invoice.provider_payment_id:
+        return jsonify({"error": "Invoice is not refundable."}), 409
+    try:
+        result = get_payment_provider().refund_payment(
+            invoice.provider_payment_id, f"invoice-refund-{invoice.id}"
+        )
+    except PaymentNotConfigured as error:
+        return jsonify({"error": str(error)}), 503
+    except Exception:
+        current_app.logger.exception("Payment refund failed.")
+        return jsonify({"error": "Payment refund failed."}), 502
+    invoice.status = "refunded" if result.get("status") in {"succeeded", "pending"} else "refund_pending"
+    db.session.commit()
+    log_event(current_app, "BILLING_REFUND", invoice.invoice_uid, user_id)
+    return jsonify({"invoice": invoice.to_dict()}), 200
+
+
 @billing_bp.route("/billing/webhook", methods=["POST"])
 def payment_webhook():
     try:
@@ -139,6 +186,7 @@ def payment_webhook():
             return jsonify({"error": "Payment metadata is invalid."}), 422
         subscription = Subscription.query.filter_by(user_id=user_id).first() or Subscription(user_id=user_id)
         subscription.plan_name, subscription.status = plan, "active"
+        subscription.provider_subscription_id = payment_object.get("subscription") or subscription.provider_subscription_id
         db.session.add(subscription)
         balance = CreditBalance.query.filter_by(user_id=user_id).first() or CreditBalance(user_id=user_id)
         balance.credits = PLAN_CREDITS[plan]
@@ -150,11 +198,20 @@ def payment_webhook():
                 invoice_uid=invoice_id, user_id=user_id,
                 amount=float(payment_object.get("amount_paid") or 0) / 100,
                 currency=str(payment_object.get("currency") or "usd").upper(), status="paid",
+                provider_payment_id=payment_object.get("payment_intent"),
             ))
     elif event_type == "customer.subscription.deleted" and user_id:
         subscription = Subscription.query.filter_by(user_id=user_id).first()
         if subscription:
             subscription.status = "cancelled"
+            balance = CreditBalance.query.filter_by(user_id=user_id).first()
+            if balance:
+                balance.credits = min(balance.credits, PLAN_CREDITS["Free"])
+    elif event_type in {"charge.refunded", "refund.updated"}:
+        payment_id = str(payment_object.get("payment_intent") or payment_object.get("id") or "")
+        invoice = Invoice.query.filter_by(provider_payment_id=payment_id).first() if payment_id else None
+        if invoice:
+            invoice.status = "refunded"
     db.session.add(PaymentEvent(provider="stripe", event_id=event["id"], event_type=event_type))
     try:
         db.session.commit()

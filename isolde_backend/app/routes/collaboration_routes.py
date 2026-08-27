@@ -4,8 +4,9 @@ from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 
 from app import db
-from app.models.collaboration_model import Invitation, Organization, OrganizationMember, OrganizationRole, Team
+from app.models.collaboration_model import Invitation, Organization, OrganizationMember, OrganizationRole, Team, OrganizationProject
 from app.models.user import User
+from app.models.workspace_model import Project, Workspace
 from app.utils.validators import is_valid_email
 
 collaboration_bp = Blueprint("collaboration_bp", __name__)
@@ -193,6 +194,49 @@ def organization_usage(org_id):
         "members": [{"user_id": user.id, "name": user.name, "tokens_used": user.tokens_used} for user in users],
         "tokens_used": sum(user.tokens_used or 0 for user in users),
     }), 200
+
+
+@collaboration_bp.route("/organizations/<int:org_id>/projects", methods=["GET"])
+@jwt_required()
+def organization_projects(org_id):
+    if not _organization_for_member(org_id, _user_id()):
+        return jsonify({"error": "Organization not found."}), 404
+    shares = OrganizationProject.query.filter_by(org_id=org_id).all()
+    projects = []
+    for share in shares:
+        project = db.session.get(Project, share.project_id)
+        if project:
+            projects.append({**project.to_dict(), "shared_access": share.access_level})
+    return jsonify({"projects": projects}), 200
+
+
+@collaboration_bp.route("/organizations/<int:org_id>/projects/<int:project_id>", methods=["POST", "DELETE"])
+@jwt_required()
+def manage_organization_project(org_id, project_id):
+    org = _organization_for_owner(org_id, _user_id())
+    if not org:
+        return jsonify({"error": "Organization not found."}), 404
+    project = Project.query.join(Workspace).filter(Project.id == project_id, Workspace.user_id == org.owner_id).first()
+    if not project:
+        return jsonify({"error": "Project not found."}), 404
+    share = OrganizationProject.query.filter_by(project_id=project_id).first()
+    if request.method == "DELETE":
+        if not share or share.org_id != org_id:
+            return jsonify({"error": "Shared project not found."}), 404
+        db.session.delete(share)
+        db.session.commit()
+        return jsonify({"message": "Project sharing removed."}), 200
+    access_level = str((request.get_json(silent=True) or {}).get("access_level") or "view")
+    if access_level not in {"view", "edit"}:
+        return jsonify({"error": "Access level must be view or edit."}), 400
+    if share and share.org_id != org_id:
+        return jsonify({"error": "Project is already shared with another organization."}), 409
+    if not share:
+        share = OrganizationProject(org_id=org_id, project_id=project_id, shared_by=_user_id())
+        db.session.add(share)
+    share.access_level = access_level
+    db.session.commit()
+    return jsonify({"message": "Project shared.", "share": share.to_dict()}), 200
 
 
 @collaboration_bp.route("/organizations/<int:org_id>/invite", methods=["POST"])

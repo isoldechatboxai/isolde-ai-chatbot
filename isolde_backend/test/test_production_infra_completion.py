@@ -107,8 +107,8 @@ def test_empty_database_bootstrap_creates_current_schema(tmp_path):
     assert result.exit_code == 0, result.output
     with bootstrap_app.app_context():
         tables = set(inspect(extension_db.engine).get_table_names())
-        assert {"users", "rag_documents", "rag_chunks", "alembic_version"} <= tables
-        assert extension_db.session.execute(text("SELECT version_num FROM alembic_version")).scalar() == "20260826_000003"
+        assert {"users", "rag_documents", "rag_chunks", "billing_credit_ledger", "organization_projects", "alembic_version"} <= tables
+        assert extension_db.session.execute(text("SELECT version_num FROM alembic_version")).scalar() == "20260826_000005"
 
 
 def test_bootstrap_refuses_nonempty_unversioned_database(tmp_path):
@@ -139,23 +139,27 @@ def test_security_sensitive_routes_have_targeted_rate_limits(app):
         "ai_studio_bp.test_playground_prompt", "admin.admin_login",
         "unified_engine_bp.handle_unified_chat", "memory_bp.save_memory",
         "studio_bp.generate_image", "studio_bp.generate_video",
+        "billing_bp.cancel_subscription", "billing_bp.refund_invoice",
+        "billing_bp.create_checkout", "billing_bp.payment_webhook",
+        "admin.admin_cancel_subscription",
     }
     for endpoint in sensitive:
         assert getattr(app.view_functions[endpoint], "__security_rate_limited__", False), endpoint
     assert not getattr(app.view_functions["auth.list_sessions"], "__security_rate_limited__", False)
 
 
-def test_existing_database_migrates_from_auth_head_to_rag_head(app):
-    from app.models.billing_model import PaymentEvent
-    with app.app_context():
-        PaymentEvent.__table__.drop(extension_db.engine, checkfirst=True)
-        RAGChunk.__table__.drop(extension_db.engine, checkfirst=True)
-        RAGDocument.__table__.drop(extension_db.engine, checkfirst=True)
+def test_existing_database_migrates_from_previous_release_head(app):
     runner = app.test_cli_runner()
-    stamped = runner.invoke(args=["db", "stamp", "20260826_000001"])
+    stamped = runner.invoke(args=["db", "stamp", "20260826_000005"])
     assert stamped.exit_code == 0, stamped.output
+    downgraded = runner.invoke(args=["db", "downgrade", "20260826_000003"])
+    assert downgraded.exit_code == 0, downgraded.output
+    with app.app_context():
+        tables = set(inspect(extension_db.engine).get_table_names())
+        assert "billing_credit_ledger" not in tables
+        assert "organization_projects" not in tables
     upgraded = runner.invoke(args=["db", "upgrade"])
     assert upgraded.exit_code == 0, upgraded.output
     with app.app_context():
-        assert {"rag_documents", "rag_chunks"} <= set(inspect(extension_db.engine).get_table_names())
-        assert extension_db.session.execute(text("SELECT version_num FROM alembic_version")).scalar() == "20260826_000003"
+        assert {"billing_credit_ledger", "organization_projects"} <= set(inspect(extension_db.engine).get_table_names())
+        assert extension_db.session.execute(text("SELECT version_num FROM alembic_version")).scalar() == "20260826_000005"
