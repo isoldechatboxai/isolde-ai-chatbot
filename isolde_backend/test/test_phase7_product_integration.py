@@ -92,7 +92,8 @@ def test_phase7_pages_are_real_api_clients_without_fake_paid_actions(client):
     workspace_page = client.get("/")
     assert workspace_page.status_code == 200
     for destination in (
-        b"/ai_studio.html", b"/smart_library.html", b"/billing.html", b"/organization.html",
+        b"/ai_studio.html", b"/smart_library.html", b"/workflows.html",
+        b"/billing.html", b"/organization.html",
     ):
         assert destination in workspace_page.data
     assert b"Add from Drive" not in workspace_page.data
@@ -112,6 +113,17 @@ def test_phase7_pages_are_real_api_clients_without_fake_paid_actions(client):
     assert studio_page.status_code == 200
     assert b"Create Model" not in studio_page.data
     assert b"Fine-tuning is not configured" in studio_page.data
+
+    workflow_page = client.get("/workflows.html")
+    assert workflow_page.status_code == 200
+    assert b"Workflow execution is" in workflow_page.data
+    assert b"NOT_SUPPORTED" in workflow_page.data
+    assert b"workflows.js" in workflow_page.data
+
+    workflow_script = client.get("/workflows.js")
+    assert workflow_script.status_code == 200
+    assert b'workflowApi("/api/workflows"' in workflow_script.data
+    assert b"/execute" not in workflow_script.data
 
 
 def test_frontend_scripts_use_server_authoritative_product_endpoints(client):

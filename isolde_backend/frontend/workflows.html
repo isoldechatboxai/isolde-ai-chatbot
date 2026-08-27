@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Isolde — Workflows</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="workflows.js" defer></script>
+</head>
+<body>
+  <main style="max-width:960px;margin:2rem auto;padding:1rem">
+    <p><a href="/">← Workspace</a> · <a href="/ai_studio.html">AI Studio</a> · <a href="/smart_library.html">Files &amp; RAG</a> · <a href="/billing.html">Usage &amp; Billing</a> · <a href="/organization.html">Organization</a></p>
+    <h1>Workflows</h1>
+    <p>Manual workflow definitions are available. Workflow execution is <strong>NOT_SUPPORTED</strong>.</p>
+    <div id="workflow-message" role="status" aria-live="polite">Loading…</div>
+
+    <section>
+      <h2>Create manual workflow</h2>
+      <form id="workflow-form">
+        <label>Workspace <select id="workflow-workspace" required></select></label>
+        <label>Name <input id="workflow-name" maxlength="255" required></label>
+        <label>Description <textarea id="workflow-description" rows="3"></textarea></label>
+        <button type="submit" id="workflow-create">Create workflow</button>
+      </form>
+    </section>
+
+    <section>
+      <h2>Your workflows</h2>
+      <div id="workflow-list"></div>
+      <p id="workflow-empty" hidden>No workflows yet.</p>
+    </section>
+  </main>
+</body>
+</html>
