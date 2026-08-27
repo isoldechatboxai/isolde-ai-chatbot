@@ -1746,23 +1746,43 @@ onDocumentReady(() => {
     ["keydown", "keyup", "keypress", "input"].forEach((evt) => { input.addEventListener(evt, (e) => e.stopPropagation()); });
   }
 
-  function openWorkspace(type, e) {
+  async function openWorkspace(type, e) {
     if (e) { e.preventDefault(); e.stopPropagation(); }
     if (!modal) return;
 
     if (type === "image") {
-      if (title) title.textContent = "🎨 Images Studio Workspace";
-      if (desc) desc.textContent = "Image generation requires a configured external provider.";
+      if (title) title.textContent = "ISOLDE AI IMAGE";
       if (input) input.placeholder = "e.g., A futuristic cyberpunk city in neon lights, 4k...";
     } else {
-      if (title) title.textContent = "🎬 Videos Generation Suite";
-      if (desc) desc.textContent = "Video generation requires a configured external provider.";
+      if (title) title.textContent = "ISOLDE AI VIDEO";
       if (input) input.placeholder = "e.g., Drone shot flying across snow-capped mountains at sunrise...";
     }
 
     if (input) input.value = "";
     if (resultContainer) resultContainer.style.display = "none";
     modal.style.display = "flex";
+    if (runBtn) runBtn.disabled = true;
+    if (desc) desc.textContent = "Checking provider capability…";
+    try {
+      const response = await fetch("/api/studio/capabilities", { headers: getAuthHeaders() });
+      const data = await response.json().catch(() => ({}));
+      if (response.status === 401) {
+        localStorage.removeItem("access_token");
+        window.location.replace("/login.html");
+        return;
+      }
+      const capability = type === "image" ? data.image : data.video;
+      if (capability === "READY") {
+        if (desc) desc.textContent = "Provider ready.";
+        if (runBtn) runBtn.disabled = false;
+      } else if (desc) {
+        desc.textContent = capability === "NOT_SUPPORTED"
+          ? "Configured provider is not supported — NOT_SUPPORTED"
+          : "Provider not configured — NOT_CONFIGURED";
+      }
+    } catch (_) {
+      if (desc) desc.textContent = "Capability check unavailable. Retry by reopening this panel.";
+    }
     setTimeout(() => { if (input) input.focus(); }, 100);
   }
 
@@ -1795,7 +1815,7 @@ onDocumentReady(() => {
       if (imgOutput) imgOutput.style.display = "none";
 
       try {
-        const isImage = title && title.textContent.includes("Images");
+        const isImage = title && title.textContent.includes("IMAGE");
         const endpoint = isImage ? "/api/studio/generate-image" : "/api/studio/generate-video";
         const res = await fetch(endpoint, {
           method: "POST",

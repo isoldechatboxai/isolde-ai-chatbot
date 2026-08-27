@@ -30,4 +30,8 @@ def studio_capabilities():
     return jsonify({
         "image": "NOT_CONFIGURED" if not current_app.config.get("IMAGE_PROVIDER") else "NOT_SUPPORTED",
         "video": "NOT_CONFIGURED" if not current_app.config.get("VIDEO_PROVIDER") else "NOT_SUPPORTED",
+        "watermark": {
+            "status": "NOT_APPLICABLE",
+            "reason": "Watermarking is applied only by an implemented generated-media pipeline."
+        },
     }), 200
