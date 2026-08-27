@@ -89,6 +89,16 @@ def test_admin_user_status_mutation_is_validated_and_returns_payload(client, db)
 
 
 def test_phase7_pages_are_real_api_clients_without_fake_paid_actions(client):
+    workspace_page = client.get("/")
+    assert workspace_page.status_code == 200
+    for destination in (
+        b"/ai_studio.html", b"/smart_library.html", b"/billing.html", b"/organization.html",
+    ):
+        assert destination in workspace_page.data
+    assert b"Add from Drive" not in workspace_page.data
+    assert b"Create music" not in workspace_page.data
+    assert b"Cloud imports are NOT_SUPPORTED" in workspace_page.data
+
     admin_page = client.get("/admin.html")
     assert admin_page.status_code == 200
     assert b"admin.js" in admin_page.data

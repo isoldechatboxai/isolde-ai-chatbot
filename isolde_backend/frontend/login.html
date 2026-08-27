@@ -332,7 +332,10 @@
                     button.addEventListener('click', () => window.location.assign(`/api/oauth/${provider}/start`));
                     container.appendChild(button);
                 });
-            }).catch(() => {});
+            }).catch(() => {
+                const container = document.getElementById('oauth-options');
+                container.textContent = 'OAuth provider status unavailable. Email/password login remains available.';
+            });
 
             // Modal Logic
             document.getElementById('open-forgot-modal').addEventListener('click', (e) => {
@@ -352,13 +355,14 @@
                         method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({email})
                     });
                     const data = await res.json();
+                    if (!res.ok) throw new Error(data.error || `Reset request failed (${res.status}).`);
                     m.textContent = data.message || "Reset instructions requested";
                     m.className = "message success";
                     document.getElementById('otp-group').style.display = 'block';
                     document.getElementById('send-otp-btn').style.display = 'none';
                     document.getElementById('verify-reset-btn').style.display = 'block';
                 } catch(err) {
-                    m.textContent = "Unable to request reset instructions";
+                    m.textContent = err.message || "Unable to request reset instructions";
                     m.className = "message error";
                 }
             });

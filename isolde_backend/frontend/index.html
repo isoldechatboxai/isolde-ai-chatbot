@@ -31,14 +31,23 @@
     </button>
 
     <ul class="nav-links-list">
+      <li class="nav-links-item" role="button" tabindex="0" onclick="location.href='/'">
+        <span aria-hidden="true">💬</span><span>Chat &amp; Dashboard</span>
+      </li>
+      <li class="nav-links-item" role="button" tabindex="0" onclick="location.href='/ai_studio.html'">
+        <span aria-hidden="true">✨</span><span>AI Studio</span>
+      </li>
       <li class="nav-links-item" id="images-studio-btn" role="button" tabindex="0">
         <span aria-hidden="true">🎨</span><span>ISOLDE AI IMAGE</span>
       </li>
       <li class="nav-links-item" id="videos-gen-btn" role="button" tabindex="0">
         <span aria-hidden="true">🎬</span><span>ISOLDE AI VIDEO</span>
       </li>
-      <li class="nav-links-item" id="smart-library-btn" role="button" tabindex="0">
-        <span aria-hidden="true">📚</span><span>Smart Library</span>
+      <li class="nav-links-item" id="smart-library-btn" role="button" tabindex="0" onclick="location.href='/smart_library.html'">
+        <span aria-hidden="true">📚</span><span>Files &amp; RAG</span>
+      </li>
+      <li class="nav-links-item" role="button" tabindex="0" onclick="location.href='/billing.html'">
+        <span aria-hidden="true">💳</span><span>Usage &amp; Billing</span>
       </li>
       <li class="nav-links-item" role="button" tabindex="0" onclick="location.href='/organization.html'">
         <span aria-hidden="true">🏢</span><span>Organization</span>
@@ -156,32 +165,9 @@
             </label>
             <input type="file" id="file-upload-input" class="file-upload-input" tabindex="-1" />
 
-            <div class="attachment-menu-item" role="menuitem">
-              <span class="menu-item-icon" aria-hidden="true">☁️</span>
-              <span class="menu-item-text">Add from Drive</span>
-              <span class="menu-item-arrow" aria-hidden="true">›</span>
-            </div>
-            <div class="attachment-menu-item" role="menuitem">
-              <span class="menu-item-icon" aria-hidden="true">⋯</span>
-              <span class="menu-item-text">More uploads</span>
-              <span class="menu-item-arrow" aria-hidden="true">›</span>
-            </div>
-
             <div class="attachment-divider" role="separator"></div>
-
-            <div class="attachment-menu-item" role="menuitem">
-              <span class="menu-item-icon" aria-hidden="true">🖼️</span>
-              <span class="menu-item-text">Create image</span>
-              <span class="badge-new">New</span>
-            </div>
-            <div class="attachment-menu-item" role="menuitem">
-              <span class="menu-item-icon" aria-hidden="true">🎬</span>
-              <span class="menu-item-text">Create video</span>
-            </div>
-            <div class="attachment-menu-item" role="menuitem">
-              <span class="menu-item-icon" aria-hidden="true">🎵</span>
-              <span class="menu-item-text">Create music</span>
-              <span class="badge-new">New</span>
+            <div class="attachment-menu-item" role="status" aria-live="polite">
+              <span class="menu-item-text">Cloud imports are NOT_SUPPORTED</span>
             </div>
 
           </div>
