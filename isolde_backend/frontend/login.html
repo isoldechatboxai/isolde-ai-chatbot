@@ -290,6 +290,7 @@
 
                     if(res.ok && data.access_token) {
                         localStorage.setItem('access_token', data.access_token);
+                        localStorage.setItem('user', JSON.stringify(data.user || {}));
                         msg.textContent = "Login successful! Redirecting...";
                         msg.className = "message success";
                         setTimeout(() => window.location.href = "/", 1000);

@@ -4,6 +4,7 @@ const headers = {Authorization: `Bearer ${token || ""}`, "Content-Type": "applic
 const message = document.getElementById("org-message");
 const select = document.getElementById("org-select");
 let currentOrg;
+let currentUserId;
 const supportedProviders = ["gemini", "groq", "openai", "claude", "openrouter", "deepseek", "mistral"];
 
 async function api(path, options = {}) {
@@ -17,7 +18,11 @@ async function api(path, options = {}) {
 }
 
 async function loadOrganizations() {
-  const data = await api("/api/organizations");
+  const [data, profile] = await Promise.all([
+    api("/api/organizations"),
+    api("/api/profile"),
+  ]);
+  currentUserId = String(profile.data?.id || "");
   select.replaceChildren();
   for (const org of data.organizations) {
     const option = document.createElement("option"); option.value = org.id; option.textContent = org.name; select.append(option);
@@ -35,7 +40,7 @@ async function loadOrganization(org) {
     api(`/api/organizations/${org.id}/projects`), api(`/api/organizations/${org.id}/policy`),
   ]);
   const controls = document.getElementById("member-controls");
-  const user = JSON.parse(localStorage.getItem("user") || "{}"); controls.hidden = org.owner_id !== user.id;
+  controls.hidden = String(org.owner_id) !== currentUserId;
   const list = document.getElementById("member-list"); list.replaceChildren();
   for (const member of members.members) {
     const row = document.createElement("p"); row.append(document.createTextNode(`${member.name || member.email} — ${member.role?.name || "No role"} — ${member.status} `));

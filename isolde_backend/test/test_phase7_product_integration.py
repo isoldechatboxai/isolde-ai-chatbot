@@ -143,6 +143,11 @@ def test_frontend_scripts_use_server_authoritative_product_endpoints(client):
     assert b"card.innerHTML" not in marketplace_script.data
     assert b"if (!response.ok)" in marketplace_script.data
 
+    organization_script = client.get("/organization.js")
+    assert organization_script.status_code == 200
+    assert b'api("/api/profile")' in organization_script.data
+    assert b'localStorage.getItem("user")' not in organization_script.data
+
 
 def test_marketplace_installation_preserves_string_user_ownership(client, db):
     user = User(name="Marketplace User", email="marketplace-owner@example.com", status="Active")

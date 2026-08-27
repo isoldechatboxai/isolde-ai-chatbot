@@ -194,6 +194,7 @@
             const data = await response.json();
             if (response.ok && data.access_token) {
               localStorage.setItem("access_token", data.access_token);
+              localStorage.setItem("user", JSON.stringify(data.user || {}));
               showMessage("success", "Welcome back! Redirecting...");
               setTimeout(() => { window.location.href = "/"; }, 1000);
             } else {
