@@ -166,6 +166,16 @@ class Config:
         "GEMINI_EMBEDDING_MODEL",
         "",
     ).strip()
+    # Environment-backed provider credentials permit an initial secure
+    # production bootstrap before an administrator configures encrypted
+    # provider settings in the database. Empty values simply disable a
+    # provider; no credentials are ever returned through an API.
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+    CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY", "").strip()
+    GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
+    OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
+    DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
+    MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "").strip()
 
     # ==========================================================
     # Uploads
@@ -383,8 +393,6 @@ class Config:
         for key_name, value in (
             ("FLASK_SECRET_KEY", cls.SECRET_KEY),
             ("JWT_SECRET_KEY", cls.JWT_SECRET_KEY),
-            ("GEMINI_API_KEY", cls.GEMINI_API_KEY),
-            ("GEMINI_MODEL", cls.GEMINI_MODEL),
         ):
             if not value or not value.strip():
                 missing.append(key_name)
@@ -414,6 +422,26 @@ class Config:
                 "Production secrets must not use empty or insecure placeholder values: "
                 + ", ".join(unsafe)
             )
+
+        provider_keys = (
+            ("GEMINI_API_KEY", cls.GEMINI_API_KEY),
+            ("OPENAI_API_KEY", cls.OPENAI_API_KEY),
+            ("CLAUDE_API_KEY", cls.CLAUDE_API_KEY),
+            ("GROQ_API_KEY", cls.GROQ_API_KEY),
+            ("OPENROUTER_API_KEY", cls.OPENROUTER_API_KEY),
+            ("DEEPSEEK_API_KEY", cls.DEEPSEEK_API_KEY),
+            ("MISTRAL_API_KEY", cls.MISTRAL_API_KEY),
+        )
+        configured_provider_keys = [
+            key_name for key_name, value in provider_keys
+            if value and not cls._is_placeholder_secret(value)
+        ]
+        if not configured_provider_keys:
+            raise RuntimeError("At least one supported AI provider API key is required in production.")
+        if any(value and cls._is_placeholder_secret(value) for _, value in provider_keys):
+            raise RuntimeError("AI provider API keys must not use insecure placeholder values in production.")
+        if cls.GEMINI_API_KEY and not cls.GEMINI_MODEL:
+            raise RuntimeError("GEMINI_MODEL is required when GEMINI_API_KEY is configured in production.")
 
         if cls.RATELIMIT_STORAGE_URI == "memory://":
             raise RuntimeError(

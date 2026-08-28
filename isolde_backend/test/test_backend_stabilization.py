@@ -94,6 +94,17 @@ class TestProductionConfigValidation:
         production_config = self._make_production_config()
         production_config.validate()
 
+    def test_non_gemini_provider_can_bootstrap_production(self):
+        production_config = self._make_production_config(
+            GEMINI_API_KEY="", GEMINI_MODEL="", OPENAI_API_KEY="sk-live-not-a-real-key"
+        )
+        production_config.validate()
+
+    def test_production_requires_at_least_one_provider_key(self):
+        production_config = self._make_production_config(GEMINI_API_KEY="")
+        with pytest.raises(RuntimeError, match="AI provider API key"):
+            production_config.validate()
+
     def test_missing_flask_secret_key_fails(self):
         production_config = self._make_production_config(SECRET_KEY="")
         with pytest.raises(RuntimeError, match="FLASK_SECRET_KEY"):

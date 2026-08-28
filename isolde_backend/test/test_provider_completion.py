@@ -23,6 +23,13 @@ def test_explicit_fallback_is_bounded_and_deduplicated(app, monkeypatch):
     assert manager.get_available_providers() == ["gemini", "openai"]
 
 
+def test_non_gemini_provider_key_can_bootstrap_from_environment_config(app, monkeypatch):
+    manager = ProviderManager()
+    monkeypatch.setattr(manager, "_get_setting", lambda key: None)
+    monkeypatch.setitem(app.config, "OPENAI_API_KEY", "sk-test-environment-bootstrap")
+    assert manager.get_api_key_for_provider("openai") == "sk-test-environment-bootstrap"
+
+
 def test_provider_response_preserves_authoritative_usage(app, monkeypatch):
     manager = ProviderManager()
     monkeypatch.setattr(manager, "get_model_for_provider", lambda provider: "test-model")

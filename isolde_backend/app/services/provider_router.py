@@ -381,6 +381,10 @@ class ProviderManager:
             if value:
                 return value.strip()
 
+        environment_key = current_app.config.get(f"{provider.upper()}_API_KEY", "")
+        if environment_key:
+            return environment_key.strip()
+
         raise RuntimeError(
             f"No API key configured for provider '{provider}'. "
             f"Please set '{setting_key or provider + '_api_key'}' in the Admin Panel."
@@ -411,6 +415,7 @@ class ProviderManager:
             value = self._get_setting(setting_key)
             if value:
                 return value.strip()
+
         return DEFAULT_BASE_URLS.get(provider, "")
 
     # -- system instruction -------------------------------------------------
