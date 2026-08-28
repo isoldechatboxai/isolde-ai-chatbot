@@ -984,6 +984,7 @@ def delete_conversation(admin_user, conversation_id):
 # ---------------------------------------------------------------------------
 
 @admin_bp.route("/admin/settings", methods=["GET"], strict_slashes=False)
+@admin_bp.route("/admin/v1/providers/settings", methods=["GET"], strict_slashes=False)
 @jwt_required()
 @admin_required
 def list_settings(admin_user):
@@ -998,6 +999,7 @@ def list_settings(admin_user):
 
 
 @admin_bp.route("/admin/settings", methods=["POST"], strict_slashes=False)
+@admin_bp.route("/admin/v1/providers/settings", methods=["POST"], strict_slashes=False)
 @jwt_required()
 @admin_required
 def save_setting(admin_user):
@@ -1038,6 +1040,7 @@ def save_setting(admin_user):
 
 
 @admin_bp.route("/admin/settings/<setting_key>", methods=["DELETE"], strict_slashes=False)
+@admin_bp.route("/admin/v1/providers/settings/<setting_key>", methods=["DELETE"], strict_slashes=False)
 @jwt_required()
 @admin_required
 def delete_setting(admin_user, setting_key):

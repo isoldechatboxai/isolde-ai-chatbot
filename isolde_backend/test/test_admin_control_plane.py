@@ -76,9 +76,12 @@ def test_provider_control_is_effective_but_never_returns_secrets(client, db):
     assert current.get_json()["configuration"]["models"]["openai"] == "gpt-4o-mini"
     assert "api_key" not in current.get_data(as_text=True)
     assert client.post(
-        "/api/admin/settings", headers=headers,
+        "/api/admin/v1/providers/settings", headers=headers,
         json={"key": "arbitrary_setting", "value": "unsafe"},
     ).status_code == 400
+    settings = client.get("/api/admin/v1/providers/settings", headers=headers)
+    assert settings.status_code == 200
+    assert "unit-credential" not in settings.get_data(as_text=True)
 
     unavailable = client.patch(
         "/api/admin/v1/providers/configuration", headers=headers,

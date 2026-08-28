@@ -16,6 +16,7 @@ Configure the separate Admin Panel origin through `CORS_ORIGINS`; never use `*` 
 - `PATCH /api/admin/v1/users/{id}` and `/organizations/{id}`; `PATCH /api/admin/v1/organizations/{id}/policy` — validated account and tenant policy changes.
 - `GET|PATCH /api/admin/v1/configuration` — validated feature flags and safe branding text.
 - `GET|PATCH /api/admin/v1/providers/configuration` — effective active provider and model selections. It never returns API keys.
+- `GET|POST|DELETE /api/admin/v1/providers/settings` — masked provider-setting status and validated encrypted secret rotation; plaintext values are never returned.
 - `GET /api/admin/v1/audit` — up to 200 recent database-backed administrative events.
 - `GET|DELETE /api/admin/v1/session` — current-admin session metadata and secure self-revocation; JWTs and hashes are never returned.
 - `GET /api/admin/v1/billing/ledger`, `/billing/events`, and `/billing/invoices`; `POST /billing/invoices/{id}/refund` — paginated, server-authoritative finance visibility and idempotent refund control.
