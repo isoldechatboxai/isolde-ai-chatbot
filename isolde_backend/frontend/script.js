@@ -1729,6 +1729,45 @@ function onDocumentReady(fn) {
   else fn();
 }
 
+async function applyPublicProductConfiguration() {
+  try {
+    const response = await fetch("/api/product/config");
+    if (!response.ok) return;
+    const config = await response.json();
+    const features = config.features || {};
+    const visibility = {
+      ai_studio: "ai-studio-nav",
+      workflows: "workflows-nav",
+      files_rag: "smart-library-btn",
+      billing: "billing-nav",
+      organization: "organization-nav",
+      image: "images-studio-btn",
+      video: "videos-gen-btn",
+    };
+    Object.entries(visibility).forEach(([feature, id]) => {
+      const element = document.getElementById(id);
+      if (element && features[feature] === false) element.hidden = true;
+    });
+    const branding = config.branding || {};
+    document.querySelectorAll(".brand-name").forEach((element) => {
+      element.textContent = branding.application_name || "Isolde AI";
+    });
+    const footer = document.querySelector(".app-footer .disclaimer");
+    if (footer && branding.footer_text) footer.textContent = branding.footer_text;
+    if (branding.announcement) {
+      const banner = document.createElement("div");
+      banner.className = "product-announcement";
+      banner.setAttribute("role", "status");
+      banner.textContent = branding.announcement;
+      document.querySelector(".main-content")?.prepend(banner);
+    }
+  } catch (_) {
+    // Safe built-in branding and feature defaults remain active.
+  }
+}
+
+onDocumentReady(applyPublicProductConfiguration);
+
 onDocumentReady(() => {
   const imgStudioBtn = document.getElementById("images-studio-btn");
   const vidGenBtn = document.getElementById("videos-gen-btn");
