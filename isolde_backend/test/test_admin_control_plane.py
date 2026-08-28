@@ -93,6 +93,14 @@ def test_admin_session_control_and_versioned_contract(client, app, db):
     headers = _headers(admin)
     assert client.get("/api/admin/v1/capabilities", headers=headers).status_code == 200
     assert client.get("/api/admin/v1/release", headers=headers).status_code == 200
+    for path in (
+        "/api/admin/v1/dashboard", "/api/admin/v1/users",
+        "/api/admin/v1/organizations", "/api/admin/v1/projects",
+        "/api/admin/v1/conversations", "/api/admin/v1/billing/summary",
+        "/api/admin/v1/billing/subscriptions", "/api/admin/v1/providers/status",
+        "/api/admin/v1/operations",
+    ):
+        assert client.get(path, headers=headers).status_code == 200
     listed = client.get(f"/api/admin/v1/users/{target.id}/sessions", headers=headers)
     assert listed.status_code == 200
     assert listed.get_json()["sessions"][0]["active"] is True

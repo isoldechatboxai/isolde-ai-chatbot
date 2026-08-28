@@ -11,6 +11,9 @@ Configure the separate Admin Panel origin through `CORS_ORIGINS`; never use `*` 
 ## Control-plane endpoints
 
 - `GET /api/admin/v1/capabilities` — supported, unavailable, and unsupported controls.
+- `GET /api/admin/v1/dashboard`, `/users`, `/organizations`, `/projects`, and `/conversations` — safe operational and ownership summaries.
+- `GET /api/admin/v1/billing/summary`, `/billing/subscriptions`, `/providers/status`, and `/operations` — provider, billing, RAG/storage, rate-limit, and health summaries.
+- `PATCH /api/admin/v1/users/{id}` and `/organizations/{id}`; `PATCH /api/admin/v1/organizations/{id}/policy` — validated account and tenant policy changes.
 - `GET|PATCH /api/admin/v1/configuration` — validated feature flags and safe branding text.
 - `GET|PATCH /api/admin/v1/providers/configuration` — effective active provider and model selections. It never returns API keys.
 - `GET /api/admin/v1/audit` — up to 200 recent database-backed administrative events.
@@ -20,7 +23,7 @@ Configure the separate Admin Panel origin through `CORS_ORIGINS`; never use `*` 
 - `GET /api/admin/v1/users/{id}/sessions` — safe session metadata without IP/user-agent hashes.
 - `POST /api/admin/v1/users/{id}/sessions/revoke-all` — revoke another user's active sessions.
 
-Existing authenticated `/api/admin/*` user, tenant, billing, provider-status, health, readiness, and operational-summary endpoints remain supported for compatibility.
+Existing authenticated `/api/admin/*` endpoints remain supported for compatibility. New clients should use the versioned contracts above.
 
 ## Runtime product configuration
 

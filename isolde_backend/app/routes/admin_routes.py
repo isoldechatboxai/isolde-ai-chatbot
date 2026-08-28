@@ -307,6 +307,7 @@ def admin_login():
 # ---------------------------------------------------------------------------
 
 @admin_bp.route("/admin/dashboard", methods=["GET"], strict_slashes=False)
+@admin_bp.route("/admin/v1/dashboard", methods=["GET"], strict_slashes=False)
 @jwt_required()
 @admin_required
 def admin_dashboard(admin_user):
@@ -329,6 +330,7 @@ def admin_dashboard(admin_user):
 
 
 @admin_bp.route("/admin/tenants", methods=["GET"], strict_slashes=False)
+@admin_bp.route("/admin/v1/organizations", methods=["GET"], strict_slashes=False)
 @jwt_required()
 @admin_required
 def admin_tenants(admin_user):
@@ -341,6 +343,7 @@ def admin_tenants(admin_user):
 
 
 @admin_bp.route("/admin/billing-summary", methods=["GET"], strict_slashes=False)
+@admin_bp.route("/admin/v1/billing/summary", methods=["GET"], strict_slashes=False)
 @jwt_required()
 @admin_required
 def admin_billing_summary(admin_user):
@@ -353,6 +356,7 @@ def admin_billing_summary(admin_user):
 
 
 @admin_bp.route("/admin/billing/subscriptions", methods=["GET"], strict_slashes=False)
+@admin_bp.route("/admin/v1/billing/subscriptions", methods=["GET"], strict_slashes=False)
 @jwt_required()
 @admin_required
 def admin_subscriptions(admin_user):
@@ -361,6 +365,7 @@ def admin_subscriptions(admin_user):
 
 
 @admin_bp.route("/admin/provider-status", methods=["GET"], strict_slashes=False)
+@admin_bp.route("/admin/v1/providers/status", methods=["GET"], strict_slashes=False)
 @jwt_required()
 @admin_required
 def admin_provider_status(admin_user):
@@ -380,6 +385,7 @@ def admin_provider_status(admin_user):
 
 
 @admin_bp.route("/admin/operations", methods=["GET"], strict_slashes=False)
+@admin_bp.route("/admin/v1/operations", methods=["GET"], strict_slashes=False)
 @jwt_required()
 @admin_required
 def admin_operations(admin_user):
@@ -398,6 +404,7 @@ def admin_operations(admin_user):
 
 
 @admin_bp.route("/admin/tenants/<int:org_id>", methods=["PATCH"], strict_slashes=False)
+@admin_bp.route("/admin/v1/organizations/<int:org_id>", methods=["PATCH"], strict_slashes=False)
 @jwt_required()
 @admin_required
 def admin_update_tenant(admin_user, org_id):
@@ -415,6 +422,7 @@ def admin_update_tenant(admin_user, org_id):
 
 
 @admin_bp.route("/admin/tenants/<int:org_id>/policy", methods=["PATCH"], strict_slashes=False)
+@admin_bp.route("/admin/v1/organizations/<int:org_id>/policy", methods=["PATCH"], strict_slashes=False)
 @jwt_required()
 @admin_required
 def admin_update_tenant_policy(admin_user, org_id):
@@ -445,6 +453,7 @@ def admin_update_tenant_policy(admin_user, org_id):
 
 
 @admin_bp.route("/admin/billing/subscriptions/<user_id>/cancel", methods=["POST"], strict_slashes=False)
+@admin_bp.route("/admin/v1/billing/subscriptions/<user_id>/cancel", methods=["POST"], strict_slashes=False)
 @jwt_required()
 @admin_required
 def admin_cancel_subscription(admin_user, user_id):
@@ -464,6 +473,7 @@ def admin_cancel_subscription(admin_user, user_id):
 
 
 @admin_bp.route("/admin/operations/log-summary", methods=["GET"], strict_slashes=False)
+@admin_bp.route("/admin/v1/operations/log-summary", methods=["GET"], strict_slashes=False)
 @jwt_required()
 @admin_required
 def admin_log_summary(admin_user):
@@ -491,6 +501,7 @@ def admin_log_summary(admin_user):
 # ---------------------------------------------------------------------------
 
 @admin_bp.route("/admin/users", methods=["GET"], strict_slashes=False)
+@admin_bp.route("/admin/v1/users", methods=["GET"], strict_slashes=False)
 @jwt_required()
 @admin_required
 def list_users(admin_user):
@@ -502,6 +513,7 @@ def list_users(admin_user):
 
 
 @admin_bp.route("/admin/users", methods=["POST"], strict_slashes=False)
+@admin_bp.route("/admin/v1/users", methods=["POST"], strict_slashes=False)
 @jwt_required()
 @admin_required
 def create_user(admin_user):
@@ -552,6 +564,7 @@ def create_user(admin_user):
 
 
 @admin_bp.route("/admin/users/<user_id>", methods=["GET"], strict_slashes=False)
+@admin_bp.route("/admin/v1/users/<user_id>", methods=["GET"], strict_slashes=False)
 @jwt_required()
 @admin_required
 def get_user_detail(admin_user, user_id):
@@ -568,6 +581,7 @@ def get_user_detail(admin_user, user_id):
 
 
 @admin_bp.route("/admin/users/<user_id>", methods=["PATCH"], strict_slashes=False)
+@admin_bp.route("/admin/v1/users/<user_id>", methods=["PATCH"], strict_slashes=False)
 @jwt_required()
 @admin_required
 def update_user(admin_user, user_id):
@@ -605,6 +619,7 @@ def update_user(admin_user, user_id):
         if "name" in data:
             user.name = data["name"]
 
+        _audit(admin_user, "ADMIN_USER_UPDATE", {"target_user_id": user.id, "fields": sorted(data)})
         db.session.commit()
         log_event(current_app, "ADMIN_USER_UPDATE", f"target={user.id}", admin_user.id)
 
@@ -620,6 +635,7 @@ def update_user(admin_user, user_id):
 
 
 @admin_bp.route("/admin/users/<user_id>", methods=["DELETE"], strict_slashes=False)
+@admin_bp.route("/admin/v1/users/<user_id>", methods=["DELETE"], strict_slashes=False)
 @jwt_required()
 @admin_required
 def delete_user(admin_user, user_id):
@@ -631,6 +647,7 @@ def delete_user(admin_user, user_id):
         return jsonify({"status": "error", "message": "You cannot delete your own account."}), 400
 
     try:
+        _audit(admin_user, "ADMIN_USER_DELETE", {"target_user_id": user.id})
         db.session.delete(user)
         db.session.commit()
     except Exception as e:
@@ -646,6 +663,7 @@ def delete_user(admin_user, user_id):
 # ---------------------------------------------------------------------------
 
 @admin_bp.route("/admin/conversations", methods=["GET"], strict_slashes=False)
+@admin_bp.route("/admin/v1/conversations", methods=["GET"], strict_slashes=False)
 @jwt_required()
 @admin_required
 def list_conversations(admin_user):
@@ -668,6 +686,7 @@ def list_conversations(admin_user):
 
 
 @admin_bp.route("/admin/conversations/<conversation_id>", methods=["GET"], strict_slashes=False)
+@admin_bp.route("/admin/v1/conversations/<conversation_id>", methods=["GET"], strict_slashes=False)
 @jwt_required()
 @admin_required
 def get_conversation_detail(admin_user, conversation_id):
@@ -682,6 +701,7 @@ def get_conversation_detail(admin_user, conversation_id):
 
 
 @admin_bp.route("/admin/conversations/<conversation_id>", methods=["DELETE"], strict_slashes=False)
+@admin_bp.route("/admin/v1/conversations/<conversation_id>", methods=["DELETE"], strict_slashes=False)
 @jwt_required()
 @admin_required
 def delete_conversation(admin_user, conversation_id):
@@ -690,6 +710,7 @@ def delete_conversation(admin_user, conversation_id):
         return jsonify({"status": "error", "message": "Conversation not found."}), 404
 
     try:
+        _audit(admin_user, "ADMIN_CONVERSATION_DELETE", {"conversation_id": conversation_id})
         db.session.delete(convo)
         db.session.commit()
     except Exception as e:
