@@ -62,6 +62,14 @@ class Config:
         "production",
         "prod",
     }
+    IS_DEMO_STAGING = ENVIRONMENT in {"demo", "staging"}
+    DEMO_ADMIN_BOOTSTRAP_ENABLED = _env_bool("DEMO_ADMIN_BOOTSTRAP_ENABLED")
+    DEMO_ADMIN_EMAIL = os.getenv("DEMO_ADMIN_EMAIL", "").strip().lower()
+    DEMO_ADMIN_PASSWORD = os.getenv("DEMO_ADMIN_PASSWORD", "")
+    # Explicit markers make a copied demo configuration fail before it can
+    # target a production database or object bucket by mistake.
+    DEMO_DATABASE_MARKER = os.getenv("DEMO_DATABASE_MARKER", "").strip().lower()
+    DEMO_STORAGE_MARKER = os.getenv("DEMO_STORAGE_MARKER", "").strip().lower()
 
     # ==========================================================
     # Flask Core
@@ -384,6 +392,18 @@ class Config:
         development and repository setup remain possible.
         Production must fail fast when critical configuration is missing.
         """
+        if cls.DEMO_ADMIN_BOOTSTRAP_ENABLED:
+            if cls.IS_PRODUCTION:
+                raise RuntimeError("DEMO_ADMIN_BOOTSTRAP_ENABLED must never be enabled in production.")
+            if not cls.IS_DEMO_STAGING:
+                raise RuntimeError("Demo admin bootstrap is allowed only when FLASK_ENV is demo or staging.")
+            if not cls.DEMO_DATABASE_MARKER or cls.DEMO_DATABASE_MARKER not in cls.SQLALCHEMY_DATABASE_URI.lower():
+                raise RuntimeError("DEMO_DATABASE_MARKER must be present in DATABASE_URL when demo bootstrap is enabled.")
+            if cls.STORAGE_BACKEND != "s3" or not cls.DEMO_STORAGE_MARKER or cls.DEMO_STORAGE_MARKER not in cls.S3_BUCKET.lower():
+                raise RuntimeError("Demo bootstrap requires an isolated S3 bucket matching DEMO_STORAGE_MARKER.")
+            if "*" in (cls.CORS_ORIGINS or []):
+                raise RuntimeError("CORS_ORIGINS must be explicit when demo bootstrap is enabled.")
+
         if not cls.IS_PRODUCTION:
             return
 

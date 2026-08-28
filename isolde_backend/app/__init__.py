@@ -514,6 +514,44 @@ def create_app(config_class=Config):
         stamp(revision="head")
         click.echo("Empty database initialized and stamped at migration head.")
 
+    @app.cli.command("provision-demo-admin")
+    def provision_demo_admin():
+        """Explicitly provision one idempotent Super Admin for demo/staging only."""
+        from app.models.enterprise_models import AuditLog
+        from app.utils.validators import is_valid_email
+
+        if not app.config.get("DEMO_ADMIN_BOOTSTRAP_ENABLED", False):
+            raise click.ClickException("Demo admin bootstrap is disabled.")
+        if app.config.get("IS_PRODUCTION") or not app.config.get("IS_DEMO_STAGING"):
+            raise click.ClickException("Demo admin bootstrap is permitted only in demo or staging.")
+        database_marker = str(app.config.get("DEMO_DATABASE_MARKER") or "").lower()
+        storage_marker = str(app.config.get("DEMO_STORAGE_MARKER") or "").lower()
+        database_url = str(app.config.get("SQLALCHEMY_DATABASE_URI") or "").lower()
+        storage_bucket = str(app.config.get("S3_BUCKET") or "").lower()
+        cors_origins = app.config.get("CORS_ORIGINS") or []
+        if (not database_marker or database_marker not in database_url or
+                app.config.get("STORAGE_BACKEND") != "s3" or
+                not storage_marker or storage_marker not in storage_bucket or
+                "*" in cors_origins):
+            raise click.ClickException("Demo bootstrap isolation requirements are not satisfied.")
+        email = str(app.config.get("DEMO_ADMIN_EMAIL") or "").strip().lower()
+        password = str(app.config.get("DEMO_ADMIN_PASSWORD") or "")
+        if not is_valid_email(email) or len(password) < 16 or Config._is_placeholder_secret(password):
+            raise click.ClickException("Demo admin credentials are missing or do not meet security requirements.")
+        existing = User.query.filter_by(email=email).first()
+        if existing:
+            if existing.role != "Super Admin":
+                raise click.ClickException("Configured demo admin email belongs to a non-Super-Admin account.")
+            click.echo("Demo/staging Super Admin is already provisioned.")
+            return
+        user = User(name="Demo Staging Administrator", email=email, role="Super Admin", status="Active", is_verified=True)
+        user.set_password(password)
+        db.session.add(user)
+        db.session.flush()
+        db.session.add(AuditLog(actor_user_id=str(user.id), action="DEMO_ADMIN_PROVISIONED", status="success", details="{}"))
+        db.session.commit()
+        click.echo("Demo/staging Super Admin provisioned.")
+
     @app.cli.command("rag-import-json")
     @click.argument("path", type=click.Path(exists=True, dir_okay=False, readable=True))
     def rag_import_json(path):
