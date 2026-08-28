@@ -1,8 +1,12 @@
 from flask_jwt_extended import create_access_token
 
 from app.models.auth_model import AuthSession
+from app.models.billing_model import CreditLedger, Invoice, PaymentEvent
 from app.models.enterprise_models import AuditLog
+from app.models.rag_model import RAGChunk, RAGDocument
 from app.models.user import Setting, User
+from app.models.workflow_model import Workflow, WorkflowExecution
+from app.models.workspace_model import Workspace
 
 
 def _user(db, email, role="Client"):
@@ -108,3 +112,59 @@ def test_admin_session_control_and_versioned_contract(client, app, db):
     assert revoked.status_code == 200
     assert revoked.get_json()["revoked_sessions"] == 1
     assert db.session.get(AuthSession, session.id).is_valid is False
+
+
+def test_current_admin_session_is_safe_and_can_be_revoked(client, app, db):
+    admin = _user(db, "current-session-admin@example.com", "Admin")
+    member = _user(db, "current-session-member@example.com")
+    assert client.get("/api/admin/v1/session", headers=_headers(member)).status_code == 403
+    session = AuthSession.create(admin.id, app.config["JWT_ACCESS_TOKEN_EXPIRES"])
+    db.session.add(session)
+    db.session.commit()
+    headers = {"Authorization": f"Bearer {create_access_token(identity=admin.id, additional_claims={'sid': session.id})}"}
+    current = client.get("/api/admin/v1/session", headers=headers)
+    assert current.status_code == 200
+    assert "user_agent_hash" not in current.get_data(as_text=True)
+    assert client.delete("/api/admin/v1/session", headers=headers).status_code == 200
+    assert db.session.get(AuthSession, session.id).revoked_at is not None
+    assert AuditLog.query.filter_by(action="ADMIN_CURRENT_SESSION_REVOKED").count() == 1
+
+
+def test_admin_financial_rag_workflow_inspection_is_paginated_and_safe(client, db):
+    admin = _user(db, "inspection-admin@example.com", "Admin")
+    owner = _user(db, "inspection-owner@example.com")
+    workspace = Workspace(user_id=owner.id, name="Private workspace")
+    db.session.add(workspace)
+    db.session.flush()
+    workflow = Workflow(workspace_id=workspace.id, name="Private workflow", is_active=True)
+    document = RAGDocument(user_id=owner.id, filename="private.pdf", chunk_count=1)
+    db.session.add_all([
+        workflow, document,
+        CreditLedger(user_id=owner.id, idempotency_key="ledger-inspection", credits_delta=-3, source="provider_usage", provider_tokens=50),
+        PaymentEvent(provider="stripe", event_id="evt_inspection", event_type="invoice.paid"),
+        Invoice(invoice_uid="invoice-inspection", user_id=owner.id, amount=12.0, status="generated"),
+    ])
+    db.session.flush()
+    db.session.add_all([
+        WorkflowExecution(workflow_id=workflow.id, status="NOT_SUPPORTED"),
+        RAGChunk(document_id=document.id, user_id=owner.id, position=0, text="never expose this", embedding=[0.1], embedding_dimension=1),
+    ])
+    db.session.commit()
+    headers = _headers(admin)
+    for path, field in (
+        ("/api/admin/v1/billing/ledger?page=1&page_size=1", "ledger"),
+        ("/api/admin/v1/billing/events?page=1&page_size=1", "events"),
+        ("/api/admin/v1/billing/invoices?page=1&page_size=1", "invoices"),
+        ("/api/admin/v1/rag/documents?page=1&page_size=1", "documents"),
+        ("/api/admin/v1/workflows?page=1&page_size=1", "workflows"),
+    ):
+        response = client.get(path, headers=headers)
+        assert response.status_code == 200
+        assert response.get_json()["pagination"]["page_size"] == 1
+        assert response.get_json()[field]
+    detail = client.get(f"/api/admin/v1/rag/documents/{document.id}", headers=headers)
+    assert detail.status_code == 200
+    assert "never expose this" not in detail.get_data(as_text=True)
+    assert client.patch(f"/api/admin/v1/workflows/{workflow.id}", headers=headers, json={"is_active": False}).status_code == 200
+    assert AuditLog.query.filter_by(action="ADMIN_WORKFLOW_STATUS").count() == 1
+    assert client.post("/api/admin/v1/billing/invoices/999/refund", headers=headers).status_code == 404

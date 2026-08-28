@@ -17,6 +17,10 @@ Configure the separate Admin Panel origin through `CORS_ORIGINS`; never use `*` 
 - `GET|PATCH /api/admin/v1/configuration` — validated feature flags and safe branding text.
 - `GET|PATCH /api/admin/v1/providers/configuration` — effective active provider and model selections. It never returns API keys.
 - `GET /api/admin/v1/audit` — up to 200 recent database-backed administrative events.
+- `GET|DELETE /api/admin/v1/session` — current-admin session metadata and secure self-revocation; JWTs and hashes are never returned.
+- `GET /api/admin/v1/billing/ledger`, `/billing/events`, and `/billing/invoices`; `POST /billing/invoices/{id}/refund` — paginated, server-authoritative finance visibility and idempotent refund control.
+- `GET /api/admin/v1/rag/documents` and `/rag/documents/{id}` — metadata/index inspection only; no chunk text, filesystem paths, or object keys.
+- `GET /api/admin/v1/workflows`; `GET|PATCH|DELETE /api/admin/v1/workflows/{id}` — workflow status and audited administration. Execution remains `NOT_SUPPORTED`.
 - `GET /api/admin/v1/release` — API, application, and migration version metadata.
 - `GET /api/admin/v1/projects` — project ownership, state, and organization-share metadata; never document contents.
 - `GET /api/admin/v1/organizations/{id}` — owner, member-role, policy, and shared-project summary.
@@ -24,6 +28,8 @@ Configure the separate Admin Panel origin through `CORS_ORIGINS`; never use `*` 
 - `POST /api/admin/v1/users/{id}/sessions/revoke-all` — revoke another user's active sessions.
 
 Existing authenticated `/api/admin/*` endpoints remain supported for compatibility. New clients should use the versioned contracts above.
+
+All list endpoints that return operational or customer records use bounded `page` and `page_size` parameters (`page_size` is 1–200). Supported list filters are documented by each endpoint response and are validated server-side.
 
 ## Runtime product configuration
 

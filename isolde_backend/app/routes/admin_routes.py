@@ -12,7 +12,7 @@ import json
 from functools import wraps
 
 from flask import Blueprint, request, jsonify, current_app
-from flask_jwt_extended import jwt_required, get_jwt_identity, create_access_token
+from flask_jwt_extended import jwt_required, get_jwt, get_jwt_identity, create_access_token
 
 from app.extensions import db
 from sqlalchemy import text
@@ -20,13 +20,14 @@ from app.models.user import User, Setting, Broadcast
 from app.models.conversation import Conversation, Message
 from app.models.feedback import Feedback
 from app.models.auth_model import AuthSession, utcnow
-from app.models.billing_model import CreditBalance, Invoice, Subscription
+from app.models.billing_model import CreditBalance, CreditLedger, Invoice, PaymentEvent, Subscription
 from app.models.collaboration_model import Organization, OrganizationMember, OrganizationPolicy
 from app.models.collaboration_model import OrganizationProject, OrganizationRole
 from app.models.enterprise_models import AuditLog
-from app.models.rag_model import RAGDocument
+from app.models.rag_model import RAGChunk, RAGDocument
 from app.models.uploaded_file import UploadedFile
 from app.models.workspace_model import Project, Workspace
+from app.models.workflow_model import Workflow, WorkflowExecution
 from app.services.admin_configuration_service import public_configuration, update_configuration
 from app.services.organization_policy_service import SUPPORTED_PROVIDERS
 from app.utils.logger import log_event
@@ -67,6 +68,45 @@ def _audit(admin_user, action, details=None, status="success"):
         actor_user_id=str(admin_user.id), action=action[:100], status=status[:20],
         ip_address=(request.remote_addr or "")[:50], details=safe_details,
     ))
+
+
+def _pagination_args():
+    """Bound and validate list pagination for versioned admin resources."""
+    try:
+        page = int(request.args.get("page", 1))
+        page_size = int(request.args.get("page_size", 50))
+    except (TypeError, ValueError):
+        return None
+    if page < 1 or page_size < 1 or page_size > 200:
+        return None
+    return page, page_size
+
+
+def _page(query, serializer):
+    values = _pagination_args()
+    if not values:
+        return None
+    page, page_size = values
+    total = query.order_by(None).count()
+    items = query.limit(page_size).offset((page - 1) * page_size).all()
+    return {
+        "items": [serializer(item) for item in items],
+        "pagination": {
+            "page": page, "page_size": page_size, "total": total,
+            "has_next": page * page_size < total,
+        },
+    }
+
+
+def _admin_session_payload(session):
+    return {
+        "id": session.id,
+        "created_at": session.created_at.isoformat(),
+        "last_seen_at": session.last_seen_at.isoformat(),
+        "expires_at": session.expires_at.isoformat(),
+        "revoked_at": session.revoked_at.isoformat() if session.revoked_at else None,
+        "active": session.is_valid,
+    }
 
 
 @admin_bp.route("/product/config", methods=["GET"], strict_slashes=False)
@@ -153,8 +193,11 @@ def admin_provider_configuration(admin_user):
 @jwt_required()
 @admin_required
 def admin_audit(admin_user):
-    entries = AuditLog.query.order_by(AuditLog.created_at.desc()).limit(200).all()
-    return jsonify({"status": "success", "audit": [entry.to_dict() for entry in entries]}), 200
+    query = AuditLog.query.order_by(AuditLog.created_at.desc())
+    result = _page(query, lambda entry: entry.to_dict())
+    if not result:
+        return jsonify({"status": "error", "message": "Invalid pagination."}), 400
+    return jsonify({"status": "success", "audit": result["items"], "pagination": result["pagination"]}), 200
 
 
 @admin_bp.route("/admin/v1/capabilities", methods=["GET"], strict_slashes=False)
@@ -164,7 +207,9 @@ def admin_capabilities(admin_user):
     return jsonify({"status": "success", "api_version": "v1", "capabilities": {
         "users": True, "organizations": True, "provider_configuration": True,
         "feature_flags": True, "branding_text": True, "branding_asset_upload": "NOT_CONFIGURED",
-        "billing": True, "rag_storage_status": True, "audit": True,
+        "billing": True, "billing_ledger": True, "payment_events": True,
+        "rag_storage_status": True, "rag_admin_inspection": True,
+        "workflow_administration": True, "admin_session": True, "audit": True,
         "image": "NOT_CONFIGURED", "video": "NOT_CONFIGURED", "training": "NOT_SUPPORTED",
         "deployment_execution": "NOT_SUPPORTED",
     }}), 200
@@ -191,18 +236,113 @@ def admin_release_metadata(admin_user):
 @jwt_required()
 @admin_required
 def admin_projects(admin_user):
-    projects = Project.query.join(Workspace).order_by(Project.created_at.desc()).all()
+    query = Project.query.join(Workspace).order_by(Project.created_at.desc())
     shares = OrganizationProject.query.all()
     shares_by_project = {}
     for share in shares:
         shares_by_project.setdefault(share.project_id, []).append({
             "organization_id": share.org_id, "access_level": share.access_level,
         })
-    return jsonify({"status": "success", "projects": [{
+    result = _page(query, lambda project: {
         "id": project.id, "name": project.name, "workspace_id": project.workspace_id,
         "owner_id": project.workspace.user_id, "status": project.status,
         "organization_shares": shares_by_project.get(project.id, []),
-    } for project in projects]}), 200
+    })
+    if not result:
+        return jsonify({"status": "error", "message": "Invalid pagination."}), 400
+    return jsonify({"status": "success", "projects": result["items"], "pagination": result["pagination"]}), 200
+
+
+@admin_bp.route("/admin/v1/rag/documents", methods=["GET"], strict_slashes=False)
+@jwt_required()
+@admin_required
+def admin_rag_documents(admin_user):
+    query = RAGDocument.query.order_by(RAGDocument.created_at.desc())
+    user_id = str(request.args.get("user_id") or "").strip()
+    if user_id:
+        if len(user_id) != 36:
+            return jsonify({"status": "error", "message": "Invalid user filter."}), 400
+        query = query.filter_by(user_id=user_id)
+    result = _page(query, lambda item: {
+        "id": item.id, "user_id": item.user_id, "filename": item.filename,
+        "chunk_count": item.chunk_count, "created_at": item.created_at.isoformat(),
+    })
+    if not result:
+        return jsonify({"status": "error", "message": "Invalid pagination."}), 400
+    return jsonify({"status": "success", "documents": result["items"], "pagination": result["pagination"]}), 200
+
+
+@admin_bp.route("/admin/v1/rag/documents/<document_id>", methods=["GET"], strict_slashes=False)
+@jwt_required()
+@admin_required
+def admin_rag_document(admin_user, document_id):
+    document = db.session.get(RAGDocument, document_id)
+    if not document:
+        return jsonify({"status": "error", "message": "Document not found."}), 404
+    chunks = RAGChunk.query.filter_by(document_id=document.id).all()
+    providers = sorted({item.embedding_provider for item in chunks if item.embedding_provider})
+    models = sorted({item.embedding_model for item in chunks if item.embedding_model})
+    dimensions = sorted({item.embedding_dimension for item in chunks})
+    return jsonify({"status": "success", "document": {
+        "id": document.id, "user_id": document.user_id, "filename": document.filename,
+        "chunk_count": document.chunk_count, "stored_chunks": len(chunks),
+        "embedding_providers": providers, "embedding_models": models,
+        "embedding_dimensions": dimensions,
+        "created_at": document.created_at.isoformat(),
+    }}), 200
+
+
+@admin_bp.route("/admin/v1/workflows", methods=["GET"], strict_slashes=False)
+@jwt_required()
+@admin_required
+def admin_workflows(admin_user):
+    query = Workflow.query.order_by(Workflow.created_at.desc())
+    workspace_id = request.args.get("workspace_id")
+    if workspace_id is not None:
+        try:
+            workspace_id = int(workspace_id)
+        except (TypeError, ValueError):
+            return jsonify({"status": "error", "message": "Invalid workspace filter."}), 400
+        query = query.filter_by(workspace_id=workspace_id)
+    result = _page(query, lambda item: {
+        **item.to_dict(),
+        "execution_count": WorkflowExecution.query.filter_by(workflow_id=item.id).count(),
+        "execution_capability": "NOT_SUPPORTED",
+    })
+    if not result:
+        return jsonify({"status": "error", "message": "Invalid pagination."}), 400
+    return jsonify({"status": "success", "workflows": result["items"], "pagination": result["pagination"]}), 200
+
+
+@admin_bp.route("/admin/v1/workflows/<int:workflow_id>", methods=["GET", "PATCH", "DELETE"], strict_slashes=False)
+@jwt_required()
+@admin_required
+def admin_workflow(admin_user, workflow_id):
+    workflow = db.session.get(Workflow, workflow_id)
+    if not workflow:
+        return jsonify({"status": "error", "message": "Workflow not found."}), 404
+    if request.method == "GET":
+        executions = WorkflowExecution.query.filter_by(workflow_id=workflow.id).order_by(WorkflowExecution.started_at.desc()).limit(50).all()
+        return jsonify({"status": "success", "workflow": {
+            **workflow.to_dict(), "execution_capability": "NOT_SUPPORTED",
+            "executions": [{
+                "id": item.id, "status": item.status, "started_at": item.started_at.isoformat(),
+                "completed_at": item.completed_at.isoformat() if item.completed_at else None,
+                "execution_time_ms": item.execution_time_ms,
+            } for item in executions],
+        }}), 200
+    if request.method == "PATCH":
+        data = request.get_json(silent=True) or {}
+        if set(data) - {"is_active"} or not isinstance(data.get("is_active"), bool):
+            return jsonify({"status": "error", "message": "Only is_active may be updated."}), 400
+        workflow.is_active = data["is_active"]
+        _audit(admin_user, "ADMIN_WORKFLOW_STATUS", {"workflow_id": workflow.id, "is_active": workflow.is_active})
+        db.session.commit()
+        return jsonify({"status": "success", "workflow": workflow.to_dict()}), 200
+    _audit(admin_user, "ADMIN_WORKFLOW_DELETE", {"workflow_id": workflow.id})
+    db.session.delete(workflow)
+    db.session.commit()
+    return jsonify({"status": "success", "deleted": True}), 200
 
 
 @admin_bp.route("/admin/v1/organizations/<int:org_id>", methods=["GET"], strict_slashes=False)
@@ -233,12 +373,25 @@ def admin_user_sessions(admin_user, user_id):
     if not db.session.get(User, user_id):
         return jsonify({"status": "error", "message": "User not found."}), 404
     sessions = AuthSession.query.filter_by(user_id=user_id).order_by(AuthSession.created_at.desc()).all()
-    return jsonify({"status": "success", "sessions": [{
-        "id": item.id, "created_at": item.created_at.isoformat(),
-        "last_seen_at": item.last_seen_at.isoformat(), "expires_at": item.expires_at.isoformat(),
-        "revoked_at": item.revoked_at.isoformat() if item.revoked_at else None,
-        "active": item.is_valid,
-    } for item in sessions]}), 200
+    return jsonify({"status": "success", "sessions": [_admin_session_payload(item) for item in sessions]}), 200
+
+
+@admin_bp.route("/admin/v1/session", methods=["GET", "DELETE"], strict_slashes=False)
+@jwt_required()
+@admin_required
+def admin_current_session(admin_user):
+    """Expose and revoke only the admin's current session, never its JWT."""
+    session_id = str(get_jwt().get("sid") or "")
+    session = db.session.get(AuthSession, session_id) if session_id else None
+    if not session or session.user_id != str(admin_user.id):
+        return jsonify({"status": "error", "message": "Active session not found."}), 401
+    if request.method == "GET":
+        return jsonify({"status": "success", "session": _admin_session_payload(session)}), 200
+    if session.revoked_at is None:
+        session.revoked_at = utcnow()
+        _audit(admin_user, "ADMIN_CURRENT_SESSION_REVOKED", {"session_id": session.id})
+        db.session.commit()
+    return jsonify({"status": "success", "revoked": True}), 200
 
 
 @admin_bp.route("/admin/v1/users/<user_id>/sessions/revoke-all", methods=["POST"], strict_slashes=False)
@@ -334,12 +487,15 @@ def admin_dashboard(admin_user):
 @jwt_required()
 @admin_required
 def admin_tenants(admin_user):
-    organizations = Organization.query.order_by(Organization.created_at.desc()).all()
-    return jsonify({"status": "success", "tenants": [{
+    query = Organization.query.order_by(Organization.created_at.desc())
+    result = _page(query, lambda org: {
         **org.to_dict(),
         "member_count": OrganizationMember.query.filter_by(org_id=org.id).count(),
         "policy": (OrganizationPolicy.query.filter_by(org_id=org.id).first() or OrganizationPolicy(org_id=org.id)).to_dict(),
-    } for org in organizations]}), 200
+    })
+    if not result:
+        return jsonify({"status": "error", "message": "Invalid pagination."}), 400
+    return jsonify({"status": "success", "tenants": result["items"], "pagination": result["pagination"]}), 200
 
 
 @admin_bp.route("/admin/billing-summary", methods=["GET"], strict_slashes=False)
@@ -360,8 +516,96 @@ def admin_billing_summary(admin_user):
 @jwt_required()
 @admin_required
 def admin_subscriptions(admin_user):
-    subscriptions = Subscription.query.order_by(Subscription.updated_at.desc()).all()
-    return jsonify({"status": "success", "subscriptions": [item.to_dict() for item in subscriptions]}), 200
+    query = Subscription.query.order_by(Subscription.updated_at.desc())
+    user_id = str(request.args.get("user_id") or "").strip()
+    if user_id:
+        if len(user_id) > 100:
+            return jsonify({"status": "error", "message": "Invalid user filter."}), 400
+        query = query.filter_by(user_id=user_id)
+    result = _page(query, lambda item: item.to_dict())
+    if not result:
+        return jsonify({"status": "error", "message": "Invalid pagination."}), 400
+    return jsonify({"status": "success", "subscriptions": result["items"], "pagination": result["pagination"]}), 200
+
+
+@admin_bp.route("/admin/v1/billing/ledger", methods=["GET"], strict_slashes=False)
+@jwt_required()
+@admin_required
+def admin_credit_ledger(admin_user):
+    query = CreditLedger.query.order_by(CreditLedger.created_at.desc())
+    user_id = str(request.args.get("user_id") or "").strip()
+    if user_id:
+        if len(user_id) > 100:
+            return jsonify({"status": "error", "message": "Invalid user filter."}), 400
+        query = query.filter_by(user_id=user_id)
+    result = _page(query, lambda item: {
+        "id": item.id, "user_id": item.user_id, "credits_delta": item.credits_delta,
+        "source": item.source, "provider_tokens": item.provider_tokens,
+        "created_at": item.created_at.isoformat(),
+    })
+    if not result:
+        return jsonify({"status": "error", "message": "Invalid pagination."}), 400
+    return jsonify({"status": "success", "ledger": result["items"], "pagination": result["pagination"]}), 200
+
+
+@admin_bp.route("/admin/v1/billing/events", methods=["GET"], strict_slashes=False)
+@jwt_required()
+@admin_required
+def admin_payment_events(admin_user):
+    query = PaymentEvent.query.order_by(PaymentEvent.processed_at.desc())
+    provider = str(request.args.get("provider") or "").strip().lower()
+    if provider:
+        if len(provider) > 32 or not provider.replace("_", "").isalnum():
+            return jsonify({"status": "error", "message": "Invalid provider filter."}), 400
+        query = query.filter_by(provider=provider)
+    result = _page(query, lambda item: {
+        "id": item.id, "provider": item.provider, "event_type": item.event_type,
+        "processed_at": item.processed_at.isoformat(),
+    })
+    if not result:
+        return jsonify({"status": "error", "message": "Invalid pagination."}), 400
+    return jsonify({"status": "success", "events": result["items"], "pagination": result["pagination"]}), 200
+
+
+@admin_bp.route("/admin/v1/billing/invoices", methods=["GET"], strict_slashes=False)
+@jwt_required()
+@admin_required
+def admin_invoices(admin_user):
+    query = Invoice.query.order_by(Invoice.created_at.desc())
+    user_id = str(request.args.get("user_id") or "").strip()
+    if user_id:
+        if len(user_id) > 100:
+            return jsonify({"status": "error", "message": "Invalid user filter."}), 400
+        query = query.filter_by(user_id=user_id)
+    result = _page(query, lambda item: item.to_dict())
+    if not result:
+        return jsonify({"status": "error", "message": "Invalid pagination."}), 400
+    return jsonify({"status": "success", "invoices": result["items"], "pagination": result["pagination"]}), 200
+
+
+@admin_bp.route("/admin/v1/billing/invoices/<int:invoice_id>/refund", methods=["POST"], strict_slashes=False)
+@jwt_required()
+@admin_required
+def admin_refund_invoice(admin_user, invoice_id):
+    invoice = db.session.get(Invoice, invoice_id)
+    if not invoice:
+        return jsonify({"status": "error", "message": "Invoice not found."}), 404
+    if invoice.status == "refunded":
+        return jsonify({"status": "success", "invoice": invoice.to_dict(), "idempotent": True}), 200
+    if invoice.status != "paid" or not invoice.provider_payment_id:
+        return jsonify({"status": "error", "message": "Invoice is not refundable."}), 409
+    try:
+        from app.services.payment_service import PaymentNotConfigured, get_payment_provider
+        result = get_payment_provider().refund_payment(invoice.provider_payment_id, f"admin-invoice-refund-{invoice.id}")
+    except PaymentNotConfigured:
+        return jsonify({"status": "error", "capability": "NOT_CONFIGURED", "message": "Payment provider is not configured."}), 503
+    except Exception:
+        current_app.logger.exception("Admin payment refund failed.")
+        return jsonify({"status": "error", "message": "Payment refund failed."}), 502
+    invoice.status = "refunded" if result.get("status") in {"succeeded", "pending"} else "refund_pending"
+    _audit(admin_user, "ADMIN_INVOICE_REFUND", {"invoice_id": invoice.id, "user_id": invoice.user_id})
+    db.session.commit()
+    return jsonify({"status": "success", "invoice": invoice.to_dict()}), 200
 
 
 @admin_bp.route("/admin/provider-status", methods=["GET"], strict_slashes=False)
@@ -505,10 +749,24 @@ def admin_log_summary(admin_user):
 @jwt_required()
 @admin_required
 def list_users(admin_user):
-    users = User.query.order_by(User.created_at.desc()).all()
+    query = User.query.order_by(User.created_at.desc())
+    for name in ("role", "status"):
+        value = str(request.args.get(name) or "").strip()
+        if value:
+            if len(value) > 32:
+                return jsonify({"status": "error", "message": f"Invalid {name} filter."}), 400
+            query = query.filter(getattr(User, name) == value)
+    email = str(request.args.get("email") or "").strip().lower()
+    if email:
+        if len(email) > 180:
+            return jsonify({"status": "error", "message": "Invalid email filter."}), 400
+        query = query.filter(User.email.ilike(f"%{email}%"))
+    result = _page(query, lambda user: user.to_dict())
+    if not result:
+        return jsonify({"status": "error", "message": "Invalid pagination."}), 400
     return jsonify({
         "status": "success",
-        "users": [u.to_dict() for u in users],
+        "users": result["items"], "pagination": result["pagination"],
     }), 200
 
 
