@@ -13,6 +13,12 @@ depends_on = None
 
 
 def upgrade():
+    inspector = sa.inspect(op.get_bind())
+    if "organization_policies" in inspector.get_table_names():
+        required = {"id", "org_id", "allowed_providers", "billing_enabled", "updated_at"}
+        if not required <= {column["name"] for column in inspector.get_columns("organization_policies")}:
+            raise RuntimeError("Existing organization_policies schema is incompatible with this migration.")
+        return
     op.create_table(
         "organization_policies",
         sa.Column("id", sa.Integer(), primary_key=True),

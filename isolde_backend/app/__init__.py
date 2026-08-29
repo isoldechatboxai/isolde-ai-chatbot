@@ -784,7 +784,11 @@ def create_app(config_class=Config):
     #
     # This block is intentionally disabled in production.
     # ----------------------------------------------------------------
-    if not app.config.get("IS_PRODUCTION", False):
+    # Never infer a PostgreSQL schema from ORM metadata.  Development SQLite
+    # remains convenient, while every shared database (including staging)
+    # is owned exclusively by Alembic migrations.
+    if (not app.config.get("IS_PRODUCTION", False)
+            and app.config.get("SQLALCHEMY_DATABASE_URI", "").startswith("sqlite:")):
         with app.app_context():
             db.create_all()
 

@@ -13,6 +13,13 @@ depends_on = None
 
 
 def upgrade():
+    inspector = sa.inspect(op.get_bind())
+    if "billing_payment_events" in inspector.get_table_names():
+        columns = {column["name"] for column in inspector.get_columns("billing_payment_events")}
+        required = {"id", "provider", "event_id", "event_type", "processed_at"}
+        if not required <= columns:
+            raise RuntimeError("Existing billing_payment_events schema is incompatible with this migration.")
+        return
     op.create_table(
         "billing_payment_events",
         sa.Column("id", sa.Integer(), primary_key=True),

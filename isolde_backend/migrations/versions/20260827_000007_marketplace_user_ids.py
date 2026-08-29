@@ -13,18 +13,21 @@ depends_on = None
 
 
 def upgrade():
-    with op.batch_alter_table("developers") as batch:
-        batch.alter_column(
-            "user_id", existing_type=sa.Integer(), type_=sa.String(length=36),
-            existing_nullable=False, postgresql_using="user_id::text",
-        )
-        batch.create_index("ix_developers_user_id", ["user_id"], unique=False)
-    with op.batch_alter_table("plugin_installations") as batch:
-        batch.alter_column(
-            "user_id", existing_type=sa.Integer(), type_=sa.String(length=36),
-            existing_nullable=True, nullable=True, postgresql_using="user_id::text",
-        )
-        batch.create_index("ix_plugin_installations_user_id", ["user_id"], unique=False)
+    inspector = sa.inspect(op.get_bind())
+    developer_column = next(column for column in inspector.get_columns("developers") if column["name"] == "user_id")
+    developer_indexes = {index["name"] for index in inspector.get_indexes("developers")}
+    if not isinstance(developer_column["type"], sa.String):
+        with op.batch_alter_table("developers") as batch:
+            batch.alter_column("user_id", existing_type=developer_column["type"], type_=sa.String(length=36), existing_nullable=False, postgresql_using="user_id::text")
+    if "ix_developers_user_id" not in developer_indexes:
+        op.create_index("ix_developers_user_id", "developers", ["user_id"], unique=False)
+    plugin_column = next(column for column in inspector.get_columns("plugin_installations") if column["name"] == "user_id")
+    plugin_indexes = {index["name"] for index in inspector.get_indexes("plugin_installations")}
+    if not isinstance(plugin_column["type"], sa.String):
+        with op.batch_alter_table("plugin_installations") as batch:
+            batch.alter_column("user_id", existing_type=plugin_column["type"], type_=sa.String(length=36), existing_nullable=True, nullable=True, postgresql_using="user_id::text")
+    if "ix_plugin_installations_user_id" not in plugin_indexes:
+        op.create_index("ix_plugin_installations_user_id", "plugin_installations", ["user_id"], unique=False)
 
 
 def downgrade():

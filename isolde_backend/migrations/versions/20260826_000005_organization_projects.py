@@ -13,6 +13,12 @@ depends_on = None
 
 
 def upgrade():
+    inspector = sa.inspect(op.get_bind())
+    if "organization_projects" in inspector.get_table_names():
+        required = {"id", "org_id", "project_id", "shared_by", "access_level", "created_at"}
+        if not required <= {column["name"] for column in inspector.get_columns("organization_projects")}:
+            raise RuntimeError("Existing organization_projects schema is incompatible with this migration.")
+        return
     op.create_table(
         "organization_projects",
         sa.Column("id", sa.Integer(), primary_key=True),
