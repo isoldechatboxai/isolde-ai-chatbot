@@ -26,7 +26,7 @@ RUN chmod 755 /app/docker-entrypoint.sh
 EXPOSE 5000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD curl --fail http://127.0.0.1:5000/api/ready || exit 1
+  CMD curl --fail "http://127.0.0.1:${PORT:-5000}/api/ready" || exit 1
 
 # Set environment variables
 ENV FLASK_APP=run.py
@@ -35,4 +35,4 @@ ENV PYTHONUNBUFFERED=1
 
 # Run production server using Gunicorn
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "4", "--threads", "2", "--timeout", "120", "--graceful-timeout", "30", "--access-logfile", "-", "--error-logfile", "-", "run:app"]
+CMD ["sh", "-c", "exec gunicorn --bind 0.0.0.0:${PORT:-5000} --workers 4 --threads 2 --timeout 120 --graceful-timeout 30 --access-logfile - --error-logfile - run:app"]

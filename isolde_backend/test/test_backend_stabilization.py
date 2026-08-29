@@ -140,6 +140,11 @@ class TestProductionConfigValidation:
         with pytest.raises(RuntimeError, match="RATELIMIT_STORAGE_URI"):
             production_config.validate()
 
+    def test_production_requires_redis_rate_limit_storage(self):
+        production_config = self._make_production_config(RATELIMIT_STORAGE_URI="file:///tmp/limits")
+        with pytest.raises(RuntimeError, match="RATELIMIT_STORAGE_URI"):
+            production_config.validate()
+
     def test_production_sqlite_database_fails(self):
         production_config = self._make_production_config(SQLALCHEMY_DATABASE_URI="sqlite:///isolde.db")
         with pytest.raises(RuntimeError, match="DATABASE_URL"):

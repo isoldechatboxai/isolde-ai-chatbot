@@ -463,9 +463,9 @@ class Config:
         if cls.GEMINI_API_KEY and not cls.GEMINI_MODEL:
             raise RuntimeError("GEMINI_MODEL is required when GEMINI_API_KEY is configured in production.")
 
-        if cls.RATELIMIT_STORAGE_URI == "memory://":
+        if not cls.RATELIMIT_STORAGE_URI.startswith(("redis://", "rediss://")):
             raise RuntimeError(
-                "RATELIMIT_STORAGE_URI must use shared storage such as Redis in production."
+                "RATELIMIT_STORAGE_URI must use shared Redis storage in production."
             )
         if not cls.CANCELLATION_REDIS_URL.startswith(("redis://", "rediss://")):
             raise RuntimeError("CANCELLATION_REDIS_URL must use Redis in production.")

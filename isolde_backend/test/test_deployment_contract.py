@@ -8,6 +8,7 @@ def test_container_entrypoint_runs_migrations_before_gunicorn():
     assert "python -m flask db upgrade" in entrypoint
     assert "SKIP_DB_MIGRATE" in entrypoint
     assert "ENTRYPOINT [\"/app/docker-entrypoint.sh\"]" in dockerfile
+    assert "${PORT:-5000}" in dockerfile
 
 
 def test_deployment_documentation_covers_single_and_multi_replica_migrations():
