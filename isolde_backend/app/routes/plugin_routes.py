@@ -1,6 +1,7 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required
 from app.plugin_manager import plugin_manager
+from app.security.authorization import admin_required
 
 
 plugin_bp = Blueprint("plugin_bp", __name__)
@@ -9,21 +10,26 @@ plugin_bp = Blueprint("plugin_bp", __name__)
 @plugin_bp.route("/plugins/registry", methods=["GET"])
 @jwt_required(optional=True)
 def list_registered_plugins():
+    if current_app.config.get("IS_PRODUCTION"):
+        return jsonify({"status": "error", "error": "Runtime plugins are disabled in production."}), 501
     try:
         return jsonify({
             "status": "success",
             "plugins": plugin_manager.list_plugins()
         }), 200
-    except Exception as e:
+    except Exception:
+        current_app.logger.exception("Plugin registry listing failed.")
         return jsonify({
             "status": "error",
-            "error": str(e)
+            "error": "Plugin registry is unavailable."
         }), 500
 
 
 @plugin_bp.route("/plugins/registry/installed", methods=["GET"])
 @jwt_required(optional=True)
 def list_installed_plugins():
+    if current_app.config.get("IS_PRODUCTION"):
+        return jsonify({"status": "error", "error": "Runtime plugins are disabled in production."}), 501
     """
     Return currently registered/installed plugins.
     """
@@ -35,10 +41,11 @@ def list_installed_plugins():
             "installed_plugins": plugins
         }), 200
 
-    except Exception as e:
+    except Exception:
+        current_app.logger.exception("Installed plugin listing failed.")
         return jsonify({
             "status": "error",
-            "error": str(e)
+            "error": "Installed plugins are unavailable."
         }), 500
 
 
@@ -78,21 +85,23 @@ def install_plugin():
             }), 404
 
         return jsonify({
-            "status": "success",
-            "message": f"Plugin '{plugin_name}' installed successfully.",
-            "plugin_name": plugin_name
-        }), 200
+            "status": "unavailable",
+            "error": "Persistent plugin installation is not configured."
+        }), 501
 
-    except Exception as e:
+    except Exception:
+        current_app.logger.exception("Plugin installation lookup failed.")
         return jsonify({
             "status": "error",
-            "error": str(e)
+            "error": "Plugin installation is unavailable."
         }), 500
 
 
 @plugin_bp.route("/plugins/registry/load", methods=["POST"])
-@jwt_required()
+@admin_required
 def load_plugins():
+    if current_app.config.get("IS_PRODUCTION"):
+        return jsonify({"status": "error", "error": "Runtime plugin loading is disabled in production."}), 501
     try:
         data = request.get_json(silent=True) or {}
         directory = data.get("directory")
@@ -110,10 +119,11 @@ def load_plugins():
             "loaded": count
         }), 200
 
-    except Exception as e:
+    except Exception:
+        current_app.logger.exception("Runtime plugin loading failed.")
         return jsonify({
             "status": "error",
-            "error": str(e)
+            "error": "Runtime plugin loading failed."
         }), 500
 
 
@@ -121,8 +131,10 @@ def load_plugins():
     "/plugins/registry/<string:plugin_name>/execute",
     methods=["POST"]
 )
-@jwt_required()
+@admin_required
 def execute_plugin(plugin_name):
+    if current_app.config.get("IS_PRODUCTION"):
+        return jsonify({"status": "error", "error": "Runtime plugins are disabled in production."}), 501
     try:
         data = request.get_json(silent=True) or {}
 
@@ -158,10 +170,11 @@ def execute_plugin(plugin_name):
             "error": str(e)
         }), 404
 
-    except Exception as e:
+    except Exception:
+        current_app.logger.exception("Runtime plugin execution failed.")
         return jsonify({
             "status": "error",
-            "error": str(e)
+            "error": "Runtime plugin execution failed."
         }), 500
 
 
@@ -169,8 +182,10 @@ def execute_plugin(plugin_name):
     "/plugins/registry/<string:plugin_name>",
     methods=["DELETE"]
 )
-@jwt_required()
+@admin_required
 def unregister_plugin(plugin_name):
+    if current_app.config.get("IS_PRODUCTION"):
+        return jsonify({"status": "error", "error": "Runtime plugins are disabled in production."}), 501
     try:
         ok = plugin_manager.unregister_plugin(plugin_name)
 
@@ -185,8 +200,9 @@ def unregister_plugin(plugin_name):
             "message": f"Plugin '{plugin_name}' unregistered."
         }), 200
 
-    except Exception as e:
+    except Exception:
+        current_app.logger.exception("Runtime plugin removal failed.")
         return jsonify({
             "status": "error",
-            "error": str(e)
+            "error": "Runtime plugin removal failed."
         }), 500

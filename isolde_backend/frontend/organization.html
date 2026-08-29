@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Organization · Isolde</title><link rel="stylesheet" href="style.css"><script src="organization.js" defer></script></head>
+<body><main style="max-width:960px;margin:2rem auto;padding:1rem">
+  <p><a href="/">← Workspace</a> · <a href="/ai_studio.html">AI Studio</a> · <a href="/smart_library.html">Files &amp; RAG</a> · <a href="/workflows.html">Workflows</a> · <a href="/billing.html">Usage &amp; Billing</a></p><h1>Organization</h1>
+  <div id="org-message" role="status">Loading…</div>
+  <section><h2>Your organizations</h2><select id="org-select"></select></section>
+  <section><h2>Members</h2><div id="member-list">Select an organization.</div></section>
+  <section id="member-controls" hidden><h2>Add registered member</h2>
+    <form id="member-form"><input id="member-email" type="email" placeholder="member@example.com" required>
+      <select id="member-role" required></select><button type="submit">Add member</button></form>
+    <h2>Tenant usage</h2><div id="tenant-usage">Usage unavailable</div>
+    <h2>Tenant policy</h2>
+    <form id="policy-form">
+      <label>Allowed AI providers <input id="policy-providers" placeholder="gemini, openai"></label>
+      <label><input id="policy-billing" type="checkbox" checked> Billing enabled</label>
+      <button type="submit">Save tenant policy</button>
+    </form>
+    <h2>Share an owned project</h2>
+    <form id="project-share-form"><input id="project-share-id" type="number" min="1" placeholder="Project ID" required>
+      <select id="project-share-access"><option value="view">View</option><option value="edit">Edit</option></select>
+      <button type="submit">Share project</button></form>
+  </section>
+  <section><h2>Shared projects</h2><div id="shared-projects">No shared projects.</div></section>
+</main></body></html>

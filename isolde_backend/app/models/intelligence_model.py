@@ -6,7 +6,7 @@ class AIInsight(db.Model):
     __tablename__ = 'ai_insights'
 
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, nullable=False)
+    user_id = db.Column(db.String(36), nullable=False, index=True)
     category = db.Column(db.String(50), nullable=False) # e.g., Knowledge Gap, Meeting Trend
     title = db.Column(db.String(255), nullable=False)
     description = db.Column(db.Text, nullable=False)
@@ -26,7 +26,7 @@ class Recommendation(db.Model):
     __tablename__ = 'ai_recommendations'
 
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, nullable=False)
+    user_id = db.Column(db.String(36), nullable=False, index=True)
     rec_type = db.Column(db.String(50), nullable=False) # Task, Meeting, Agent, Plugin
     content = db.Column(db.String(255), nullable=False)
     priority = db.Column(db.String(20), default='Medium') # High, Medium, Low
@@ -48,10 +48,10 @@ class LearningProfile(db.Model):
     __tablename__ = 'learning_profiles'
 
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, unique=True, nullable=False)
+    user_id = db.Column(db.String(36), unique=True, nullable=False)
     favorite_agent = db.Column(db.String(100), default='Default Assistant')
     preferred_workspace = db.Column(db.String(100), default='General Workspace')
-    frequent_prompts_count = db.Column(db.Integer, default=42)
+    frequent_prompts_count = db.Column(db.Integer, default=0)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     def to_dict(self):

@@ -1,6 +1,6 @@
 # app/routes/analytics_routes.py
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.services.analytics_service import analytics_service
 
@@ -22,8 +22,9 @@ def get_dashboard_metrics():
             "data": analytics_data
         }), 200
 
-    except Exception as e:
+    except Exception:
+        current_app.logger.exception("Analytics dashboard lookup failed.")
         return jsonify({
             "success": False,
-            "error": str(e)
+            "error": "Analytics are unavailable."
         }), 500

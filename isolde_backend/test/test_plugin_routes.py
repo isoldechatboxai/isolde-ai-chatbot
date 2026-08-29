@@ -50,6 +50,7 @@ def client():
             name="Plugin Test User",
             email="plugin-test-user@example.com",
             status="Active",
+            role="Admin",
         )
         plugin_user.set_password("ValidPassword123")
 

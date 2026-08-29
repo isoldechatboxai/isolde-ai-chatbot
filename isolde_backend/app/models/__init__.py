@@ -7,6 +7,8 @@ from app.models.conversation import Conversation
 
 from app.models.api_key_model import ApiKey
 from app.models.saas_cloud_model import Tenant, Subscription, Invoice, APIKey
+from app.models.auth_model import AuthSession, AuthToken, OAuthAccount, RevokedToken
+from app.models.rag_model import RAGDocument, RAGChunk
 
 import app.models.ai_studio_model
 import app.models.analytics_model
@@ -34,4 +36,8 @@ __all__ = [
     "Subscription",
     "Invoice",
     "APIKey",
+    "AuthSession",
+    "AuthToken",
+    "OAuthAccount",
+    "RevokedToken",
 ]

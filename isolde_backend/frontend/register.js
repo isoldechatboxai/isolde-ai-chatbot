@@ -74,12 +74,4 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Guest Button Handler
-    const guestBtn = document.getElementById('guest-btn');
-    if (guestBtn) {
-        guestBtn.addEventListener('click', () => {
-            localStorage.removeItem('access_token');
-            window.location.href = "/";
-        });
-    }
 });

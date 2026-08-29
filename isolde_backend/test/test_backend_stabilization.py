@@ -2,6 +2,8 @@
 Tests for marketplace, workspace, and workflow routes.
 Focus on authentication, authorization, ownership checks, and input validation.
 """
+import os
+
 import pytest
 from app import create_app
 from app.extensions import db
@@ -13,9 +15,10 @@ class TestConfig(Config):
     TESTING = True
     SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
     JWT_SECRET_KEY = "test-secret-key-for-testing"
-    UPLOAD_FOLDER = "/tmp/test-uploads"
-    LOG_DIR = "/tmp/test-logs"
-    VECTOR_STORE_DIR = "/tmp/test-vector-store"
+    _TEST_RUNTIME_ROOT = os.path.join(os.path.dirname(__file__), ".runtime")
+    UPLOAD_FOLDER = os.path.join(_TEST_RUNTIME_ROOT, "uploads")
+    LOG_DIR = os.path.join(_TEST_RUNTIME_ROOT, "logs")
+    VECTOR_STORE_DIR = os.path.join(_TEST_RUNTIME_ROOT, "vector-store")
     # Override engine options for SQLite in-memory compatibility
     SQLALCHEMY_ENGINE_OPTIONS = {}
 
@@ -63,6 +66,12 @@ class TestProductionConfigValidation:
             GEMINI_API_KEY = "test-gemini-api-key"
             GEMINI_MODEL = "gemini-1.5-flash"
             CORS_ORIGINS = ["https://example.com"]
+            RATELIMIT_STORAGE_URI = "redis://redis:6379/0"
+            CANCELLATION_REDIS_URL = "redis://redis:6379/1"
+            RAG_STORAGE_BACKEND = "database"
+            STORAGE_BACKEND = "s3"
+            S3_BUCKET = "isolde-test-private"
+            SQLALCHEMY_DATABASE_URI = "postgresql://isolde:secret@db/isolde"
 
         for key, value in overrides.items():
             setattr(ProductionConfig, key, value)
@@ -84,6 +93,17 @@ class TestProductionConfigValidation:
     def test_valid_production_configuration_passes(self):
         production_config = self._make_production_config()
         production_config.validate()
+
+    def test_non_gemini_provider_can_bootstrap_production(self):
+        production_config = self._make_production_config(
+            GEMINI_API_KEY="", GEMINI_MODEL="", OPENAI_API_KEY="sk-live-not-a-real-key"
+        )
+        production_config.validate()
+
+    def test_production_requires_at_least_one_provider_key(self):
+        production_config = self._make_production_config(GEMINI_API_KEY="")
+        with pytest.raises(RuntimeError, match="AI provider API key"):
+            production_config.validate()
 
     def test_missing_flask_secret_key_fails(self):
         production_config = self._make_production_config(SECRET_KEY="")
@@ -113,6 +133,21 @@ class TestProductionConfigValidation:
     def test_production_wildcard_cors_fails(self):
         production_config = self._make_production_config(CORS_ORIGINS=["*"])
         with pytest.raises(RuntimeError, match="CORS_ORIGINS"):
+            production_config.validate()
+
+    def test_production_in_memory_rate_limit_storage_fails(self):
+        production_config = self._make_production_config(RATELIMIT_STORAGE_URI="memory://")
+        with pytest.raises(RuntimeError, match="RATELIMIT_STORAGE_URI"):
+            production_config.validate()
+
+    def test_production_sqlite_database_fails(self):
+        production_config = self._make_production_config(SQLALCHEMY_DATABASE_URI="sqlite:///isolde.db")
+        with pytest.raises(RuntimeError, match="DATABASE_URL"):
+            production_config.validate()
+
+    def test_production_requires_shared_cancellation(self):
+        production_config = self._make_production_config(CANCELLATION_REDIS_URL="")
+        with pytest.raises(RuntimeError, match="CANCELLATION_REDIS_URL"):
             production_config.validate()
 
 

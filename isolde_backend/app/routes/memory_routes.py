@@ -132,7 +132,7 @@ Statement: "{raw_text}"
 
 
 @memory_bp.route("/memory/save", methods=["POST"], strict_slashes=False)
-@jwt_required(optional=True)
+@jwt_required()
 def save_memory():
     user_id = _current_user_id()
 
@@ -234,7 +234,7 @@ def save_memory():
 
 
 @memory_bp.route("/memory/list", methods=["GET"], strict_slashes=False)
-@jwt_required(optional=True)
+@jwt_required()
 def list_memories():
     user_id = _current_user_id()
 
@@ -291,7 +291,7 @@ def list_memories():
 
 
 @memory_bp.route("/memory/categories", methods=["GET"], strict_slashes=False)
-@jwt_required(optional=True)
+@jwt_required()
 def get_memory_categories():
     user_id = _current_user_id()
 
@@ -333,7 +333,7 @@ def get_memory_categories():
 
 
 @memory_bp.route("/memory/stats", methods=["GET"], strict_slashes=False)
-@jwt_required(optional=True)
+@jwt_required()
 def memory_stats():
     user_id = _current_user_id()
 
@@ -368,7 +368,7 @@ def memory_stats():
 
 
 @memory_bp.route("/memory/<int:memory_id>/pin", methods=["PATCH"], strict_slashes=False)
-@jwt_required(optional=True)
+@jwt_required()
 def toggle_pin_memory(memory_id):
     user_id = _current_user_id()
 
@@ -408,7 +408,7 @@ def toggle_pin_memory(memory_id):
 
 
 @memory_bp.route("/memory/<int:memory_id>", methods=["DELETE"], strict_slashes=False)
-@jwt_required(optional=True)
+@jwt_required()
 def delete_memory(memory_id):
     user_id = _current_user_id()
 
@@ -451,7 +451,7 @@ def delete_memory(memory_id):
     methods=["DELETE"],
     strict_slashes=False
 )
-@jwt_required(optional=True)
+@jwt_required()
 def delete_category(category_name):
     user_id = _current_user_id()
 
@@ -484,7 +484,7 @@ def delete_category(category_name):
 
 
 @memory_bp.route("/memory/all", methods=["DELETE"], strict_slashes=False)
-@jwt_required(optional=True)
+@jwt_required()
 def clear_all_memories():
     user_id = _current_user_id()
 
@@ -512,7 +512,7 @@ def clear_all_memories():
     methods=["GET"],
     strict_slashes=False
 )
-@jwt_required(optional=True)
+@jwt_required()
 def export_memories(file_format):
     user_id = _current_user_id()
 
@@ -567,7 +567,7 @@ def export_memories(file_format):
 
 
 @memory_bp.route("/memory/import", methods=["POST"], strict_slashes=False)
-@jwt_required(optional=True)
+@jwt_required()
 def import_memories():
     user_id = _current_user_id()
 

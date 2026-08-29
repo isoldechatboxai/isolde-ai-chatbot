@@ -92,7 +92,7 @@ def _resolve_message_id(raw_message_id, user_id):
 
 
 @feedback_bp.route("/feedback/correction", methods=["POST"], strict_slashes=False)
-@jwt_required(optional=True)
+@jwt_required()
 def submit_feedback():
     data = _get_json_payload()
 

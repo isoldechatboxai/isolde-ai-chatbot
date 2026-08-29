@@ -234,9 +234,7 @@
                 <span class="btn-text">Login</span>
             </button>
 
-            <button type="button" class="guest-btn" id="guest-btn">
-                Continue as Guest
-            </button>
+            <div id="oauth-options" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px;"></div>
         </form>
 
         <div class="switch-page">
@@ -248,7 +246,7 @@
     <div id="forgot-modal">
         <div class="modal-card">
             <h3>Reset Password</h3>
-            <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 15px;">Enter your email to receive OTP and set a new password.</p>
+            <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 15px;">Request a single-use reset link, then paste its token below if this page did not open it automatically.</p>
             
             <div id="modal-msg" class="message" style="margin-bottom: 10px;"></div>
 
@@ -258,12 +256,12 @@
             </div>
 
             <div class="input-group" id="otp-group" style="display:none;">
-                <label>Enter OTP / New Password</label>
-                <input type="text" id="forgot-otp" placeholder="6-digit OTP" style="margin-bottom: 10px;">
+                <label>Reset Token / New Password</label>
+                <input type="text" id="forgot-token" placeholder="Single-use reset token" style="margin-bottom: 10px;">
                 <input type="password" id="new-password" placeholder="New Password">
             </div>
 
-            <button type="button" class="auth-btn" id="send-otp-btn">Send OTP</button>
+            <button type="button" class="auth-btn" id="send-otp-btn">Send Reset Link</button>
             <button type="button" class="guest-btn" id="verify-reset-btn" style="display:none;">Reset Password</button>
             <button type="button" class="guest-btn" id="close-modal-btn" style="margin-top: 8px;">Cancel</button>
         </div>
@@ -276,6 +274,9 @@
 
             form.addEventListener('submit', async (e) => {
                 e.preventDefault();
+                const loginButton = document.getElementById('login-btn');
+                if (loginButton.disabled) return;
+                loginButton.disabled = true;
                 const email = document.getElementById('email').value.trim();
                 const password = document.getElementById('password').value;
 
@@ -289,6 +290,7 @@
 
                     if(res.ok && data.access_token) {
                         localStorage.setItem('access_token', data.access_token);
+                        localStorage.setItem('user', JSON.stringify(data.user || {}));
                         msg.textContent = "Login successful! Redirecting...";
                         msg.className = "message success";
                         setTimeout(() => window.location.href = "/", 1000);
@@ -299,12 +301,41 @@
                 } catch(err) {
                     msg.textContent = "Server connection error.";
                     msg.className = "message error";
+                } finally {
+                    loginButton.disabled = false;
                 }
             });
 
-            document.getElementById('guest-btn').addEventListener('click', () => {
-                localStorage.removeItem('access_token');
-                window.location.href = "/";
+            const oauthStatus = new URLSearchParams(window.location.search).get('oauth');
+            if (oauthStatus === 'complete') {
+                fetch('/api/oauth/session', {method: 'POST'}).then(async (res) => {
+                    const data = await res.json();
+                    if (!res.ok || !data.access_token) throw new Error(data.error || 'OAuth login failed.');
+                    localStorage.setItem('access_token', data.access_token);
+                    localStorage.setItem('user', JSON.stringify(data.user || {}));
+                    history.replaceState({}, '', '/login.html');
+                    window.location.replace('/');
+                }).catch((error) => {
+                    msg.textContent = error.message;
+                    msg.className = 'message error';
+                });
+            }
+
+            fetch('/api/oauth/providers').then((res) => res.json()).then((data) => {
+                const container = document.getElementById('oauth-options');
+                Object.entries(data.providers || {}).forEach(([provider, configured]) => {
+                    const button = document.createElement('button');
+                    button.type = 'button';
+                    button.className = 'guest-btn';
+                    button.textContent = `Continue with ${provider[0].toUpperCase() + provider.slice(1)}`;
+                    button.disabled = !configured;
+                    button.title = configured ? '' : `${provider} login is not configured`;
+                    button.addEventListener('click', () => window.location.assign(`/api/oauth/${provider}/start`));
+                    container.appendChild(button);
+                });
+            }).catch(() => {
+                const container = document.getElementById('oauth-options');
+                container.textContent = 'OAuth provider status unavailable. Email/password login remains available.';
             });
 
             // Modal Logic
@@ -325,26 +356,25 @@
                         method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({email})
                     });
                     const data = await res.json();
-                    m.textContent = data.message || "OTP sent";
+                    if (!res.ok) throw new Error(data.error || `Reset request failed (${res.status}).`);
+                    m.textContent = data.message || "Reset instructions requested";
                     m.className = "message success";
                     document.getElementById('otp-group').style.display = 'block';
                     document.getElementById('send-otp-btn').style.display = 'none';
                     document.getElementById('verify-reset-btn').style.display = 'block';
-                    if(data.dev_otp) alert("DEV OTP: " + data.dev_otp);
                 } catch(err) {
-                    m.textContent = "Error sending OTP";
+                    m.textContent = err.message || "Unable to request reset instructions";
                     m.className = "message error";
                 }
             });
             document.getElementById('verify-reset-btn').addEventListener('click', async () => {
-                const email = document.getElementById('forgot-email').value;
-                const otp = document.getElementById('forgot-otp').value;
+                const token = document.getElementById('forgot-token').value;
                 const new_password = document.getElementById('new-password').value;
                 const m = document.getElementById('modal-msg');
 
                 try {
                     const res = await fetch('/api/reset-password', {
-                        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({email, otp, new_password})
+                        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({token, new_password})
                     });
                     const data = await res.json();
                     if(res.ok) {
@@ -360,6 +390,15 @@
                     m.className = "message error";
                 }
             });
+
+            const resetToken = new URLSearchParams(window.location.search).get('token');
+            if (resetToken) {
+                document.getElementById('forgot-modal').style.display = 'flex';
+                document.getElementById('otp-group').style.display = 'block';
+                document.getElementById('send-otp-btn').style.display = 'none';
+                document.getElementById('verify-reset-btn').style.display = 'block';
+                document.getElementById('forgot-token').value = resetToken;
+            }
         });
     </script>
 </body>

@@ -1,8 +1,10 @@
 import os
+import click
 from flask import Flask, jsonify, send_from_directory, request
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-from sqlalchemy import text
+from sqlalchemy import text, inspect
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 try:
     from flask_jwt_extended.exceptions import UserLookupError
@@ -85,46 +87,54 @@ def _apply_part1_targeted_rate_limits(app):
         endpoint_l = endpoint.lower()
         view_name = getattr(view_func, "__name__", "").lower()
         module_name = getattr(view_func, "__module__", "") or ""
-
         is_api_key_endpoint = (
-            endpoint_l.startswith(
-                (
-                    "api_key.",
-                    "api_keys.",
-                    "apikey.",
-                )
-            )
+            endpoint_l.startswith(("api_key.", "api_keys.", "apikey."))
             or module_name.endswith("app.routes.api_key_routes")
         )
-
         is_saas_api_key_endpoint = (
             endpoint_l.startswith("saas_cloud.")
             or module_name.endswith("app.routes.saas_cloud_routes")
-        ) and (
-            "api_key" in endpoint_l
-            or "api_key" in view_name
-            or "apikey" in endpoint_l
-            or "apikey" in view_name
-            or "keys" in endpoint_l
-            or "keys" in view_name
-        )
+        ) and any(token in endpoint_l or token in view_name for token in ("api_key", "apikey", "keys"))
 
-        if is_api_key_endpoint:
-            limited_view = limiter.limit(api_key_limit)(view_func)
-            try:
-                limited_view.__part1_rate_limited__ = True
-            except Exception:
-                pass
+        limit_value = api_key_limit if is_api_key_endpoint else saas_api_key_limit if is_saas_api_key_endpoint else None
+        if limit_value:
+            limited_view = limiter.limit(limit_value)(view_func)
+            limited_view.__part1_rate_limited__ = True
             app.view_functions[endpoint] = limited_view
             wrapped_endpoints.add(endpoint)
-        elif is_saas_api_key_endpoint:
-            limited_view = limiter.limit(saas_api_key_limit)(view_func)
-            try:
-                limited_view.__part1_rate_limited__ = True
-            except Exception:
-                pass
-            app.view_functions[endpoint] = limited_view
-            wrapped_endpoints.add(endpoint)
+
+
+def _apply_security_sensitive_rate_limits(app):
+    limits = {
+        "auth.login": app.config["AUTH_RATE_LIMIT"],
+        "auth.register": app.config["AUTH_RATE_LIMIT"],
+        "auth.verify_email": app.config["AUTH_RATE_LIMIT"],
+        "auth.forgot_password": app.config["AUTH_RATE_LIMIT"],
+        "auth.reset_password": app.config["AUTH_RATE_LIMIT"],
+        "auth.oauth_start": app.config["OAUTH_RATE_LIMIT"],
+        "auth.oauth_callback": app.config["OAUTH_RATE_LIMIT"],
+        "chat.chat": app.config["CHAT_RATE_LIMIT"],
+        "chat.stream_chat": app.config["CHAT_RATE_LIMIT"],
+        "upload.upload_file": app.config["UPLOAD_RATE_LIMIT"],
+        "rag.upload_rag_file": app.config["UPLOAD_RATE_LIMIT"],
+        "ai_studio_bp.test_playground_prompt": app.config["CHAT_RATE_LIMIT"],
+        "admin.admin_login": app.config["AUTH_RATE_LIMIT"],
+        "unified_engine_bp.handle_unified_chat": app.config["CHAT_RATE_LIMIT"],
+        "memory_bp.save_memory": app.config["CHAT_RATE_LIMIT"],
+        "studio_bp.generate_image": app.config["CHAT_RATE_LIMIT"],
+        "studio_bp.generate_video": app.config["CHAT_RATE_LIMIT"],
+        "billing_bp.create_checkout": app.config["BILLING_RATE_LIMIT"],
+        "billing_bp.payment_webhook": app.config["BILLING_RATE_LIMIT"],
+        "billing_bp.cancel_subscription": app.config["BILLING_RATE_LIMIT"],
+        "billing_bp.refund_invoice": app.config["BILLING_RATE_LIMIT"],
+        "admin.admin_cancel_subscription": app.config["BILLING_RATE_LIMIT"],
+    }
+    for endpoint, limit_value in limits.items():
+        view = app.view_functions.get(endpoint)
+        if view is not None and not getattr(view, "__security_rate_limited__", False):
+            wrapped = limiter.limit(limit_value)(view)
+            wrapped.__security_rate_limited__ = True
+            app.view_functions[endpoint] = wrapped
 
 
 def create_app(config_class=Config):
@@ -157,6 +167,9 @@ def create_app(config_class=Config):
     # Configuration
     # ----------------------------------------------------------------
     app.config.from_object(config_class)
+    proxy_hops = int(app.config.get("TRUST_PROXY_HOPS", 0))
+    if proxy_hops:
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=proxy_hops, x_proto=proxy_hops, x_host=proxy_hops, x_port=proxy_hops)
 
     # ----------------------------------------------------------------
     # Runtime directories
@@ -215,6 +228,19 @@ def create_app(config_class=Config):
         return jsonify({
             "error": "Token revoked."
         }), 401
+
+    @jwt.token_in_blocklist_loader
+    def token_is_revoked(jwt_header, jwt_payload):
+        from app.models.auth_model import AuthSession, RevokedToken
+
+        if db.session.get(RevokedToken, jwt_payload.get("jti")) is not None:
+            return True
+        session_id = jwt_payload.get("sid")
+        if not session_id:
+            # Compatibility for tokens issued before database-backed sessions.
+            return False
+        auth_session = db.session.get(AuthSession, session_id)
+        return not auth_session or not auth_session.is_valid
 
     @jwt.needs_fresh_token_loader
     def needs_fresh_callback(jwt_header, jwt_payload):
@@ -350,16 +376,6 @@ def create_app(config_class=Config):
     from app.studio_routes import studio_bp
 
     # ----------------------------------------------------------------
-    # Authentication rate limit
-    # ----------------------------------------------------------------
-    limiter.limit(
-        app.config.get(
-            "AUTH_RATE_LIMIT",
-            "10 per minute",
-        )
-    )(auth_bp)
-
-    # ----------------------------------------------------------------
     # Core API blueprints
     # ----------------------------------------------------------------
     app.register_blueprint(
@@ -482,6 +498,70 @@ def create_app(config_class=Config):
     # Part 1 targeted API-key rate limiting
     # ----------------------------------------------------------------
     _apply_part1_targeted_rate_limits(app)
+    _apply_security_sensitive_rate_limits(app)
+
+    @app.cli.command("db-bootstrap")
+    def db_bootstrap():
+        """Initialize an entirely empty database and stamp it at migration head."""
+        inspector = inspect(db.engine)
+        tables = set(inspector.get_table_names())
+        if "alembic_version" in tables:
+            raise click.ClickException("Database is already migration-managed; run 'flask db upgrade'.")
+        if tables:
+            raise click.ClickException("Refusing to bootstrap a non-empty unversioned database.")
+        db.create_all()
+        from flask_migrate import stamp
+        stamp(revision="head")
+        click.echo("Empty database initialized and stamped at migration head.")
+
+    @app.cli.command("provision-demo-admin")
+    def provision_demo_admin():
+        """Explicitly provision one idempotent Super Admin for demo/staging only."""
+        from app.models.enterprise_models import AuditLog
+        from app.utils.validators import is_valid_email
+
+        if not app.config.get("DEMO_ADMIN_BOOTSTRAP_ENABLED", False):
+            raise click.ClickException("Demo admin bootstrap is disabled.")
+        if app.config.get("IS_PRODUCTION") or not app.config.get("IS_DEMO_STAGING"):
+            raise click.ClickException("Demo admin bootstrap is permitted only in demo or staging.")
+        database_marker = str(app.config.get("DEMO_DATABASE_MARKER") or "").lower()
+        storage_marker = str(app.config.get("DEMO_STORAGE_MARKER") or "").lower()
+        database_url = str(app.config.get("SQLALCHEMY_DATABASE_URI") or "").lower()
+        storage_bucket = str(app.config.get("S3_BUCKET") or "").lower()
+        cors_origins = app.config.get("CORS_ORIGINS") or []
+        if (not database_marker or database_marker not in database_url or
+                app.config.get("STORAGE_BACKEND") != "s3" or
+                not storage_marker or storage_marker not in storage_bucket or
+                "*" in cors_origins):
+            raise click.ClickException("Demo bootstrap isolation requirements are not satisfied.")
+        email = str(app.config.get("DEMO_ADMIN_EMAIL") or "").strip().lower()
+        password = str(app.config.get("DEMO_ADMIN_PASSWORD") or "")
+        if not is_valid_email(email) or len(password) < 16 or Config._is_placeholder_secret(password):
+            raise click.ClickException("Demo admin credentials are missing or do not meet security requirements.")
+        existing = User.query.filter_by(email=email).first()
+        if existing:
+            if existing.role != "Super Admin":
+                raise click.ClickException("Configured demo admin email belongs to a non-Super-Admin account.")
+            click.echo("Demo/staging Super Admin is already provisioned.")
+            return
+        user = User(name="Demo Staging Administrator", email=email, role="Super Admin", status="Active", is_verified=True)
+        user.set_password(password)
+        db.session.add(user)
+        db.session.flush()
+        db.session.add(AuditLog(actor_user_id=str(user.id), action="DEMO_ADMIN_PROVISIONED", status="success", details="{}"))
+        db.session.commit()
+        click.echo("Demo/staging Super Admin provisioned.")
+
+    @app.cli.command("rag-import-json")
+    @click.argument("path", type=click.Path(exists=True, dir_okay=False, readable=True))
+    def rag_import_json(path):
+        """Import an owned legacy RAG index.json into database storage."""
+        from app.services.rag_service import import_legacy_json
+        result = import_legacy_json(path)
+        click.echo(
+            f"Imported {result['documents']} documents and {result['chunks']} chunks; "
+            f"skipped {result['ownerless_skipped']} ownerless records."
+        )
 
     # ----------------------------------------------------------------
     # Error handlers
@@ -566,22 +646,30 @@ def create_app(config_class=Config):
             "database": False,
             "storage": False,
             "vector_store": False,
-            "logs": False,
+            "cancellation": False,
+            "logs": not app.config.get("LOG_TO_FILE", False),
         }
         try:
             db.session.execute(text("SELECT 1"))
             checks["database"] = True
+            from app.models.rag_model import RAGDocument
+            db.session.query(RAGDocument.id).limit(1).all()
+            checks["vector_store"] = True
         except Exception as error:
             app.logger.error(
                 "Readiness database check failed: %s",
                 error,
             )
 
-        required_directories = {
-            "storage": app.config["UPLOAD_FOLDER"],
-            "vector_store": app.config["VECTOR_STORE_DIR"],
-            "logs": app.config["LOG_DIR"],
-        }
+        try:
+            from app.services.storage_service import get_storage
+            checks["storage"] = get_storage().check()
+        except Exception as error:
+            app.logger.error("Readiness storage check failed: %s", error)
+
+        required_directories = {}
+        if app.config.get("LOG_TO_FILE", False):
+            required_directories["logs"] = app.config["LOG_DIR"]
         for check_name, directory in required_directories.items():
             try:
                 checks[check_name] = os.path.isdir(directory)
@@ -591,6 +679,21 @@ def create_app(config_class=Config):
                     check_name,
                     error,
                 )
+
+        try:
+            cancellation_url = app.config.get("CANCELLATION_REDIS_URL", "")
+            if cancellation_url:
+                import redis
+                redis.Redis.from_url(
+                    cancellation_url,
+                    socket_connect_timeout=app.config.get("REDIS_CONNECT_TIMEOUT_SECONDS", 2),
+                    socket_timeout=app.config.get("REDIS_SOCKET_TIMEOUT_SECONDS", 2),
+                ).ping()
+                checks["cancellation"] = True
+            else:
+                checks["cancellation"] = not app.config.get("IS_PRODUCTION", False)
+        except Exception as error:
+            app.logger.error("Readiness cancellation check failed: %s", error)
 
         ready = all(checks.values())
         return jsonify({
@@ -681,7 +784,11 @@ def create_app(config_class=Config):
     #
     # This block is intentionally disabled in production.
     # ----------------------------------------------------------------
-    if not app.config.get("IS_PRODUCTION", False):
+    # Never infer a PostgreSQL schema from ORM metadata.  Development SQLite
+    # remains convenient, while every shared database (including staging)
+    # is owned exclusively by Alembic migrations.
+    if (not app.config.get("IS_PRODUCTION", False)
+            and app.config.get("SQLALCHEMY_DATABASE_URI", "").startswith("sqlite:")):
         with app.app_context():
             db.create_all()
 

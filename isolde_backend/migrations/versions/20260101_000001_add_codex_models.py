@@ -17,8 +17,10 @@ depends_on = None
 
 
 def upgrade():
+    existing_tables = set(sa.inspect(op.get_bind()).get_table_names())
     # CodexProject
-    op.create_table(
+    if 'codex_projects' not in existing_tables:
+        op.create_table(
         'codex_projects',
         sa.Column('id', sa.Integer(), nullable=False),
         sa.Column('user_id', sa.String(length=255), nullable=False),
@@ -30,12 +32,13 @@ def upgrade():
         sa.Column('updated_at', sa.DateTime(), nullable=False),
         sa.ForeignKeyConstraint(['workspace_id'], ['workspaces.id'], ondelete='SET NULL'),
         sa.PrimaryKeyConstraint('id')
-    )
-    op.create_index(op.f('ix_codex_projects_user_id'), 'codex_projects', ['user_id'], unique=False)
-    op.create_index(op.f('ix_codex_projects_workspace_id'), 'codex_projects', ['workspace_id'], unique=False)
+        )
+        op.create_index(op.f('ix_codex_projects_user_id'), 'codex_projects', ['user_id'], unique=False)
+        op.create_index(op.f('ix_codex_projects_workspace_id'), 'codex_projects', ['workspace_id'], unique=False)
 
     # CodexProjectFile
-    op.create_table(
+    if 'codex_project_files' not in existing_tables:
+        op.create_table(
         'codex_project_files',
         sa.Column('id', sa.Integer(), nullable=False),
         sa.Column('project_id', sa.Integer(), nullable=False),
@@ -49,11 +52,12 @@ def upgrade():
         sa.ForeignKeyConstraint(['project_id'], ['codex_projects.id'], ondelete='CASCADE'),
         sa.PrimaryKeyConstraint('id'),
         sa.UniqueConstraint('project_id', 'file_path', name='uq_project_file_path')
-    )
-    op.create_index(op.f('ix_codex_project_files_project_id'), 'codex_project_files', ['project_id'], unique=False)
+        )
+        op.create_index(op.f('ix_codex_project_files_project_id'), 'codex_project_files', ['project_id'], unique=False)
 
     # CodexTask
-    op.create_table(
+    if 'codex_tasks' not in existing_tables:
+        op.create_table(
         'codex_tasks',
         sa.Column('id', sa.Integer(), nullable=False),
         sa.Column('project_id', sa.Integer(), nullable=False),
@@ -67,8 +71,8 @@ def upgrade():
         sa.Column('completed_at', sa.DateTime(), nullable=True),
         sa.ForeignKeyConstraint(['project_id'], ['codex_projects.id'], ondelete='CASCADE'),
         sa.PrimaryKeyConstraint('id')
-    )
-    op.create_index(op.f('ix_codex_tasks_project_id'), 'codex_tasks', ['project_id'], unique=False)
+        )
+        op.create_index(op.f('ix_codex_tasks_project_id'), 'codex_tasks', ['project_id'], unique=False)
 
 
 def downgrade():

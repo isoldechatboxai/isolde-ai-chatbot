@@ -4,10 +4,6 @@
 (() => {
   "use strict";
 
-  if (localStorage.getItem("access_token") === "guest_token_isolde_2026") {
-    localStorage.removeItem("access_token");
-  }
-
   function escapeText(str) {
     const div = document.createElement("div");
     div.textContent = str ?? "";
@@ -151,7 +147,6 @@
     const init = () => {
       const loginForm = document.getElementById("login-form");
       const loginBtn = document.getElementById("login-btn");
-      const guestBtn = document.getElementById("guest-btn");
       const btnText = loginBtn?.querySelector(".btn-text");
       const spinner = loginBtn?.querySelector(".spinner");
       const messageContainer = document.getElementById("message-container");
@@ -199,6 +194,7 @@
             const data = await response.json();
             if (response.ok && data.access_token) {
               localStorage.setItem("access_token", data.access_token);
+              localStorage.setItem("user", JSON.stringify(data.user || {}));
               showMessage("success", "Welcome back! Redirecting...");
               setTimeout(() => { window.location.href = "/"; }, 1000);
             } else {
@@ -213,12 +209,6 @@
         });
       }
 
-      if (guestBtn) {
-        guestBtn.addEventListener("click", () => {
-          localStorage.removeItem("access_token");
-          window.location.href = "/";
-        });
-      }
     };
 
     if (document.readyState === "loading") {
@@ -229,6 +219,11 @@
   }
 
   function initChatbotApp() {
+    const accessToken = localStorage.getItem("access_token");
+    if (!accessToken || accessToken === "null" || accessToken === "undefined") {
+      window.location.replace("/login.html");
+      return;
+    }
     const STORAGE_KEYS = {
       THEME: "isolde-theme",
       CONVERSATIONS: "isolde-conversations",
@@ -250,6 +245,7 @@
       abortController: null,
       streamingBotMsgObj: null,
       streamingTextEl: null,
+      generationId: null,
       webSearchEnabled: false,
     };
 
@@ -360,10 +356,26 @@
         stopBtn.addEventListener("mouseout", () => {
           stopBtn.classList.remove("is-hover");
         });
-        stopBtn.addEventListener("click", (e) => {
+        stopBtn.addEventListener("click", async (e) => {
           e.preventDefault();
-          if (state.abortController) {
-            try { state.abortController.abort(); } catch (err) {}
+          if (!state.generationId) {
+            appendBotMessage("Cancellation is not yet available for this request.");
+            return;
+          }
+          try {
+              const response = await fetch("/api/chat/stop", {
+                method: "POST",
+                headers: getAuthHeaders(true),
+                body: JSON.stringify({ generation_id: state.generationId }),
+              });
+              const data = await response.json().catch(() => ({}));
+              if (!response.ok || data.stopped !== true) {
+                appendBotMessage(data.error || "This generation could not be cancelled.");
+                return;
+              }
+              if (state.abortController) state.abortController.abort();
+          } catch (err) {
+            appendBotMessage("Cancellation service could not be reached.");
           }
         });
 
@@ -886,11 +898,12 @@
 
     async function submitFeedback(rating, comment) {
       try {
-        await fetch("/api/feedback", {
+        const response = await fetch("/api/feedback", {
           method: "POST",
           headers: getAuthHeaders(true),
           body: JSON.stringify({ rating, comment }),
         });
+        if (!response.ok) throw new Error("Feedback was not accepted.");
       } catch (err) {
         console.error("Isolde: Feedback submission failed", err);
       }
@@ -927,8 +940,9 @@
 
     async function deleteMemory(id) {
       try {
-        await fetch(`/api/memory/${id}`, { method: "DELETE", headers: getAuthHeaders() });
-        loadMemories();
+        const response = await fetch(`/api/memory/${id}`, { method: "DELETE", headers: getAuthHeaders() });
+        if (!response.ok) throw new Error("Memory was not deleted.");
+        await loadMemories();
       } catch (err) {
         console.error("Failed to delete memory", err);
       }
@@ -936,8 +950,9 @@
 
     async function clearAllMemories() {
       try {
-        await fetch("/api/memory/all", { method: "DELETE", headers: getAuthHeaders() });
-        loadMemories();
+        const response = await fetch("/api/memory/all", { method: "DELETE", headers: getAuthHeaders() });
+        if (!response.ok) throw new Error("Memories were not cleared.");
+        await loadMemories();
       } catch (err) {
         console.error("Failed to clear memories", err);
       }
@@ -1236,14 +1251,24 @@
         state.abortController = null;
         state.streamingBotMsgObj = null;
         state.streamingTextEl = null;
-        throw new Error("Server Error / Network Error");
+        const errorData = await response.json().catch(() => ({}));
+        if (response.status === 401) {
+          localStorage.removeItem("access_token");
+          localStorage.removeItem("user");
+          window.location.assign("/login.html");
+        }
+        if (response.status === 429) throw new Error("Rate limit reached. Please wait before retrying.");
+        throw new Error(errorData.error || "AI service unavailable.");
       }
+
+      state.generationId = response.headers.get("X-Generation-ID");
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let accumulatedText = "";
       let wasAborted = false;
       let streamDone = false;
+      let eventBuffer = "";
 
       try {
         while (true) {
@@ -1261,8 +1286,9 @@
           const { value, done } = readResult;
           if (done) break;
 
-          const chunk = decoder.decode(value, { stream: true });
-          const lines = chunk.split("\n\n");
+          eventBuffer += decoder.decode(value, { stream: true });
+          const lines = eventBuffer.split("\n\n");
+          eventBuffer = lines.pop() || "";
           for (const line of lines) {
             if (line.startsWith("data: ")) {
               const dataText = line.replace("data: ", "").trim();
@@ -1275,7 +1301,12 @@
                 }
                 continue;
               }
-              accumulatedText += dataText + " ";
+              let delta = dataText;
+              try {
+                const parsed = JSON.parse(dataText);
+                if (parsed && typeof parsed.delta === "string") delta = parsed.delta;
+              } catch (err) {}
+              accumulatedText += delta;
               botMsgObj.text = accumulatedText;
               if (typeof marked !== "undefined") textEl.innerHTML = sanitizeHtml(marked.parse(accumulatedText));
               else textEl.innerHTML = escapeHtml(accumulatedText).replace(/\n/g, "<br>");
@@ -1293,6 +1324,7 @@
         state.abortController = null;
         state.streamingBotMsgObj = null;
         state.streamingTextEl = null;
+        state.generationId = null;
       }
 
       if (wasAborted) {
@@ -1470,11 +1502,15 @@
           headers: { Authorization: `Bearer ${localStorage.getItem("access_token") || ""}` },
           body: formData,
         });
-        const data = await response.json();
+        const data = await response.json().catch(() => ({}));
+        if (response.status === 401) {
+          localStorage.removeItem("access_token"); localStorage.removeItem("user");
+          window.location.assign("/login.html"); return;
+        }
         if (response.ok && data.status === "success") {
           appendBotMessage(`✅ Document **${file.name}** Indexed successfully! You can now ask questions about this document.`);
         } else {
-          appendBotMessage(`⚠ Failed to upload document: ${data.message}`);
+          appendBotMessage(`⚠ Failed to upload document: ${data.message || data.error || `HTTP ${response.status}`}`);
         }
       } catch (err) {
         console.error("File upload error:", err);
@@ -1693,9 +1729,47 @@ function onDocumentReady(fn) {
   else fn();
 }
 
+async function applyPublicProductConfiguration() {
+  try {
+    const response = await fetch("/api/product/config");
+    if (!response.ok) return;
+    const config = await response.json();
+    const features = config.features || {};
+    const visibility = {
+      ai_studio: "ai-studio-nav",
+      workflows: "workflows-nav",
+      files_rag: "smart-library-btn",
+      billing: "billing-nav",
+      organization: "organization-nav",
+      image: "images-studio-btn",
+      video: "videos-gen-btn",
+    };
+    Object.entries(visibility).forEach(([feature, id]) => {
+      const element = document.getElementById(id);
+      if (element && features[feature] === false) element.hidden = true;
+    });
+    const branding = config.branding || {};
+    document.querySelectorAll(".brand-name").forEach((element) => {
+      element.textContent = branding.application_name || "Isolde AI";
+    });
+    const footer = document.querySelector(".app-footer .disclaimer");
+    if (footer && branding.footer_text) footer.textContent = branding.footer_text;
+    if (branding.announcement) {
+      const banner = document.createElement("div");
+      banner.className = "product-announcement";
+      banner.setAttribute("role", "status");
+      banner.textContent = branding.announcement;
+      document.querySelector(".main-content")?.prepend(banner);
+    }
+  } catch (_) {
+    // Safe built-in branding and feature defaults remain active.
+  }
+}
+
+onDocumentReady(applyPublicProductConfiguration);
+
 onDocumentReady(() => {
   const imgStudioBtn = document.getElementById("images-studio-btn");
-  const smartLibraryBtn = document.getElementById("smart-library-btn");
   const vidGenBtn = document.getElementById("videos-gen-btn");
   const modal = document.getElementById("ai-studio-workspace-modal");
   const title = document.getElementById("studio-modal-title");
@@ -1711,35 +1785,47 @@ onDocumentReady(() => {
     ["keydown", "keyup", "keypress", "input"].forEach((evt) => { input.addEventListener(evt, (e) => e.stopPropagation()); });
   }
 
-  function openWorkspace(type, e) {
+  async function openWorkspace(type, e) {
     if (e) { e.preventDefault(); e.stopPropagation(); }
     if (!modal) return;
 
     if (type === "image") {
-      if (title) title.textContent = "🎨 Images Studio Workspace";
-      if (desc) desc.textContent = "Transform text prompts into stunning high-definition AI artworks instantly.";
+      if (title) title.textContent = "ISOLDE AI IMAGE";
       if (input) input.placeholder = "e.g., A futuristic cyberpunk city in neon lights, 4k...";
     } else {
-      if (title) title.textContent = "🎬 Videos Generation Suite";
-      if (desc) desc.textContent = "Synthesize high-framerate dynamic videos from textual descriptions.";
+      if (title) title.textContent = "ISOLDE AI VIDEO";
       if (input) input.placeholder = "e.g., Drone shot flying across snow-capped mountains at sunrise...";
     }
 
     if (input) input.value = "";
     if (resultContainer) resultContainer.style.display = "none";
     modal.style.display = "flex";
+    if (runBtn) runBtn.disabled = true;
+    if (desc) desc.textContent = "Checking provider capability…";
+    try {
+      const response = await fetch("/api/studio/capabilities", { headers: getAuthHeaders() });
+      const data = await response.json().catch(() => ({}));
+      if (response.status === 401) {
+        localStorage.removeItem("access_token");
+        window.location.replace("/login.html");
+        return;
+      }
+      const capability = type === "image" ? data.image : data.video;
+      if (capability === "READY") {
+        if (desc) desc.textContent = "Provider ready.";
+        if (runBtn) runBtn.disabled = false;
+      } else if (desc) {
+        desc.textContent = capability === "NOT_SUPPORTED"
+          ? "Configured provider is not supported — NOT_SUPPORTED"
+          : "Provider not configured — NOT_CONFIGURED";
+      }
+    } catch (_) {
+      if (desc) desc.textContent = "Capability check unavailable. Retry by reopening this panel.";
+    }
     setTimeout(() => { if (input) input.focus(); }, 100);
   }
 
   if (imgStudioBtn) imgStudioBtn.addEventListener("click", (e) => openWorkspace("image", e));
-
-  if (smartLibraryBtn) {
-    smartLibraryBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      window.location.href = "/smart_library.html";
-    });
-  }
 
   if (vidGenBtn) vidGenBtn.addEventListener("click", (e) => openWorkspace("video", e));
 
@@ -1760,21 +1846,23 @@ onDocumentReady(() => {
       if (imgOutput) imgOutput.style.display = "none";
 
       try {
-        const isImage = title && title.textContent.includes("Images");
+        const isImage = title && title.textContent.includes("IMAGE");
         const endpoint = isImage ? "/api/studio/generate-image" : "/api/studio/generate-video";
         const res = await fetch(endpoint, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: getAuthHeaders(),
           body: JSON.stringify({ prompt: promptText }),
         });
         const data = await res.json();
 
-        if (res.ok && data.status === "success") {
+        if (res.ok && data.status === "success" && (data.image_url || data.video_url)) {
           if (loader) loader.style.display = "none";
           if (isImage && imgOutput) { imgOutput.src = data.image_url; imgOutput.style.display = "block"; }
-          else if (loader) { loader.style.display = "block"; loader.textContent = "✅ Job Completed Successfully! Pipeline output ready."; }
+          else if (loader) { loader.style.display = "block"; loader.textContent = `Video ready: ${data.video_url}`; }
+        } else if (res.ok && data.status === "success") {
+          if (loader) loader.textContent = "⚠ Provider response did not include a generated asset.";
         } else if (loader) {
-          loader.textContent = "⚠ Generation failed: " + (data.message || "Unknown error");
+          loader.textContent = "⚠ " + (data.message || data.error || "Generation is not configured.");
         }
       } catch (err) {
         if (loader) loader.textContent = "⚠ Network connection error during generation.";
@@ -2526,15 +2614,20 @@ document.addEventListener("click", async (e) => {
       try {
         const token = localStorage.getItem("access_token");
         if (token && token !== "null" && token !== "undefined") {
-          await fetch("/api/history", {
+          const response = await fetch("/api/history", {
             method: "DELETE",
             headers: {
               Authorization: `Bearer ${token}`,
             },
           });
+          if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
+            throw new Error(data.error || "Backend chat history was not deleted.");
+          }
         }
       } catch (err) {
-        console.error("Failed to clear backend history", err);
+        alert(err.message || "Failed to clear chat history.");
+        return;
       }
       localStorage.removeItem("isolde-conversations");
       localStorage.removeItem("isolde-active-conversation");

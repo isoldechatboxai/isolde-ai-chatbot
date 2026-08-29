@@ -7,7 +7,7 @@ class Developer(db.Model):
     __tablename__ = 'developers'
 
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, nullable=False)
+    user_id = db.Column(db.String(36), nullable=False, index=True)
     developer_name = db.Column(db.String(100), nullable=False)
     api_key = db.Column(db.String(255), default=lambda: f"ilk_{uuid.uuid4().hex}", unique=True, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -55,7 +55,7 @@ class PluginInstallation(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     plugin_id = db.Column(db.Integer, db.ForeignKey('plugins.id', ondelete='CASCADE'), nullable=False)
-    user_id = db.Column(db.Integer, nullable=True)
+    user_id = db.Column(db.String(36), nullable=True, index=True)
     org_id = db.Column(db.Integer, nullable=True) # Optional organization scope
     is_enabled = db.Column(db.Boolean, default=True)
     installed_at = db.Column(db.DateTime, default=datetime.utcnow)

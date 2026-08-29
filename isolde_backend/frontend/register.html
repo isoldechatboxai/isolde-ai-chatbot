@@ -185,6 +185,9 @@
             if (form) {
                 form.addEventListener('submit', async (e) => {
                     e.preventDefault();
+                    const button = document.getElementById('register-btn');
+                    if (button.disabled) return;
+                    button.disabled = true;
                     const name = document.getElementById('username').value.trim();
                     const email = document.getElementById('email').value.trim();
                     const password = document.getElementById('password').value;
@@ -198,9 +201,8 @@
                         const data = await res.json();
 
                         if(res.ok) {
-                            msg.textContent = "Registration Successful! Redirecting to login...";
+                            msg.textContent = data.message || "Registration successful. Check your email to verify the account.";
                             msg.className = "message success";
-                            setTimeout(() => window.location.href = "login.html", 1500);
                         } else {
                             msg.textContent = data.error || "Registration failed";
                             msg.className = "message error";
@@ -208,6 +210,8 @@
                     } catch(err) {
                         msg.textContent = "Server connection error.";
                         msg.className = "message error";
+                    } finally {
+                        button.disabled = false;
                     }
                 });
             }

@@ -1,6 +1,6 @@
 # app/routes/marketplace_routes.py
 import uuid
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity, verify_jwt_in_request
 from app import db
 from app.models.marketplace_model import Developer, Plugin, PluginInstallation
@@ -27,8 +27,9 @@ def get_marketplace_plugins():
         
         plugins = query.order_by(Plugin.downloads_count.desc()).all()
         return jsonify({"plugins": [p.to_dict() for p in plugins]}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        current_app.logger.exception("Marketplace listing failed.")
+        return jsonify({"error": "Marketplace listing is unavailable."}), 500
 
 @marketplace_bp.route("/marketplace/plugins", methods=["POST"])
 @jwt_required()
@@ -86,7 +87,7 @@ def install_plugin(plugin_id):
             return jsonify({"error": "Authentication required"}), 401
         
         # Verify plugin exists and is published
-        plugin = Plugin.query.get(plugin_id)
+        plugin = db.session.get(Plugin, plugin_id)
         if not plugin:
             return jsonify({"error": "Plugin not found"}), 404
         if plugin.status != "Published":

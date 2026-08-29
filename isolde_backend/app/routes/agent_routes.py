@@ -8,21 +8,27 @@ agent_bp = Blueprint("agent_bp", __name__)
 
 
 @agent_bp.route("/agent/list", methods=["GET"])
-@jwt_required(optional=True)
+@jwt_required()
 def list_all_agents_global():
-    """Returns all available agents across workspaces (Useful for global testing and UI dropdowns)."""
+    """Return active agents belonging to the authenticated user's workspaces."""
     try:
-        agents = Agent.query.filter_by(is_active=True).all()
+        user_id = get_jwt_identity()
+        agents = (
+            Agent.query.join(Workspace)
+            .filter(Workspace.user_id == user_id, Agent.is_active.is_(True))
+            .all()
+        )
         return jsonify({"agents": [a.to_dict() for a in agents]}), 200
     except Exception as e:
         return jsonify({"error": "Failed to fetch agents", "details": str(e)}), 500
 
 
 @agent_bp.route("/workspace/<int:workspace_id>/agents", methods=["GET"])
-@jwt_required(optional=True)
+@jwt_required()
 def list_agents(workspace_id: int):
     try:
-        workspace = Workspace.query.get(workspace_id)
+        user_id = get_jwt_identity()
+        workspace = Workspace.query.filter_by(id=workspace_id, user_id=user_id).first()
         if not workspace:
             return jsonify({"error": "Workspace not found"}), 404
 
@@ -37,10 +43,11 @@ def list_agents(workspace_id: int):
 
 
 @agent_bp.route("/workspace/<int:workspace_id>/agents", methods=["POST"])
-@jwt_required(optional=True)
+@jwt_required()
 def create_agent(workspace_id: int):
     try:
-        workspace = Workspace.query.get(workspace_id)
+        user_id = get_jwt_identity()
+        workspace = Workspace.query.filter_by(id=workspace_id, user_id=user_id).first()
         if not workspace:
             return jsonify({"error": "Workspace not found"}), 404
 
@@ -74,10 +81,13 @@ def create_agent(workspace_id: int):
 
 
 @agent_bp.route("/agent/<int:agent_id>", methods=["PUT"])
-@jwt_required(optional=True)
+@jwt_required()
 def update_agent(agent_id: int):
     try:
-        agent = Agent.query.get(agent_id)
+        user_id = get_jwt_identity()
+        agent = Agent.query.join(Workspace).filter(
+            Agent.id == agent_id, Workspace.user_id == user_id
+        ).first()
         if not agent:
             return jsonify({"error": "Agent not found"}), 404
 
@@ -106,10 +116,13 @@ def update_agent(agent_id: int):
 
 
 @agent_bp.route("/agent/<int:agent_id>", methods=["DELETE"])
-@jwt_required(optional=True)
+@jwt_required()
 def delete_agent(agent_id: int):
     try:
-        agent = Agent.query.get(agent_id)
+        user_id = get_jwt_identity()
+        agent = Agent.query.join(Workspace).filter(
+            Agent.id == agent_id, Workspace.user_id == user_id
+        ).first()
         if not agent:
             return jsonify({"error": "Agent not found"}), 404
 
@@ -122,7 +135,7 @@ def delete_agent(agent_id: int):
 
 
 @agent_bp.route("/agent/<int:agent_id>/activate", methods=["POST"])
-@jwt_required(optional=True)
+@jwt_required()
 def activate_agent(agent_id: int):
     """
     Instant Agent Switching: marks this agent as the 'active' one for the
@@ -130,11 +143,12 @@ def activate_agent(agent_id: int):
     correct system_prompt into the next AI call — no page reload needed.
     """
     try:
-        agent = Agent.query.get(agent_id)
+        user_id = get_jwt_identity()
+        agent = Agent.query.join(Workspace).filter(
+            Agent.id == agent_id, Workspace.user_id == user_id
+        ).first()
         if not agent:
             return jsonify({"error": "Agent not found"}), 404
-
-        user_id = get_jwt_identity() or "guest_user"
 
         # Stored in Flask session, keyed by user, so multiple users switching
         # agents concurrently never collide with each other.
@@ -149,17 +163,19 @@ def activate_agent(agent_id: int):
 
 
 @agent_bp.route("/agent/active", methods=["GET"])
-@jwt_required(optional=True)
+@jwt_required()
 def get_active_agent():
     """Returns whichever agent is currently active for this user (or None)."""
     try:
-        user_id = get_jwt_identity() or "guest_user"
+        user_id = get_jwt_identity()
         agent_id = session.get(f"active_agent_{user_id}")
 
         if not agent_id:
             return jsonify({"active_agent": None}), 200
 
-        agent = Agent.query.get(agent_id)
+        agent = Agent.query.join(Workspace).filter(
+            Agent.id == agent_id, Workspace.user_id == user_id
+        ).first()
         if not agent:
             return jsonify({"active_agent": None}), 200
 

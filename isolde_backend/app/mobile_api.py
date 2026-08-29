@@ -11,23 +11,15 @@ class MobileAPIManager:
     @staticmethod
     def register_device(user_id: str, device_token: str, platform: str) -> Dict[str, Any]:
         """Registers or updates a mobile device token for push notifications (FCM/APNs)."""
-        logger.info(f"Registering device for user {user_id} on platform {platform}")
-        return {
-            "status": "success",
-            "user_id": user_id,
-            "platform": platform,
-            "message": "Device successfully registered for mobile push notifications."
-        }
+        raise NotImplementedError("Push notification registration is not configured.")
 
     @staticmethod
     def format_mobile_payload(data: Dict[str, Any]) -> Dict[str, Any]:
-        """Optimizes and compresses heavy AI response payloads specifically for mobile bandwidth efficiency."""
-        logger.info("Formatting response payload for mobile consumption.")
-        # Strip heavy metadata or format lightweight json for mobile apps
+        """Wrap a response for mobile clients without claiming transport compression."""
         return {
-            "optimized": True,
+            "optimized": False,
             "payload": data,
-            "compression": "gzip-simulated"
+            "compression": "none"
         }
 
 

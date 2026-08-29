@@ -8,20 +8,18 @@
 </head>
 <body>
 <div style="max-width:960px;margin:40px auto;padding:24px;">
+  <p><a href="/">← Workspace</a> · <a href="/smart_library.html">Files &amp; RAG</a> · <a href="/workflows.html">Workflows</a> · <a href="/billing.html">Usage &amp; Billing</a> · <a href="/organization.html">Organization</a></p>
   <h1>AI Studio</h1>
 
   <section style="border:1px solid var(--border-color,#333);border-radius:10px;padding:16px;margin-bottom:20px;">
     <h2>Custom Models</h2>
-    <input id="model-name" placeholder="Model name">
-    <input id="base-model" placeholder="Base model (e.g. gemini-flash)">
-    <input id="dataset-uri" placeholder="Dataset URI">
-    <button id="create-model-btn">Create Model</button>
+    <p>Fine-tuning is not configured. Existing model records are shown read-only.</p>
     <ul id="model-list"></ul>
   </section>
 
   <section style="border:1px solid var(--border-color,#333);border-radius:10px;padding:16px;">
     <h2>Playground</h2>
-    <input id="playground-model-id" placeholder="Model ID">
+    <p>Provider: automatic, subject to your tenant provider policy.</p>
     <textarea id="playground-prompt" placeholder="Enter prompt..." rows="4" style="width:100%;"></textarea>
     <button id="run-prompt-btn">Run</button>
     <pre id="playground-output"></pre>

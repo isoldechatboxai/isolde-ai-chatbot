@@ -2,12 +2,9 @@
 """
 Minimal Retrieval-Augmented-Generation store.
 
-This uses a JSON file on disk plus numpy cosine similarity so the project
-runs with zero extra infrastructure.
-
-For production scale, swap this module's storage/search internals for
-ChromaDB, FAISS, or Pinecone. The function signatures below
-(index_document / search) are the integration points used by the app.
+Embeddings and chunks are persisted transactionally in the application
+database. Retrieval intentionally retains the existing cosine-similarity
+behavior so callers and answer quality remain stable.
 """
 
 import json
@@ -20,6 +17,8 @@ from typing import Optional, List, Dict
 
 from flask import current_app
 
+from app.extensions import db
+from app.models.rag_model import RAGChunk, RAGDocument
 from app.services.provider_router import embed_text
 
 INDEX_FILENAME = "index.json"
@@ -33,52 +32,28 @@ def _index_path():
     return os.path.join(store_dir, INDEX_FILENAME)
 
 
-def _load_index():
-    try:
-        path = _index_path()
-    except Exception as e:
-        current_app.logger.error(f"Failed to resolve RAG index path: {e}")
-        return []
-
-    if not os.path.exists(path):
-        return []
-
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            records = json.load(f)
-
-        if not isinstance(records, list):
-            current_app.logger.error("RAG index file is corrupted. Expected a JSON list.")
-            return []
-
-        return records
-    except Exception as e:
-        current_app.logger.error(f"Failed to load RAG index: {e}")
-        return []
+def _load_index(user_id=None):
+    """Compatibility projection used by retrieval and legacy callers."""
+    query = db.session.query(RAGChunk, RAGDocument.filename).join(
+        RAGDocument, RAGDocument.id == RAGChunk.document_id
+    )
+    if user_id is None:
+        query = query.filter(RAGChunk.user_id.is_(None))
+    else:
+        query = query.filter(RAGChunk.user_id == str(user_id))
+    rows = query.all()
+    return [{
+        "id": chunk.id,
+        "file_id": chunk.document_id,
+        "filename": filename,
+        "user_id": chunk.user_id,
+        "text": chunk.text,
+        "vector": chunk.embedding,
+    } for chunk, filename in rows]
 
 
 def _save_index(records):
-    if not isinstance(records, list):
-        records = []
-
-    path = _index_path()
-    tmp_path = f"{path}.tmp"
-
-    try:
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(records, f, ensure_ascii=False)
-
-        os.replace(tmp_path, path)
-    except Exception as e:
-        current_app.logger.error(f"Failed to save RAG index: {e}")
-
-        try:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-        except Exception:
-            pass
-
-        raise
+    raise RuntimeError("Whole-index replacement is disabled; use transactional RAG operations.")
 
 
 def _chunk_text(text: str, chunk_size: int = 800, overlap: int = 100):
@@ -249,16 +224,15 @@ def index_document(file_id: str, filename: str, text: str, user_id: Optional[str
     if not text or not text.strip():
         return 0
 
-    if user_id is not None:
-        user_id = str(user_id).strip() or None
-
-    records = _load_index()
+    user_id = str(user_id).strip() if user_id is not None else ""
+    if not user_id:
+        raise ValueError("Authenticated document ownership is required for RAG indexing.")
     chunks = _chunk_text(text)
 
     if not chunks:
         return 0
 
-    success_count = 0
+    embedded_chunks = []
 
     for chunk in chunks:
         try:
@@ -269,24 +243,95 @@ def index_document(file_id: str, filename: str, text: str, user_id: Optional[str
 
             vector = [float(value) for value in vector]
 
-            records.append({
-                "id": str(uuid.uuid4()),
-                "file_id": file_id,
-                "filename": filename,
-                "user_id": user_id,
-                "text": chunk,
-                "vector": vector,
-            })
-
-            success_count += 1
+            embedded_chunks.append((chunk, vector))
         except Exception as e:
             current_app.logger.error(f"Embedding failed for {filename}: {e}")
             continue
 
-    if success_count > 0:
-        _save_index(records)
+    if not embedded_chunks:
+        return 0
 
-    return success_count
+    document = RAGDocument(id=str(file_id), user_id=user_id, filename=filename, chunk_count=len(embedded_chunks))
+    try:
+        db.session.add(document)
+        for position, (chunk, vector) in enumerate(embedded_chunks):
+            db.session.add(RAGChunk(
+                document_id=document.id,
+                user_id=user_id,
+                position=position,
+                text=chunk,
+                embedding=vector,
+                embedding_dimension=len(vector),
+            ))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        raise
+    return len(embedded_chunks)
+
+
+def list_documents(user_id: str):
+    return RAGDocument.query.filter_by(user_id=str(user_id)).order_by(RAGDocument.created_at.desc()).all()
+
+
+def get_document(file_id: str, user_id: str):
+    return RAGDocument.query.filter_by(id=str(file_id), user_id=str(user_id)).first()
+
+
+def delete_document(file_id: str, user_id: str) -> bool:
+    document = RAGDocument.query.filter_by(id=str(file_id), user_id=str(user_id)).first()
+    if document is None:
+        return False
+    try:
+        RAGChunk.query.filter_by(document_id=document.id, user_id=str(user_id)).delete(synchronize_session=False)
+        db.session.delete(document)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        raise
+    return True
+
+
+def import_legacy_json(path: str):
+    """Import the former index.json without re-embedding or assigning guessed owners."""
+    with open(path, "r", encoding="utf-8") as handle:
+        records = json.load(handle)
+    if not isinstance(records, list):
+        raise ValueError("Legacy RAG index must contain a JSON list.")
+    grouped = {}
+    skipped_ownerless = 0
+    for record in records:
+        if not isinstance(record, dict) or not record.get("file_id") or not record.get("text") or not isinstance(record.get("vector"), list):
+            raise ValueError("Legacy RAG index contains an invalid record.")
+        owner = str(record.get("user_id") or "").strip()
+        if not owner:
+            skipped_ownerless += 1
+            continue
+        key = (owner, str(record["file_id"]), str(record.get("filename") or "document"))
+        grouped.setdefault(key, []).append(record)
+    imported_documents = imported_chunks = 0
+    try:
+        for (owner, document_id, filename), chunks in grouped.items():
+            if RAGDocument.query.filter_by(id=document_id).first():
+                continue
+            document = RAGDocument(id=document_id, user_id=owner, filename=filename, chunk_count=len(chunks))
+            db.session.add(document)
+            for position, record in enumerate(chunks):
+                vector = [float(value) for value in record["vector"]]
+                if not vector:
+                    raise ValueError("Legacy RAG embedding cannot be empty.")
+                db.session.add(RAGChunk(
+                    id=str(record.get("id") or uuid.uuid4()), document_id=document_id,
+                    user_id=owner, position=position, text=str(record["text"]),
+                    embedding=vector, embedding_dimension=len(vector),
+                ))
+                imported_chunks += 1
+            imported_documents += 1
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        raise
+    return {"documents": imported_documents, "chunks": imported_chunks, "ownerless_skipped": skipped_ownerless}
 
 
 def search(query: str, top_k: int = 4, user_id: Optional[str] = None) -> List[Dict]:
@@ -299,10 +344,11 @@ def search(query: str, top_k: int = 4, user_id: Optional[str] = None) -> List[Di
     if top_k <= 0:
         return []
 
-    if user_id is not None:
-        user_id = str(user_id).strip() or None
+    user_id = str(user_id).strip() if user_id is not None else ""
+    if not user_id:
+        return []
 
-    records = _load_index()
+    records = _load_index(user_id=user_id)
 
     if not records:
         return []
@@ -326,12 +372,10 @@ def search(query: str, top_k: int = 4, user_id: Optional[str] = None) -> List[Di
         if record_user_id is not None:
             record_user_id = str(record_user_id).strip() or None
 
-        if user_id is None:
-            if record_user_id is not None:
-                continue
-        else:
-            if record_user_id is not None and record_user_id != user_id:
-                continue
+        # Records are private to their exact authenticated owner. Unowned
+        # legacy records are never eligible for retrieval.
+        if record_user_id != user_id:
+            continue
 
         chunk_key = record.get("text", "")[:200]
         if chunk_key in seen_texts:

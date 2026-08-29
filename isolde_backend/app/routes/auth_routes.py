@@ -1,200 +1,408 @@
-# app/routes/auth_routes.py
-import random
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
-from flask import Blueprint, request, jsonify, current_app, send_from_directory
-from flask_jwt_extended import create_access_token
+from flask import Blueprint, current_app, jsonify, make_response, redirect, request, send_from_directory
+from flask_jwt_extended import create_access_token, get_jwt, get_jwt_identity, jwt_required
 from sqlalchemy.exc import IntegrityError
 
 from app.extensions import db
 from app.models import User
-from app.utils.validators import (
-    is_valid_email,
-    is_valid_password,
-    sanitize_text,
-)
+from app.models.auth_model import AuthSession, AuthToken, OAuthAccount, RevokedToken, token_digest, utcnow
+from app.services.oauth_service import PROVIDERS, begin_authorization, complete_authorization
 from app.utils.logger import log_event
+from app.utils.validators import is_valid_email, is_valid_password, sanitize_text
+from app.workers.email_worker import start_email_worker
 
 auth_bp = Blueprint("auth", __name__)
 
 
-# 🌟 NEW: Serve frontend HTML pages directly to avoid 404 / Endpoint errors
+def _deliver_auth_email(recipient, subject, path, token):
+    if not all((
+        current_app.config.get("MAIL_SERVER"),
+        current_app.config.get("MAIL_USERNAME"),
+        current_app.config.get("MAIL_PASSWORD"),
+        current_app.config.get("MAIL_DEFAULT_SENDER"),
+    )):
+        current_app.logger.warning("Authentication email delivery is not configured.")
+        return False
+    link = f"{current_app.config['PUBLIC_APP_URL']}{path}?token={token}"
+    return start_email_worker(
+        current_app._get_current_object(), subject, recipient,
+        f"Open this single-use link: {link}",
+        f'<p>Open this single-use link:</p><p><a href="{link}">{link}</a></p>',
+    )
+
+
+def _issue_user_token(user, purpose, lifetime_minutes):
+    AuthToken.query.filter_by(user_id=user.id, purpose=purpose, used_at=None).update(
+        {"used_at": utcnow()}, synchronize_session=False
+    )
+    raw, record = AuthToken.issue(user.id, purpose, lifetime_minutes)
+    db.session.add(record)
+    return raw
+
+
+def _testing_token(response, name, raw):
+    if current_app.config.get("TESTING") and current_app.config.get("EXPOSE_TEST_AUTH_TOKENS", True):
+        response[name] = raw
+
+
+def _create_login(user):
+    lifetime = current_app.config["JWT_ACCESS_TOKEN_EXPIRES"]
+    auth_session = AuthSession.create(
+        user.id, lifetime, request.headers.get("User-Agent"), request.remote_addr
+    )
+    db.session.add(auth_session)
+    db.session.commit()
+    token = create_access_token(identity=user.id, additional_claims={"sid": auth_session.id})
+    return token, auth_session
+
+
+def _consume_token(raw, purpose):
+    if not raw:
+        return None
+    now = utcnow()
+    digest = token_digest(raw)
+    record = AuthToken.query.filter_by(token_hash=digest, purpose=purpose).first()
+    if not record or record.used_at is not None or record.expires_at <= now:
+        return None
+    # The conditional update makes consumption single-use even when two
+    # workers receive the same reset/verification/OAuth exchange token.
+    consumed = AuthToken.query.filter(
+        AuthToken.id == record.id,
+        AuthToken.used_at.is_(None),
+        AuthToken.expires_at > now,
+    ).update({"used_at": now}, synchronize_session=False)
+    if consumed != 1:
+        return None
+    record.used_at = now
+    return record
+
+
+def _oauth_result(identity, link_user_id):
+    existing = OAuthAccount.query.filter_by(
+        provider=identity.provider, provider_subject=identity.subject
+    ).first()
+    if link_user_id:
+        user = db.session.get(User, str(link_user_id))
+        if not user:
+            return jsonify({"error": "Linking session is no longer valid."}), 401
+        if existing and existing.user_id != user.id:
+            return jsonify({"error": "This provider account is already linked to another user."}), 409
+        same_provider = OAuthAccount.query.filter_by(user_id=user.id, provider=identity.provider).first()
+        if same_provider and (not existing or same_provider.id != existing.id):
+            return jsonify({"error": "A different account from this provider is already linked."}), 409
+        if not existing:
+            db.session.add(OAuthAccount(
+                user_id=user.id, provider=identity.provider,
+                provider_subject=identity.subject, provider_email=identity.email,
+            ))
+        db.session.commit()
+        return jsonify({"message": f"{identity.provider.title()} account linked."}), 200
+
+    if existing:
+        user = db.session.get(User, existing.user_id)
+        if not user or not user.is_active:
+            return jsonify({"error": "Authentication failed."}), 401
+        existing.last_login_at = utcnow()
+        token, _ = _create_login(user)
+        return jsonify({"message": "Login successful.", "access_token": token, "user": user.to_dict()}), 200
+
+    # Email equality is not proof of ownership. Existing accounts must sign in
+    # first and explicitly link, preventing OAuth-based account takeover.
+    if identity.email and User.query.filter_by(email=identity.email).first():
+        return jsonify({
+            "error": "An account with this email already exists. Sign in with the existing method, then link this provider."
+        }), 409
+    if not identity.email or not identity.email_verified:
+        return jsonify({"error": "The provider did not supply a verified email address."}), 422
+    user = User(name=identity.name or identity.email.split("@")[0], email=identity.email, is_verified=True)
+    db.session.add(user)
+    db.session.flush()
+    db.session.add(OAuthAccount(
+        user_id=user.id, provider=identity.provider,
+        provider_subject=identity.subject, provider_email=identity.email,
+    ))
+    token, _ = _create_login(user)
+    return jsonify({"message": "Account created.", "access_token": token, "user": user.to_dict()}), 201
+
+
 @auth_bp.route("/register", methods=["GET"])
 def serve_register_page():
-    frontend_dir = os.path.abspath(os.path.join(current_app.root_path, '../frontend'))
-    return send_from_directory(frontend_dir, 'register.html')
+    return send_from_directory(os.path.abspath(os.path.join(current_app.root_path, "../frontend")), "register.html")
 
 
 @auth_bp.route("/login", methods=["GET"])
 def serve_login_page():
-    frontend_dir = os.path.abspath(os.path.join(current_app.root_path, '../frontend'))
-    return send_from_directory(frontend_dir, 'login.html')
+    return send_from_directory(os.path.abspath(os.path.join(current_app.root_path, "../frontend")), "login.html")
 
 
 @auth_bp.route("/register", methods=["POST"])
 def register():
     data = request.get_json(silent=True)
-
-    if data is None:
+    if not isinstance(data, dict):
         return jsonify({"error": "Invalid JSON payload."}), 400
-
     name = sanitize_text(str(data.get("name", ""))).strip()
     email = str(data.get("email") or "").strip().lower()
     password = str(data.get("password") or "")
-
     if not name or not is_valid_email(email):
         return jsonify({"error": "Valid name and email are required."}), 400
-
     ok, reason = is_valid_password(password)
-
     if not ok:
         return jsonify({"error": reason}), 400
-
-    user = User(name=name, email=email)
+    user = User(name=name, email=email, is_verified=False)
     user.set_password(password)
-
     db.session.add(user)
-    
     try:
+        db.session.flush()
+        raw = _issue_user_token(user, "verify_email", current_app.config["EMAIL_VERIFICATION_TOKEN_MINUTES"])
         db.session.commit()
     except IntegrityError:
         db.session.rollback()
-        return jsonify(
-            {"error": "An account with this email already exists."}
-        ), 409
-    except Exception as e:
+        return jsonify({"error": "An account with this email already exists."}), 409
+    except Exception:
         db.session.rollback()
-        current_app.logger.error(f"Registration DB Error: {str(e)}")
+        current_app.logger.exception("Registration failed.")
         return jsonify({"error": "An internal server error occurred."}), 500
+    log_event(current_app, "REGISTER", "new user", user.id)
+    _deliver_auth_email(user.email, "Verify your Isolde email", "/api/verify-email", raw)
+    response = {"message": "Registration successful. Verify your email before signing in.", "user": user.to_dict()}
+    _testing_token(response, "verification_token", raw)
+    return jsonify(response), 201
 
-    log_event(current_app, "REGISTER", f"new user {email}", user.id)
 
-    return jsonify({
-        "message": "Registration successful.",
-        "user": user.to_dict()
-    }), 201
+@auth_bp.route("/verify-email", methods=["GET", "POST"])
+def verify_email():
+    data = (request.get_json(silent=True) or {}) if request.method == "POST" else {}
+    raw_token = request.args.get("token") if request.method == "GET" else data.get("token")
+    record = _consume_token(str(raw_token or ""), "verify_email")
+    if not record:
+        return jsonify({"error": "Verification token is invalid or expired."}), 400
+    user = db.session.get(User, record.user_id)
+    if not user:
+        return jsonify({"error": "Verification token is invalid or expired."}), 400
+    user.is_verified = True
+    db.session.commit()
+    if request.method == "GET":
+        return redirect("/login.html?verified=1")
+    return jsonify({"message": "Email verified successfully."}), 200
 
 
 @auth_bp.route("/login", methods=["POST"])
 def login():
     data = request.get_json(silent=True)
-
-    if data is None:
+    if not isinstance(data, dict):
         return jsonify({"error": "Invalid JSON payload."}), 400
-
     email = str(data.get("email") or "").strip().lower()
-    password = str(data.get("password", ""))
-
+    password = str(data.get("password") or "")
     user = User.query.filter_by(email=email).first()
-
-    if not user or not user.check_password(password):
-        log_event(current_app, "LOGIN_FAILED", f"attempt for {email}")
+    if not user or not user.check_password(password) or not user.is_active:
+        log_event(current_app, "LOGIN_FAILED", "invalid credentials")
         return jsonify({"error": "Invalid email or password."}), 401
-
-    if user.status != "Active":
-        log_event(current_app, "LOGIN_FAILED", f"inactive account {email}", user.id)
-        return jsonify({"error": "Invalid email or password."}), 401
-
-    token = create_access_token(identity=user.id)
-
-    log_event(current_app, "LOGIN_SUCCESS", email, user.id)
-
+    if current_app.config.get("REQUIRE_EMAIL_VERIFICATION") and not user.is_verified:
+        return jsonify({"error": "Email verification is required.", "verification_required": True}), 403
+    token, auth_session = _create_login(user)
+    log_event(current_app, "LOGIN_SUCCESS", "password", user.id)
     return jsonify({
-        "message": "Login successful.",
-        "access_token": token,
-        "user": user.to_dict()
+        "message": "Login successful.", "access_token": token,
+        "session_id": auth_session.id, "user": user.to_dict()
     }), 200
 
 
 @auth_bp.route("/logout", methods=["POST"])
+@jwt_required()
 def logout():
+    claims = get_jwt()
+    sid = claims.get("sid")
+    if sid:
+        auth_session = db.session.get(AuthSession, sid)
+        if auth_session and auth_session.user_id == str(get_jwt_identity()):
+            auth_session.revoked_at = utcnow()
+    db.session.merge(RevokedToken(
+        jti=claims["jti"], user_id=str(get_jwt_identity()),
+        expires_at=datetime.fromtimestamp(claims["exp"], timezone.utc).replace(tzinfo=None),
+    ))
+    db.session.commit()
     return jsonify({"message": "Logged out successfully."}), 200
+
+
+@auth_bp.route("/logout-all", methods=["POST"])
+@jwt_required()
+def logout_all():
+    AuthSession.query.filter_by(user_id=str(get_jwt_identity()), revoked_at=None).update(
+        {"revoked_at": utcnow()}, synchronize_session=False
+    )
+    db.session.commit()
+    return jsonify({"message": "All sessions have been revoked."}), 200
+
+
+@auth_bp.route("/sessions", methods=["GET"])
+@jwt_required()
+def list_sessions():
+    sessions = AuthSession.query.filter_by(user_id=str(get_jwt_identity())).order_by(AuthSession.created_at.desc()).all()
+    return jsonify({"sessions": [{
+        "id": item.id, "created_at": item.created_at.isoformat(),
+        "last_seen_at": item.last_seen_at.isoformat(), "active": item.is_valid,
+    } for item in sessions]}), 200
+
+
+@auth_bp.route("/sessions/<session_id>", methods=["DELETE"])
+@jwt_required()
+def revoke_session(session_id):
+    auth_session = AuthSession.query.filter_by(id=session_id, user_id=str(get_jwt_identity())).first()
+    if not auth_session:
+        return jsonify({"error": "Session not found."}), 404
+    auth_session.revoked_at = utcnow()
+    db.session.commit()
+    return jsonify({"message": "Session revoked."}), 200
 
 
 @auth_bp.route("/forgot-password", methods=["POST"])
 def forgot_password():
-    data = request.get_json(silent=True)
-
-    if data is None:
-        return jsonify({"error": "Invalid JSON payload."}), 400
-
+    data = request.get_json(silent=True) or {}
     email = str(data.get("email") or "").strip().lower()
-
-    user = User.query.filter_by(email=email).first()
-
-    if not user:
-        return jsonify({
-            "message": "If that account exists, an OTP has been sent."
-        }), 200
-
-    otp = f"{random.randint(100000, 999999)}"
-
-    user.reset_otp = otp
-    user.reset_otp_expires = (
-        datetime.now(timezone.utc) + timedelta(minutes=10)
-    )
-
-    try:
+    user = User.query.filter_by(email=email).first() if is_valid_email(email) else None
+    raw = None
+    if user and user.password_hash:
+        raw = _issue_user_token(user, "password_reset", current_app.config["PASSWORD_RESET_TOKEN_MINUTES"])
         db.session.commit()
-    except Exception as e:
-        db.session.rollback()
-        current_app.logger.error(f"Forgot Password DB Error: {str(e)}")
-        return jsonify({"error": "An internal server error occurred."}), 500
-
-    log_event(current_app, "PASSWORD_RESET_REQUEST", email, user.id)
-
-    response = {
-        "message": "If that account exists, an OTP has been sent."
-    }
-
-    if current_app.config.get("DEBUG"):
-        response["dev_otp"] = otp
-
+        log_event(current_app, "PASSWORD_RESET_REQUEST", "requested", user.id)
+        _deliver_auth_email(user.email, "Reset your Isolde password", "/login.html", raw)
+    response = {"message": "If that account exists, password-reset instructions have been issued."}
+    if raw:
+        _testing_token(response, "reset_token", raw)
     return jsonify(response), 200
 
 
 @auth_bp.route("/reset-password", methods=["POST"])
 def reset_password():
-    data = request.get_json(silent=True)
-
-    if data is None:
-        return jsonify({"error": "Invalid JSON payload."}), 400
-
-    email = str(data.get("email") or "").strip().lower()
-    otp = str(data.get("otp", ""))  
-    new_password = str(data.get("new_password", ""))
-
-    user = User.query.filter_by(email=email).first()
-
-    if not user or user.reset_otp != otp:
-        return jsonify({"error": "Invalid OTP."}), 400
-
-    if (
-        not user.reset_otp_expires
-        or datetime.now(timezone.utc)
-        > user.reset_otp_expires.replace(tzinfo=timezone.utc)
-    ):
-        return jsonify({"error": "OTP has expired."}), 400
-
+    data = request.get_json(silent=True) or {}
+    new_password = str(data.get("new_password") or "")
     ok, reason = is_valid_password(new_password)
-
     if not ok:
         return jsonify({"error": reason}), 400
-
+    record = _consume_token(str(data.get("token") or ""), "password_reset")
+    if not record:
+        return jsonify({"error": "Reset token is invalid or expired."}), 400
+    user = db.session.get(User, record.user_id)
+    if not user:
+        return jsonify({"error": "Reset token is invalid or expired."}), 400
     user.set_password(new_password)
-    user.reset_otp = None
-    user.reset_otp_expires = None
+    user.is_verified = True
+    AuthSession.query.filter_by(user_id=user.id, revoked_at=None).update(
+        {"revoked_at": utcnow()}, synchronize_session=False
+    )
+    db.session.commit()
+    log_event(current_app, "PASSWORD_RESET_SUCCESS", "completed", user.id)
+    return jsonify({"message": "Password has been reset. Sign in again."}), 200
 
+
+@auth_bp.route("/oauth/<provider>/start", methods=["GET"])
+def oauth_start(provider):
     try:
+        return redirect(begin_authorization(provider))
+    except (ValueError, RuntimeError) as error:
+        return jsonify({"error": str(error)}), 400
+
+
+@auth_bp.route("/oauth/providers", methods=["GET"])
+def oauth_providers():
+    required = {
+        "google": ("GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET", "GOOGLE_OAUTH_REDIRECT_URI"),
+        "github": ("GITHUB_OAUTH_CLIENT_ID", "GITHUB_OAUTH_CLIENT_SECRET", "GITHUB_OAUTH_REDIRECT_URI"),
+        "apple": ("APPLE_OAUTH_CLIENT_ID", "APPLE_OAUTH_REDIRECT_URI", "APPLE_TEAM_ID", "APPLE_KEY_ID", "APPLE_PRIVATE_KEY"),
+        "microsoft": ("MICROSOFT_OAUTH_CLIENT_ID", "MICROSOFT_OAUTH_CLIENT_SECRET", "MICROSOFT_OAUTH_REDIRECT_URI", "MICROSOFT_OAUTH_TENANT"),
+    }
+    return jsonify({"providers": {
+        provider: all(bool(current_app.config.get(key)) for key in keys)
+        for provider, keys in required.items()
+    }}), 200
+
+
+@auth_bp.route("/oauth/<provider>/link", methods=["GET"])
+@jwt_required()
+def oauth_link_start(provider):
+    try:
+        return redirect(begin_authorization(provider, get_jwt_identity()))
+    except (ValueError, RuntimeError) as error:
+        return jsonify({"error": str(error)}), 400
+
+
+@auth_bp.route("/oauth/<provider>/callback", methods=["GET", "POST"])
+def oauth_callback(provider):
+    if provider not in PROVIDERS:
+        return jsonify({"error": "Unsupported OAuth provider."}), 404
+    if request.values.get("error"):
+        return jsonify({"error": "OAuth authorization was denied or failed."}), 400
+    try:
+        identity, link_user_id = complete_authorization(
+            provider, request.values.get("code"), request.values.get("state")
+        )
+        result = _oauth_result(identity, link_user_id)
+        response, status = result
+        if status >= 400:
+            return response, status
+        if link_user_id:
+            return redirect("/?oauth_linked=1")
+        payload = response.get_json() or {}
+        user = db.session.get(User, str((payload.get("user") or {}).get("id")))
+        if not user:
+            return jsonify({"error": "OAuth login could not be completed."}), 500
+        latest_session = AuthSession.query.filter_by(user_id=user.id, revoked_at=None).order_by(AuthSession.created_at.desc()).first()
+        if latest_session:
+            latest_session.revoked_at = utcnow()
+        raw, exchange = AuthToken.issue(user.id, "oauth_exchange", 5)
+        db.session.add(exchange)
         db.session.commit()
-    except Exception as e:
+        browser_response = make_response(redirect("/login.html?oauth=complete"))
+        browser_response.set_cookie(
+            "oauth_exchange", raw, max_age=300, httponly=True,
+            secure=current_app.config.get("SESSION_COOKIE_SECURE", False),
+            samesite="Lax", path="/api/oauth/session",
+        )
+        return browser_response
+    except RuntimeError as exc:
+        current_app.logger.warning("OAuth provider is not configured: %s", exc)
+        return jsonify({"error": str(exc)}), 503
+    except Exception:
+        current_app.logger.exception("OAuth callback validation failed for %s.", provider)
+        return jsonify({"error": "OAuth response could not be verified."}), 400
+
+
+@auth_bp.route("/oauth/session", methods=["POST"])
+def oauth_session_exchange():
+    record = _consume_token(request.cookies.get("oauth_exchange"), "oauth_exchange")
+    if not record:
+        response = jsonify({"error": "OAuth login session is invalid or expired."})
+        response.delete_cookie("oauth_exchange", path="/api/oauth/session")
+        return response, 401
+    user = db.session.get(User, record.user_id)
+    if not user or not user.is_active:
         db.session.rollback()
-        current_app.logger.error(f"Reset Password DB Error: {str(e)}")
-        return jsonify({"error": "An internal server error occurred."}), 500
+        return jsonify({"error": "Authentication failed."}), 401
+    token, _ = _create_login(user)
+    response = jsonify({"message": "Login successful.", "access_token": token, "user": user.to_dict()})
+    response.delete_cookie("oauth_exchange", path="/api/oauth/session")
+    return response, 200
 
-    log_event(current_app, "PASSWORD_RESET_SUCCESS", email, user.id)
 
-    return jsonify({
-        "message": "Password has been reset. You can now log in."
-    }), 200
+@auth_bp.route("/oauth/accounts", methods=["GET"])
+@jwt_required()
+def oauth_accounts():
+    accounts = OAuthAccount.query.filter_by(user_id=str(get_jwt_identity())).all()
+    return jsonify({"accounts": [account.to_dict() for account in accounts]}), 200
+
+
+@auth_bp.route("/oauth/accounts/<provider>", methods=["DELETE"])
+@jwt_required()
+def oauth_unlink(provider):
+    user = db.session.get(User, str(get_jwt_identity()))
+    account = OAuthAccount.query.filter_by(user_id=user.id, provider=provider).first()
+    if not account:
+        return jsonify({"error": "Linked provider not found."}), 404
+    other_accounts = OAuthAccount.query.filter_by(user_id=user.id).count()
+    if not user.password_hash and other_accounts <= 1:
+        return jsonify({"error": "Add another authentication method before unlinking this provider."}), 409
+    db.session.delete(account)
+    db.session.commit()
+    return jsonify({"message": f"{provider.title()} account unlinked."}), 200

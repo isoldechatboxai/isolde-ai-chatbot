@@ -26,6 +26,20 @@ spec:
         env:
         - name: FLASK_ENV
           value: "production"
+        - name: FLASK_DEBUG
+          value: "false"
+        - name: TRUST_PROXY_HOPS
+          value: "1"
+        - name: RAG_STORAGE_BACKEND
+          value: "database"
+        # Migrations must be run once by CI/CD (or a dedicated Job) before
+        # this multi-replica Deployment rolls out.  Letting every pod run
+        # Alembic at startup races schema changes and can delay readiness.
+        - name: SKIP_DB_MIGRATE
+          value: "1"
+        envFrom:
+        - secretRef:
+            name: isolde-backend-secrets
         resources:
           limits:
             cpu: "1000m"
@@ -35,13 +49,13 @@ spec:
             memory: "512Mi"
         livenessProbe:
           httpGet:
-            path: /api/health/
+            path: /api/live
             port: 5000
           initialDelaySeconds: 30
           periodSeconds: 10
         readinessProbe:
           httpGet:
-            path: /api/health/
+            path: /api/ready
             port: 5000
           initialDelaySeconds: 15
           periodSeconds: 5

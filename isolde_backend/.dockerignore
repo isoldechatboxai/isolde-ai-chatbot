@@ -1,0 +1,33 @@
+# Never bake deployment credentials or mutable local state into an image.
+.env
+.env.*
+!.env.example
+
+# Python/test/editor artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+.test-tmp*/
+test/.runtime/
+
+# Runtime data is supplied by managed services or mounted volumes.
+instance/
+logs/
+uploads/
+vector_store/
+*.db
+*.sqlite
+*.sqlite3
+
+# Local backups and repository metadata are not application source.
+day2_codex_backup_*/
+day2_master_fix_backup_*/
+master_audit_backup_*/
+master_fix_backup_*/
+*.backup
+*.before_*
+.git/
+.github/

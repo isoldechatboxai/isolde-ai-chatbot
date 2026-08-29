@@ -1,49 +1,37 @@
-from flask import Blueprint, request, jsonify
-import os
+from flask import Blueprint, jsonify, current_app
+from flask_jwt_extended import jwt_required
 
 studio_bp = Blueprint('studio_bp', __name__)
 
 @studio_bp.route('/api/studio/generate-image', methods=['POST'])
+@jwt_required()
 def generate_image():
-    try:
-        data = request.get_json()
-        prompt = data.get('prompt', '')
-        aspect_ratio = data.get('aspect_ratio', '1:1')
-        
-        if not prompt:
-            return jsonify({'status': 'error', 'message': 'Prompt is required'}), 400
-
-        # Pollinations AI / Free Public Endpoint or Custom AI Integration
-        # Safe reliable image generation URL generation for quick deployment
-        encoded_prompt = prompt.replace(" ", "%20")
-        image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=1024&nologo=true"
-
-        return jsonify({
-            'status': 'success',
-            'image_url': image_url,
-            'prompt': prompt,
-            'aspect_ratio': aspect_ratio
-        }), 200
-
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+    provider = current_app.config.get("IMAGE_PROVIDER", "")
+    return jsonify({
+        'status': 'error',
+        'capability': 'NOT_CONFIGURED' if not provider else 'NOT_SUPPORTED',
+        'message': 'Image generation is not configured.' if not provider else 'The configured image provider is not supported.'
+    }), 503 if not provider else 501
 
 @studio_bp.route('/api/studio/generate-video', methods=['POST'])
+@jwt_required()
 def generate_video():
-    try:
-        data = request.get_json()
-        prompt = data.get('prompt', '')
-        
-        if not prompt:
-            return jsonify({'status': 'error', 'message': 'Video prompt is required'}), 400
+    provider = current_app.config.get("VIDEO_PROVIDER", "")
+    return jsonify({
+        'status': 'error',
+        'capability': 'NOT_CONFIGURED' if not provider else 'NOT_SUPPORTED',
+        'message': 'Video generation is not configured.' if not provider else 'The configured video provider is not supported.'
+    }), 503 if not provider else 501
 
-        # Mock cinematic video generation response for pipeline stability
-        return jsonify({
-            'status': 'success',
-            'message': 'Video generation task queued successfully.',
-            'prompt': prompt,
-            'estimated_time': '30 seconds'
-        }), 200
 
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+@studio_bp.route('/api/studio/capabilities', methods=['GET'])
+@jwt_required()
+def studio_capabilities():
+    return jsonify({
+        "image": "NOT_CONFIGURED" if not current_app.config.get("IMAGE_PROVIDER") else "NOT_SUPPORTED",
+        "video": "NOT_CONFIGURED" if not current_app.config.get("VIDEO_PROVIDER") else "NOT_SUPPORTED",
+        "watermark": {
+            "status": "NOT_APPLICABLE",
+            "reason": "Watermarking is applied only by an implemented generated-media pipeline."
+        },
+    }), 200

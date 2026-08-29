@@ -13,16 +13,22 @@ def setup_logger(app):
         "[%(asctime)s] %(levelname)s in %(module)s: %(message)s"
     )
 
-    file_handler = RotatingFileHandler(log_file, maxBytes=2_000_000, backupCount=5)
-    file_handler.setFormatter(formatter)
-    file_handler.setLevel(logging.INFO)
+    if app.config.get("LOG_TO_FILE", False) and not any(
+        getattr(handler, "_isolde_file_handler", False) for handler in app.logger.handlers
+    ):
+        file_handler = RotatingFileHandler(log_file, maxBytes=2_000_000, backupCount=5)
+        file_handler.setFormatter(formatter)
+        file_handler.setLevel(logging.INFO)
+        file_handler._isolde_file_handler = True
+        app.logger.addHandler(file_handler)
 
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(formatter)
     console_handler.setLevel(logging.INFO)
 
-    app.logger.addHandler(file_handler)
-    app.logger.addHandler(console_handler)
+    if not any(getattr(handler, "_isolde_console_handler", False) for handler in app.logger.handlers):
+        console_handler._isolde_console_handler = True
+        app.logger.addHandler(console_handler)
     app.logger.setLevel(logging.INFO)
 
     return app.logger

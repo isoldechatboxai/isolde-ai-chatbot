@@ -42,8 +42,20 @@ class AuditLog(db.Model):
     __tablename__ = 'enterprise_audit_logs'
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, index=True)
+    actor_user_id = db.Column(db.String(36), index=True)
     action = db.Column(db.String(100), nullable=False)
     ip_address = db.Column(db.String(50))
     status = db.Column(db.String(20))
     details = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "user_id": self.actor_user_id or (str(self.user_id) if self.user_id is not None else None),
+            "action": self.action,
+            "ip_address": self.ip_address,
+            "status": self.status,
+            "details": self.details,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }

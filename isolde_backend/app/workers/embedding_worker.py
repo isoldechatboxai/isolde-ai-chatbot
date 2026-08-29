@@ -4,10 +4,7 @@ import time
 import threading
 import uuid
 from flask import current_app
-from app.services.provider_router import embed_text
-
-# 🌟 FIXED: Added underscores to match the function names in rag_service.py
-from app.services.rag_service import _chunk_text, _load_index, _save_index
+from app.services.rag_service import index_document
 
 def with_retry(max_retries=3, initial_delay=2, backoff_factor=2):
     """
@@ -37,30 +34,7 @@ def _generate_and_save_embeddings(text: str, filename: str, user_id: str):
     Core business logic for processing embeddings.
     Strictly talks to Services and Repositories. NO Route logic here.
     """
-    # 1. Chunk the large document text (Using updated _chunk_text)
-    chunks = _chunk_text(text)
-    if not chunks:
-        return
-        
-    # 2. Load existing vector store database (Using updated _load_index)
-    records = _load_index() 
-    
-    # 3. Generate embeddings for each chunk via the AI Provider
-    for chunk in chunks:
-        vector = embed_text(chunk)
-        
-        # Append structured data
-        records.append({
-            "id": str(uuid.uuid4()),
-            "text": chunk,
-            "vector": vector,
-            "filename": filename,
-            "user_id": user_id,
-            "timestamp": time.time()
-        })
-        
-    # 4. Save back to the vector store (Using updated _save_index)
-    _save_index(records)
+    return index_document(str(uuid.uuid4()), filename, text, user_id)
 
 def start_embedding_worker(app, text: str, filename: str, user_id: str):
     """

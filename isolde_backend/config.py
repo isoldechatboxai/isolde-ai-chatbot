@@ -62,6 +62,14 @@ class Config:
         "production",
         "prod",
     }
+    IS_DEMO_STAGING = ENVIRONMENT in {"demo", "staging"}
+    DEMO_ADMIN_BOOTSTRAP_ENABLED = _env_bool("DEMO_ADMIN_BOOTSTRAP_ENABLED")
+    DEMO_ADMIN_EMAIL = os.getenv("DEMO_ADMIN_EMAIL", "").strip().lower()
+    DEMO_ADMIN_PASSWORD = os.getenv("DEMO_ADMIN_PASSWORD", "")
+    # Explicit markers make a copied demo configuration fail before it can
+    # target a production database or object bucket by mistake.
+    DEMO_DATABASE_MARKER = os.getenv("DEMO_DATABASE_MARKER", "").strip().lower()
+    DEMO_STORAGE_MARKER = os.getenv("DEMO_STORAGE_MARKER", "").strip().lower()
 
     # ==========================================================
     # Flask Core
@@ -123,6 +131,32 @@ class Config:
         )
     )
 
+    REQUIRE_EMAIL_VERIFICATION = _env_bool(
+        "REQUIRE_EMAIL_VERIFICATION", default=IS_PRODUCTION
+    )
+    EMAIL_VERIFICATION_TOKEN_MINUTES = _env_int("EMAIL_VERIFICATION_TOKEN_MINUTES", 1440)
+    PASSWORD_RESET_TOKEN_MINUTES = _env_int("PASSWORD_RESET_TOKEN_MINUTES", 15)
+    EXPOSE_TEST_AUTH_TOKENS = _env_bool("EXPOSE_TEST_AUTH_TOKENS", default=True)
+
+    # OAuth/OIDC authorization-code integrations. Empty values disable the
+    # corresponding provider; credentials always remain server-side.
+    GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "").strip()
+    GOOGLE_OAUTH_CLIENT_SECRET = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "").strip()
+    GOOGLE_OAUTH_REDIRECT_URI = os.getenv("GOOGLE_OAUTH_REDIRECT_URI", "").strip()
+    GITHUB_OAUTH_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID", "").strip()
+    GITHUB_OAUTH_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET", "").strip()
+    GITHUB_OAUTH_REDIRECT_URI = os.getenv("GITHUB_OAUTH_REDIRECT_URI", "").strip()
+    APPLE_OAUTH_CLIENT_ID = os.getenv("APPLE_CLIENT_ID", "").strip()
+    APPLE_OAUTH_REDIRECT_URI = os.getenv("APPLE_OAUTH_REDIRECT_URI", "").strip()
+    APPLE_TEAM_ID = os.getenv("APPLE_TEAM_ID", "").strip()
+    APPLE_KEY_ID = os.getenv("APPLE_KEY_ID", "").strip()
+    APPLE_PRIVATE_KEY = os.getenv("APPLE_PRIVATE_KEY", "").strip()
+    MICROSOFT_OAUTH_CLIENT_ID = os.getenv("MICROSOFT_CLIENT_ID", "").strip()
+    MICROSOFT_OAUTH_CLIENT_SECRET = os.getenv("MICROSOFT_CLIENT_SECRET", "").strip()
+    MICROSOFT_OAUTH_REDIRECT_URI = os.getenv("MICROSOFT_OAUTH_REDIRECT_URI", "").strip()
+    MICROSOFT_OAUTH_TENANT = os.getenv("MICROSOFT_TENANT", "").strip()
+    OAUTH_HTTP_TIMEOUT_SECONDS = _env_int("OAUTH_HTTP_TIMEOUT_SECONDS", 10)
+
     # ==========================================================
     # Gemini
     # ==========================================================
@@ -140,6 +174,16 @@ class Config:
         "GEMINI_EMBEDDING_MODEL",
         "",
     ).strip()
+    # Environment-backed provider credentials permit an initial secure
+    # production bootstrap before an administrator configures encrypted
+    # provider settings in the database. Empty values simply disable a
+    # provider; no credentials are ever returned through an API.
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+    CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY", "").strip()
+    GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
+    OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
+    DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
+    MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "").strip()
 
     # ==========================================================
     # Uploads
@@ -190,6 +234,22 @@ class Config:
             "vector_store",
         ).strip(),
     )
+    STORAGE_BACKEND = os.getenv("STORAGE_BACKEND", "local").strip().lower()
+    S3_BUCKET = os.getenv("S3_BUCKET", "").strip()
+    S3_REGION = os.getenv("S3_REGION", "").strip()
+    S3_ENDPOINT_URL = os.getenv("S3_ENDPOINT_URL", "").strip()
+    S3_ACCESS_KEY_ID = os.getenv("S3_ACCESS_KEY_ID", "").strip()
+    S3_SECRET_ACCESS_KEY = os.getenv("S3_SECRET_ACCESS_KEY", "").strip()
+    PAYMENT_PROVIDER = os.getenv("PAYMENT_PROVIDER", "").strip().lower()
+    STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "").strip()
+    STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()
+    STRIPE_PRICE_PRO = os.getenv("STRIPE_PRICE_PRO", "").strip()
+    STRIPE_PRICE_ENTERPRISE = os.getenv("STRIPE_PRICE_ENTERPRISE", "").strip()
+    PAYMENT_SUCCESS_URL = os.getenv("PAYMENT_SUCCESS_URL", "").strip()
+    PAYMENT_CANCEL_URL = os.getenv("PAYMENT_CANCEL_URL", "").strip()
+    IMAGE_PROVIDER = os.getenv("IMAGE_PROVIDER", "").strip().lower()
+    VIDEO_PROVIDER = os.getenv("VIDEO_PROVIDER", "").strip().lower()
+    RAG_STORAGE_BACKEND = os.getenv("RAG_STORAGE_BACKEND", "database").strip().lower()
 
     # ==========================================================
     # Logging
@@ -201,6 +261,7 @@ class Config:
             "logs",
         ).strip(),
     )
+    LOG_TO_FILE = _env_bool("LOG_TO_FILE", default=not IS_PRODUCTION)
 
     # ==========================================================
     # Security
@@ -229,6 +290,31 @@ class Config:
         "SAAS_API_KEY_RATE_LIMIT",
         "10 per minute",
     ).strip()
+    PERMANENT_SESSION_LIFETIME = timedelta(hours=_env_int("SESSION_LIFETIME_HOURS", 12))
+    SESSION_REFRESH_EACH_REQUEST = False
+    PREFERRED_URL_SCHEME = "https" if IS_PRODUCTION else "http"
+    TRUST_PROXY_HOPS = _env_int("TRUST_PROXY_HOPS", 0)
+    RATELIMIT_STORAGE_URI = os.getenv(
+        "RATELIMIT_STORAGE_URI", "memory://"
+    ).strip()
+    CANCELLATION_REDIS_URL = os.getenv("CANCELLATION_REDIS_URL", RATELIMIT_STORAGE_URI if RATELIMIT_STORAGE_URI.startswith("redis") else "").strip()
+    CANCELLATION_TTL_SECONDS = _env_int("CANCELLATION_TTL_SECONDS", 900)
+    REDIS_CONNECT_TIMEOUT_SECONDS = _env_int("REDIS_CONNECT_TIMEOUT_SECONDS", 2)
+    REDIS_SOCKET_TIMEOUT_SECONDS = _env_int("REDIS_SOCKET_TIMEOUT_SECONDS", 2)
+    CHAT_RATE_LIMIT = os.getenv("CHAT_RATE_LIMIT", "20 per minute").strip()
+    UPLOAD_RATE_LIMIT = os.getenv("UPLOAD_RATE_LIMIT", "10 per minute").strip()
+    OAUTH_RATE_LIMIT = os.getenv("OAUTH_RATE_LIMIT", "20 per minute").strip()
+    BILLING_RATE_LIMIT = os.getenv("BILLING_RATE_LIMIT", "10 per minute").strip()
+    CREDIT_TOKENS_PER_UNIT = _env_int("CREDIT_TOKENS_PER_UNIT", 1000)
+
+    MAIL_SERVER = os.getenv("MAIL_SERVER", "").strip()
+    MAIL_PORT = _env_int("MAIL_PORT", 587)
+    MAIL_USE_TLS = _env_bool("MAIL_USE_TLS", default=True)
+    MAIL_TIMEOUT_SECONDS = _env_int("MAIL_TIMEOUT_SECONDS", 10)
+    MAIL_USERNAME = os.getenv("MAIL_USERNAME", "").strip()
+    MAIL_PASSWORD = os.getenv("MAIL_PASSWORD", "").strip()
+    MAIL_DEFAULT_SENDER = os.getenv("MAIL_DEFAULT_SENDER", "").strip()
+    PUBLIC_APP_URL = os.getenv("PUBLIC_APP_URL", "http://127.0.0.1:5000").strip().rstrip("/")
 
     # ==========================================================
     # Application Paths
@@ -306,6 +392,18 @@ class Config:
         development and repository setup remain possible.
         Production must fail fast when critical configuration is missing.
         """
+        if cls.DEMO_ADMIN_BOOTSTRAP_ENABLED:
+            if cls.IS_PRODUCTION:
+                raise RuntimeError("DEMO_ADMIN_BOOTSTRAP_ENABLED must never be enabled in production.")
+            if not cls.IS_DEMO_STAGING:
+                raise RuntimeError("Demo admin bootstrap is allowed only when FLASK_ENV is demo or staging.")
+            if not cls.DEMO_DATABASE_MARKER or cls.DEMO_DATABASE_MARKER not in cls.SQLALCHEMY_DATABASE_URI.lower():
+                raise RuntimeError("DEMO_DATABASE_MARKER must be present in DATABASE_URL when demo bootstrap is enabled.")
+            if cls.STORAGE_BACKEND != "s3" or not cls.DEMO_STORAGE_MARKER or cls.DEMO_STORAGE_MARKER not in cls.S3_BUCKET.lower():
+                raise RuntimeError("Demo bootstrap requires an isolated S3 bucket matching DEMO_STORAGE_MARKER.")
+            if "*" in (cls.CORS_ORIGINS or []):
+                raise RuntimeError("CORS_ORIGINS must be explicit when demo bootstrap is enabled.")
+
         if not cls.IS_PRODUCTION:
             return
 
@@ -315,8 +413,6 @@ class Config:
         for key_name, value in (
             ("FLASK_SECRET_KEY", cls.SECRET_KEY),
             ("JWT_SECRET_KEY", cls.JWT_SECRET_KEY),
-            ("GEMINI_API_KEY", cls.GEMINI_API_KEY),
-            ("GEMINI_MODEL", cls.GEMINI_MODEL),
         ):
             if not value or not value.strip():
                 missing.append(key_name)
@@ -346,6 +442,41 @@ class Config:
                 "Production secrets must not use empty or insecure placeholder values: "
                 + ", ".join(unsafe)
             )
+
+        provider_keys = (
+            ("GEMINI_API_KEY", cls.GEMINI_API_KEY),
+            ("OPENAI_API_KEY", cls.OPENAI_API_KEY),
+            ("CLAUDE_API_KEY", cls.CLAUDE_API_KEY),
+            ("GROQ_API_KEY", cls.GROQ_API_KEY),
+            ("OPENROUTER_API_KEY", cls.OPENROUTER_API_KEY),
+            ("DEEPSEEK_API_KEY", cls.DEEPSEEK_API_KEY),
+            ("MISTRAL_API_KEY", cls.MISTRAL_API_KEY),
+        )
+        configured_provider_keys = [
+            key_name for key_name, value in provider_keys
+            if value and not cls._is_placeholder_secret(value)
+        ]
+        if not configured_provider_keys:
+            raise RuntimeError("At least one supported AI provider API key is required in production.")
+        if any(value and cls._is_placeholder_secret(value) for _, value in provider_keys):
+            raise RuntimeError("AI provider API keys must not use insecure placeholder values in production.")
+        if cls.GEMINI_API_KEY and not cls.GEMINI_MODEL:
+            raise RuntimeError("GEMINI_MODEL is required when GEMINI_API_KEY is configured in production.")
+
+        if cls.RATELIMIT_STORAGE_URI == "memory://":
+            raise RuntimeError(
+                "RATELIMIT_STORAGE_URI must use shared storage such as Redis in production."
+            )
+        if not cls.CANCELLATION_REDIS_URL.startswith(("redis://", "rediss://")):
+            raise RuntimeError("CANCELLATION_REDIS_URL must use Redis in production.")
+        if cls.RAG_STORAGE_BACKEND != "database":
+            raise RuntimeError("RAG_STORAGE_BACKEND must be 'database' in production.")
+        if cls.STORAGE_BACKEND != "s3":
+            raise RuntimeError("STORAGE_BACKEND must be 's3' in production.")
+        if not cls.S3_BUCKET:
+            raise RuntimeError("S3_BUCKET is required in production.")
+        if cls.SQLALCHEMY_DATABASE_URI.startswith("sqlite:"):
+            raise RuntimeError("DATABASE_URL must use a multi-worker production database, not SQLite.")
 
 
 def ensure_runtime_directories() -> None:
