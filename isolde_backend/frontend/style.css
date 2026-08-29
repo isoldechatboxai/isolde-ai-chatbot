@@ -3323,6 +3323,21 @@ body.login-page {
 }
 
 @media (max-width: 640px) {
+  /* Keep the standalone admin users table within the mobile content column. */
+  .admin-page table {
+    width: 100%;
+    table-layout: fixed;
+  }
+
+  .admin-page th,
+  .admin-page td {
+    overflow-wrap: anywhere;
+  }
+
+  .admin-page select {
+    max-width: 100%;
+  }
+
   .app {
     grid-template-columns: 0 1fr;
   }
