@@ -32,6 +32,11 @@ spec:
           value: "1"
         - name: RAG_STORAGE_BACKEND
           value: "database"
+        # Migrations must be run once by CI/CD (or a dedicated Job) before
+        # this multi-replica Deployment rolls out.  Letting every pod run
+        # Alembic at startup races schema changes and can delay readiness.
+        - name: SKIP_DB_MIGRATE
+          value: "1"
         envFrom:
         - secretRef:
             name: isolde-backend-secrets
