@@ -1,6 +1,6 @@
 function authHeaders() {
   const headers = { "Content-Type": "application/json" };
-  const token = localStorage.getItem("access_token");
+  const token = sessionStorage.getItem("access_token");
   if (token) headers["Authorization"] = `Bearer ${token}`;
   return headers;
 }
@@ -11,7 +11,8 @@ async function api(url, options = {}) {
   catch (_) { throw new Error("Network request failed."); }
   const data = await response.json().catch(() => ({}));
   if (response.status === 401) {
-    localStorage.removeItem("access_token");
+    sessionStorage.removeItem("access_token");
+    sessionStorage.removeItem("user");
     window.location.replace("/login.html");
     throw new Error("Session expired.");
   }

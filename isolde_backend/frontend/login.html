@@ -259,6 +259,7 @@
                 <label>Reset Token / New Password</label>
                 <input type="text" id="forgot-token" placeholder="Single-use reset token" style="margin-bottom: 10px;">
                 <input type="password" id="new-password" placeholder="New Password">
+                <input type="password" id="confirm-new-password" placeholder="Confirm New Password" style="margin-top: 10px;">
             </div>
 
             <button type="button" class="auth-btn" id="send-otp-btn">Send Reset Link</button>
@@ -289,8 +290,8 @@
                     const data = await res.json();
 
                     if(res.ok && data.access_token) {
-                        localStorage.setItem('access_token', data.access_token);
-                        localStorage.setItem('user', JSON.stringify(data.user || {}));
+                        sessionStorage.setItem('access_token', data.access_token);
+                        sessionStorage.setItem('user', JSON.stringify(data.user || {}));
                         msg.textContent = "Login successful! Redirecting...";
                         msg.className = "message success";
                         setTimeout(() => window.location.href = "/", 1000);
@@ -311,8 +312,8 @@
                 fetch('/api/oauth/session', {method: 'POST'}).then(async (res) => {
                     const data = await res.json();
                     if (!res.ok || !data.access_token) throw new Error(data.error || 'OAuth login failed.');
-                    localStorage.setItem('access_token', data.access_token);
-                    localStorage.setItem('user', JSON.stringify(data.user || {}));
+                    sessionStorage.setItem('access_token', data.access_token);
+                    sessionStorage.setItem('user', JSON.stringify(data.user || {}));
                     history.replaceState({}, '', '/login.html');
                     window.location.replace('/');
                 }).catch((error) => {
@@ -370,11 +371,18 @@
             document.getElementById('verify-reset-btn').addEventListener('click', async () => {
                 const token = document.getElementById('forgot-token').value;
                 const new_password = document.getElementById('new-password').value;
+                const confirm_password = document.getElementById('confirm-new-password').value;
                 const m = document.getElementById('modal-msg');
+
+                if (new_password !== confirm_password) {
+                    m.textContent = 'New password and confirmation do not match.';
+                    m.className = 'message error';
+                    return;
+                }
 
                 try {
                     const res = await fetch('/api/reset-password', {
-                        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({token, new_password})
+                        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({token, new_password, confirm_password})
                     });
                     const data = await res.json();
                     if(res.ok) {
@@ -398,6 +406,7 @@
                 document.getElementById('send-otp-btn').style.display = 'none';
                 document.getElementById('verify-reset-btn').style.display = 'block';
                 document.getElementById('forgot-token').value = resetToken;
+                history.replaceState({}, '', '/login.html');
             }
         });
     </script>

@@ -158,12 +158,16 @@ def change_user_password():
 
         old_password = data.get("old_password") or data.get("current_password")
         new_password = data.get("new_password") or data.get("password")
+        confirm_password = data.get("confirm_password")
 
         if not isinstance(old_password, str) or not old_password:
             return _error("Old password is required.", 400)
 
         if not isinstance(new_password, str) or not new_password:
             return _error("New password is required.", 400)
+
+        if not isinstance(confirm_password, str) or new_password != confirm_password:
+            return _error("New password and confirmation do not match.", 400)
 
         result = change_password(user_id, old_password, new_password)
         return _respond(result)

@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from flask import Blueprint, current_app, jsonify, make_response, redirect, request, send_from_directory
 from flask_jwt_extended import create_access_token, get_jwt, get_jwt_identity, jwt_required
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 from app.extensions import db
 from app.models import User
@@ -85,7 +85,10 @@ def _oauth_result(identity, link_user_id):
     ).first()
     if link_user_id:
         user = db.session.get(User, str(link_user_id))
-        if not user:
+        # Authorization can be revoked while the user is at the provider.  A
+        # disabled account must not be able to gain a new sign-in method from
+        # an authorization flow that was initiated earlier.
+        if not user or not user.is_active:
             return jsonify({"error": "Linking session is no longer valid."}), 401
         if existing and existing.user_id != user.id:
             return jsonify({"error": "This provider account is already linked to another user."}), 409
@@ -160,6 +163,12 @@ def register():
     except IntegrityError:
         db.session.rollback()
         return jsonify({"error": "An account with this email already exists."}), 409
+    except OperationalError:
+        db.session.rollback()
+        # The request did not commit. Do not expose database details or claim
+        # successful registration when the database is unavailable.
+        current_app.logger.warning("Registration database operation was unavailable.")
+        return jsonify({"error": "Registration is temporarily unavailable. Please try again later."}), 503
     except Exception:
         db.session.rollback()
         current_app.logger.exception("Registration failed.")
@@ -261,6 +270,16 @@ def revoke_session(session_id):
 def forgot_password():
     data = request.get_json(silent=True) or {}
     email = str(data.get("email") or "").strip().lower()
+    email_delivery_configured = all((
+        current_app.config.get("MAIL_SERVER"),
+        current_app.config.get("MAIL_USERNAME"),
+        current_app.config.get("MAIL_PASSWORD"),
+        current_app.config.get("MAIL_DEFAULT_SENDER"),
+    ))
+    # This reveals only a service-wide capability, never whether an account
+    # exists. Do not claim a reset email was issued when delivery is absent.
+    if not email_delivery_configured and not current_app.config.get("TESTING"):
+        return jsonify({"error": "Password reset email delivery is not configured."}), 503
     user = User.query.filter_by(email=email).first() if is_valid_email(email) else None
     raw = None
     if user and user.password_hash:
@@ -278,6 +297,9 @@ def forgot_password():
 def reset_password():
     data = request.get_json(silent=True) or {}
     new_password = str(data.get("new_password") or "")
+    confirm_password = data.get("confirm_password")
+    if not isinstance(confirm_password, str) or new_password != confirm_password:
+        return jsonify({"error": "New password and confirmation do not match."}), 400
     ok, reason = is_valid_password(new_password)
     if not ok:
         return jsonify({"error": reason}), 400

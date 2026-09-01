@@ -7,18 +7,24 @@ import os
 import pytest
 from app import create_app
 from app.extensions import db
-from config import Config
+from config import Config, _database_engine_options
 from flask_jwt_extended import create_access_token
 
 
 class TestConfig(Config):
     TESTING = True
+    IS_PRODUCTION = False
+    IS_DEMO_STAGING = False
+    DEMO_ADMIN_BOOTSTRAP_ENABLED = False
     SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
     JWT_SECRET_KEY = "test-secret-key-for-testing"
     _TEST_RUNTIME_ROOT = os.path.join(os.path.dirname(__file__), ".runtime")
     UPLOAD_FOLDER = os.path.join(_TEST_RUNTIME_ROOT, "uploads")
     LOG_DIR = os.path.join(_TEST_RUNTIME_ROOT, "logs")
     VECTOR_STORE_DIR = os.path.join(_TEST_RUNTIME_ROOT, "vector-store")
+    STORAGE_BACKEND = "local"
+    S3_BUCKET = ""
+    CANCELLATION_REDIS_URL = ""
     # Override engine options for SQLite in-memory compatibility
     SQLALCHEMY_ENGINE_OPTIONS = {}
 
@@ -56,10 +62,19 @@ def auth_token(app):
 class TestProductionConfigValidation:
     """Regression tests for Unit 2A production configuration security."""
 
+    def test_postgresql_pool_health_options_are_enabled_without_relaxing_tls(self):
+        options = _database_engine_options("postgresql://example.test/database")
+        assert options["pool_pre_ping"] is True
+        assert options["pool_recycle"] == 1800
+        assert "connect_args" not in options
+        assert _database_engine_options("sqlite:///:memory:") == {}
+
     @staticmethod
     def _make_production_config(**overrides):
         class ProductionConfig(Config):
             IS_PRODUCTION = True
+            IS_DEMO_STAGING = False
+            DEMO_ADMIN_BOOTSTRAP_ENABLED = False
             SECRET_KEY = "a" * 32
             JWT_SECRET_KEY = "b" * 32
             DEBUG = False
@@ -81,6 +96,8 @@ class TestProductionConfigValidation:
     def test_development_configuration_loads(self):
         class DevelopmentConfig(Config):
             IS_PRODUCTION = False
+            IS_DEMO_STAGING = False
+            DEMO_ADMIN_BOOTSTRAP_ENABLED = False
             SECRET_KEY = "dev-secret"
             JWT_SECRET_KEY = "dev-jwt-secret"
             DEBUG = False

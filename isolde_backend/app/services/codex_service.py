@@ -28,6 +28,7 @@ from app.models.codex_model import (
     CodexProjectFile,
     CodexTask,
 )
+from app.models.workspace_model import Workspace
 
 
 class CodexSecurityError(Exception):
@@ -99,6 +100,9 @@ def _validate_relative_path(file_path: str) -> str:
     if not file_path:
         raise CodexSecurityError("File path cannot be empty.")
 
+    if "\x00" in file_path:
+        raise CodexSecurityError("Invalid or unsafe file path.")
+
     # Windows drive letter.
     if len(file_path) >= 2 and file_path[1] == ":":
         raise CodexSecurityError(
@@ -131,6 +135,9 @@ def _validate_relative_path(file_path: str) -> str:
         raise CodexSecurityError(
             f"Invalid or unsafe file path: {file_path}"
         )
+
+    if normalized in {"", "."} or any(not segment for segment in normalized.split("/")):
+        raise CodexSecurityError(f"Invalid or unsafe file path: {file_path}")
 
     if "/../" in normalized or normalized.endswith("/.."):
         raise CodexSecurityError(
@@ -179,6 +186,10 @@ def create_project(
 ) -> Dict[str, Any]:
 
     try:
+        if workspace_id is not None:
+            workspace = Workspace.query.filter_by(id=workspace_id, user_id=str(user_id)).first()
+            if not workspace:
+                return {"success": False, "message": "Workspace not found or access denied."}
         project = CodexProject(
             user_id=str(user_id),
             workspace_id=workspace_id,
@@ -231,7 +242,7 @@ def get_project(
     project_id: int,
 ) -> Optional[CodexProject]:
 
-    return (
+    project = (
         CodexProject.query
         .filter_by(
             id=project_id,
@@ -239,6 +250,51 @@ def get_project(
         )
         .first()
     )
+    # A Codex project may optionally be associated with a workspace.  Check
+    # both ownership boundaries so a stale/forged workspace association cannot
+    # become a cross-tenant access path.
+    if project and project.workspace_id:
+        workspace = Workspace.query.filter_by(id=project.workspace_id, user_id=str(user_id)).first()
+        if not workspace:
+            return None
+    return project
+
+
+def update_project(user_id: str, project_id: int, name: Optional[str] = None,
+                   description: Optional[str] = None, status: Optional[str] = None) -> Dict[str, Any]:
+    project = get_project(user_id, project_id)
+    if not project:
+        return {"success": False, "message": "Project not found or access denied."}
+    if name is not None:
+        name = name.strip()
+        if not name:
+            return {"success": False, "message": "Project name is required."}
+        project.name = name
+    if description is not None:
+        project.description = description.strip()
+    if status is not None:
+        if status not in {"Active", "Archived"}:
+            return {"success": False, "message": "Invalid project status."}
+        project.status = status
+    try:
+        db.session.commit()
+        return {"success": True, "data": project.to_dict()}
+    except Exception:
+        db.session.rollback()
+        return {"success": False, "message": "Database operation failed."}
+
+
+def delete_project(user_id: str, project_id: int) -> Dict[str, Any]:
+    project = get_project(user_id, project_id)
+    if not project:
+        return {"success": False, "message": "Project not found or access denied."}
+    try:
+        db.session.delete(project)
+        db.session.commit()
+        return {"success": True, "data": {"id": project_id}}
+    except Exception:
+        db.session.rollback()
+        return {"success": False, "message": "Database operation failed."}
 
 
 # ---------------------------------------------------------------------------
@@ -407,6 +463,92 @@ def save_file(
         }
 
 
+def rename_file(user_id: str, project_id: int, file_path: str, new_file_path: str) -> Dict[str, Any]:
+    project = get_project(user_id, project_id)
+    if not project:
+        return {"success": False, "message": "Project not found or access denied."}
+    try:
+        source, target = _validate_relative_path(file_path), _validate_relative_path(new_file_path)
+    except CodexSecurityError as exc:
+        return {"success": False, "message": str(exc)}
+    record = CodexProjectFile.query.filter_by(project_id=project_id, file_path=source).first()
+    if not record:
+        return {"success": False, "message": "File not found."}
+    if source == target:
+        return {"success": True, "data": record.to_dict()}
+    if CodexProjectFile.query.filter_by(project_id=project_id, file_path=target).first():
+        return {"success": False, "message": "A file already exists at the new path."}
+    try:
+        record.file_path = target
+        record.file_type = os.path.splitext(target)[1].lstrip(".").lower() or "text"
+        record.version += 1
+        record.last_modified_by = str(user_id)
+        db.session.commit()
+        return {"success": True, "data": record.to_dict()}
+    except Exception:
+        db.session.rollback()
+        return {"success": False, "message": "Database operation failed."}
+
+
+def delete_file(user_id: str, project_id: int, file_path: str) -> Dict[str, Any]:
+    project = get_project(user_id, project_id)
+    if not project:
+        return {"success": False, "message": "Project not found or access denied."}
+    try:
+        safe_path = _validate_relative_path(file_path)
+    except CodexSecurityError as exc:
+        return {"success": False, "message": str(exc)}
+    record = CodexProjectFile.query.filter_by(project_id=project_id, file_path=safe_path).first()
+    if not record:
+        return {"success": False, "message": "File not found."}
+    try:
+        db.session.delete(record)
+        db.session.commit()
+        return {"success": True, "data": {"file_path": safe_path}}
+    except Exception:
+        db.session.rollback()
+        return {"success": False, "message": "Database operation failed."}
+
+
+def apply_file_changes(user_id: str, project_id: int, changes: List[Dict[str, Any]], modified_by: str = "AI") -> Dict[str, Any]:
+    """Validate and apply a complete change set in one database transaction."""
+    if not get_project(user_id, project_id):
+        return {"success": False, "message": "Project not found or access denied."}
+    if not isinstance(changes, list) or len(changes) > MAX_FILES_PER_TASK:
+        return {"success": False, "message": "Invalid number of file changes."}
+    try:
+        validated = _validate_ai_plan({"summary": "", "steps": [], "changes": changes})["changes"]
+        paths = [change["file_path"] for change in validated]
+        if len(paths) != len(set(paths)):
+            raise CodexExecutionError("A change set cannot modify the same file more than once.")
+        # Validate all Python source before making any persistent changes.
+        for change in validated:
+            if change["file_path"].lower().endswith(".py"):
+                compile(change["content"], change["file_path"], "exec")
+    except (CodexSecurityError, CodexExecutionError, SyntaxError) as exc:
+        return {"success": False, "message": str(exc)}
+    try:
+        saved = []
+        for change in validated:
+            record = CodexProjectFile.query.filter_by(project_id=project_id, file_path=change["file_path"]).first()
+            if record:
+                record.file_content = change["content"]
+                record.version += 1
+                record.last_modified_by = modified_by
+            else:
+                extension = os.path.splitext(change["file_path"])[1].lstrip(".").lower()
+                record = CodexProjectFile(project_id=project_id, file_path=change["file_path"], file_content=change["content"], file_type=extension or "text", last_modified_by=modified_by)
+                db.session.add(record)
+            saved.append(record)
+        db.session.flush()
+        payload = [record.to_dict() for record in saved]
+        db.session.commit()
+        return {"success": True, "data": payload}
+    except Exception:
+        db.session.rollback()
+        return {"success": False, "message": "Database operation failed."}
+
+
 # ---------------------------------------------------------------------------
 # TASK CREATION
 # ---------------------------------------------------------------------------
@@ -503,6 +645,47 @@ def get_task(
         )
         .first()
     )
+
+
+def update_task(user_id: str, project_id: int, task_id: int, instruction: str) -> Dict[str, Any]:
+    task = get_task(user_id, project_id, task_id)
+    if not task:
+        return {"success": False, "message": "Task not found or access denied."}
+    if task.status not in {"pending", "failed"}:
+        return {"success": False, "message": f"Task cannot be updated from status '{task.status}'."}
+    if not isinstance(instruction, str) or not instruction.strip():
+        return {"success": False, "message": "instruction is required."}
+    if len(instruction.strip()) > MAX_INSTRUCTION_LENGTH:
+        return {"success": False, "message": "instruction exceeds maximum length."}
+    try:
+        task.instruction = instruction.strip()
+        task.ai_plan = None
+        task.error_message = None
+        task.validation_output = None
+        task.status = "pending"
+        task.completed_at = None
+        db.session.commit()
+        return {"success": True, "data": task.to_dict()}
+    except Exception:
+        db.session.rollback()
+        return {"success": False, "message": "Database operation failed."}
+
+
+def cancel_task(user_id: str, project_id: int, task_id: int) -> Dict[str, Any]:
+    task = get_task(user_id, project_id, task_id)
+    if not task:
+        return {"success": False, "message": "Task not found or access denied."}
+    if task.status in {"completed", "cancelled"}:
+        return {"success": False, "message": f"Task cannot be cancelled from status '{task.status}'."}
+    try:
+        task.status = "cancelled"
+        task.error_message = None
+        task.completed_at = datetime.utcnow()
+        db.session.commit()
+        return {"success": True, "data": task.to_dict()}
+    except Exception:
+        db.session.rollback()
+        return {"success": False, "message": "Database operation failed."}
 
 
 # ---------------------------------------------------------------------------
@@ -825,29 +1008,15 @@ Rules:
         task.status = "executing"
         db.session.commit()
 
-        saved_files = []
-
-        for change in plan["changes"]:
-
-            result = save_file(
-                user_id=user_id,
-                project_id=project_id,
-                file_path=change["file_path"],
-                content=change["content"],
-                modified_by="AI",
-            )
-
-            if not result.get("success"):
-                raise CodexExecutionError(
-                    result.get(
-                        "message",
-                        "Failed to save AI file change.",
-                    )
-                )
-
-            saved_files.append(
-                result["data"]
-            )
+        result = apply_file_changes(
+            user_id=user_id,
+            project_id=project_id,
+            changes=plan["changes"],
+            modified_by="AI",
+        )
+        if not result.get("success"):
+            raise CodexExecutionError(result.get("message", "Failed to save AI file changes."))
+        saved_files = result["data"]
 
         # ---------------------------------------------------------------
         # VALIDATION

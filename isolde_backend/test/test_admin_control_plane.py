@@ -1,12 +1,17 @@
 from flask_jwt_extended import create_access_token
 
 from app.models.auth_model import AuthSession
+from app.models.api_key_model import ApiKey
 from app.models.billing_model import CreditLedger, Invoice, PaymentEvent
 from app.models.enterprise_models import AuditLog
 from app.models.rag_model import RAGChunk, RAGDocument
 from app.models.user import Setting, User
 from app.models.workflow_model import Workflow, WorkflowExecution
 from app.models.workspace_model import Workspace
+from app.models.memory_model import UserMemory
+from app.models.uploaded_file import UploadedFile
+from app.models.codex_model import CodexProject, CodexProjectFile, CodexTask
+from app.models.conversation import Conversation
 
 
 def _user(db, email, role="Client"):
@@ -171,3 +176,55 @@ def test_admin_financial_rag_workflow_inspection_is_paginated_and_safe(client, d
     assert client.patch(f"/api/admin/v1/workflows/{workflow.id}", headers=headers, json={"is_active": False}).status_code == 200
     assert AuditLog.query.filter_by(action="ADMIN_WORKFLOW_STATUS").count() == 1
     assert client.post("/api/admin/v1/billing/invoices/999/refund", headers=headers).status_code == 404
+
+
+def test_super_admin_api_key_control_plane_is_safe_and_owner_aware(client, db):
+    admin = _user(db, "key-admin@example.com", "Admin")
+    super_admin = _user(db, "key-super-admin@example.com", "Super Admin")
+    owner = _user(db, "key-owner@example.com")
+    assert client.get("/api/admin/v1/api-keys", headers=_headers(admin)).status_code == 403
+
+    created = client.post("/api/admin/v1/api-keys", headers=_headers(super_admin), json={
+        "user_id": owner.id, "name": "Production integration", "permissions": "read,write", "expires_in_days": 30,
+    })
+    assert created.status_code == 201
+    payload = created.get_json()
+    assert payload["api_key"].startswith("isk_")
+    assert payload["api_key"] not in str(payload["metadata"])
+    record = db.session.get(ApiKey, payload["metadata"]["id"])
+    assert record.key_hash != payload["api_key"]
+
+    listed = client.get("/api/admin/v1/api-keys?page=1&page_size=1", headers=_headers(super_admin))
+    assert listed.status_code == 200
+    assert payload["api_key"] not in listed.get_data(as_text=True)
+    assert listed.get_json()["keys"][0]["user_id"] == owner.id
+
+    revoked = client.post(f"/api/admin/v1/api-keys/{record.id}/revoke", headers=_headers(super_admin))
+    assert revoked.status_code == 200
+    assert revoked.get_json()["idempotent"] is False
+    assert db.session.get(ApiKey, record.id).is_revoked is True
+    assert AuditLog.query.filter_by(action="ADMIN_API_KEY_REVOKE").count() == 1
+
+
+def test_super_admin_control_plane_lists_and_protects_memory_files_coding_and_conversations(client, app, db):
+    admin = _user(db, "gap-admin@example.com", "Admin")
+    super_admin = _user(db, "gap-super@example.com", "Super Admin")
+    owner = _user(db, "gap-owner@example.com")
+    memory = UserMemory(user_id=owner.id, category="Profile", key="City", value="Private", memory="City: Private")
+    uploaded = UploadedFile(user_id=owner.id, filename="private.txt", stored_path="users/x/private.txt", file_type="txt")
+    project = CodexProject(user_id=owner.id, name="Private code")
+    conversation = Conversation(user_id=owner.id, title="Private conversation")
+    db.session.add_all([memory, uploaded, project, conversation])
+    db.session.flush()
+    db.session.add_all([CodexProjectFile(project_id=project.id, file_path="main.py", file_content="print('safe')", file_type="py", last_modified_by=owner.id), CodexTask(project_id=project.id, instruction="Describe", status="pending")])
+    db.session.commit()
+    assert client.get("/api/admin/v1/memory", headers=_headers(admin)).status_code == 403
+    headers = _headers(super_admin)
+    assert client.get("/api/admin/v1/memory?search=City&page_size=1", headers=headers).get_json()["memory"][0]["id"] == memory.id
+    assert "Private" not in client.get("/api/admin/v1/memory", headers=headers).get_data(as_text=True)
+    assert client.get("/api/admin/v1/files?page_size=1", headers=headers).get_json()["files"][0]["id"] == uploaded.id
+    assert "stored_path" not in client.get("/api/admin/v1/files", headers=headers).get_data(as_text=True)
+    assert client.get(f"/api/admin/v1/coding/projects/{project.id}/files", headers=headers).status_code == 200
+    assert client.get(f"/api/admin/v1/coding/projects/{project.id}/tasks", headers=headers).status_code == 200
+    assert client.get("/api/admin/v1/conversations?page=1&page_size=1&search=Private", headers=headers).get_json()["pagination"]["total"] == 1
+    assert client.get("/api/admin/v1/audit?start_date=invalid", headers=headers).status_code == 400

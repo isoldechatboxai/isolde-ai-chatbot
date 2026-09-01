@@ -47,7 +47,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const data = await response.json();
 
                 if (response.ok && data.access_token) {
-                    localStorage.setItem('access_token', data.access_token);
+                    sessionStorage.setItem('access_token', data.access_token);
                     showMessage('success', 'Login successful! Redirecting...');
                     setTimeout(() => {
                         window.location.href = "/";

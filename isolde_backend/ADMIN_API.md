@@ -11,6 +11,8 @@ Configure the separate Admin Panel origin through `CORS_ORIGINS`; never use `*` 
 ## Control-plane endpoints
 
 - `GET /api/admin/v1/capabilities` — supported, unavailable, and unsupported controls.
+- `GET|POST /api/admin/v1/api-keys` — Super-Admin-only `isk_` key metadata and issuance. The raw key is returned once only by `POST`.
+- `POST /api/admin/v1/api-keys/<key_id>/revoke` — Super-Admin-only, idempotent key revocation.
 - `GET /api/admin/v1/dashboard`, `/users`, `/organizations`, `/projects`, and `/conversations` — safe operational and ownership summaries.
 - `GET /api/admin/v1/billing/summary`, `/billing/subscriptions`, `/providers/status`, and `/operations` — provider, billing, RAG/storage, rate-limit, and health summaries.
 - `PATCH /api/admin/v1/users/{id}` and `/organizations/{id}`; `PATCH /api/admin/v1/organizations/{id}/policy` — validated account and tenant policy changes.

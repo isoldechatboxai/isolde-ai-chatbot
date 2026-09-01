@@ -9,9 +9,12 @@ import secrets
 import string
 import os
 import json
+import csv
+from io import StringIO
+from datetime import datetime, timedelta
 from functools import wraps
 
-from flask import Blueprint, request, jsonify, current_app
+from flask import Blueprint, request, jsonify, current_app, Response
 from flask_jwt_extended import jwt_required, get_jwt, get_jwt_identity, create_access_token
 
 from app.extensions import db
@@ -26,16 +29,22 @@ from app.models.collaboration_model import OrganizationProject, OrganizationRole
 from app.models.enterprise_models import AuditLog
 from app.models.rag_model import RAGChunk, RAGDocument
 from app.models.uploaded_file import UploadedFile
+from app.models.memory_model import UserMemory
+from app.models.codex_model import CodexProject, CodexProjectFile, CodexTask
 from app.models.workspace_model import Project, Workspace
 from app.models.workflow_model import Workflow, WorkflowExecution
+from app.models.api_key_model import ApiKey
+from app.services.api_key_service import create_api_key
 from app.services.admin_configuration_service import public_configuration, update_configuration
 from app.services.organization_policy_service import SUPPORTED_PROVIDERS
 from app.utils.logger import log_event
 from app.utils.validators import is_valid_email
+from app.services.storage_service import get_storage, StorageNotConfigured
 
 admin_bp = Blueprint("admin", __name__)
 
 ADMIN_ROLES = ("Admin", "Super Admin")
+SUPER_ADMIN_ROLE = "Super Admin"
 SECRET_SETTING_SUFFIXES = ("_api_key", "_secret", "_token", "_password", "_private_key", "_credential")
 PROVIDER_SETTING_KEYS = {
     "ai_provider", "provider_fallbacks", "provider_priority",
@@ -82,6 +91,13 @@ def _pagination_args():
     return page, page_size
 
 
+def _super_admin_required(admin_user):
+    """Keep cross-owner API-key administration limited to Super Admins."""
+    if admin_user.role != SUPER_ADMIN_ROLE:
+        return jsonify({"status": "error", "message": "Super Admin access required."}), 403
+    return None
+
+
 def _page(query, serializer):
     values = _pagination_args()
     if not values:
@@ -96,6 +112,38 @@ def _page(query, serializer):
             "has_next": page * page_size < total,
         },
     }
+
+
+def _date_filter(query, column, name):
+    """Apply an ISO-8601 date filter without accepting raw SQL."""
+    raw = str(request.args.get(name) or "").strip()
+    if not raw:
+        return query, None
+    try:
+        value = datetime.fromisoformat(raw.replace("Z", "+00:00")).replace(tzinfo=None)
+    except ValueError:
+        return query, (jsonify({"status": "error", "message": f"Invalid {name} date."}), 400)
+    return query.filter(column >= value if name == "start_date" else column <= value), None
+
+
+def _memory_payload(item, include_value=False):
+    data = {
+        "id": item.id, "user_id": item.user_id, "category": item.category,
+        "key": item.key or "General", "is_pinned": bool(item.is_pinned),
+        "created_at": item.created_at.isoformat() if item.created_at else None,
+        "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+    }
+    if include_value:
+        data["value"] = item.value or item.memory
+    return data
+
+
+def _codex_file_payload(item, include_content=False):
+    data = item.to_dict(include_content=include_content)
+    if include_content and len(data.get("file_content", "")) > 100000:
+        data.pop("file_content", None)
+        data["content_capability"] = "NOT_SUPPORTED"
+    return data
 
 
 def _admin_session_payload(session):
@@ -193,7 +241,37 @@ def admin_provider_configuration(admin_user):
 @jwt_required()
 @admin_required
 def admin_audit(admin_user):
-    query = AuditLog.query.order_by(AuditLog.created_at.desc())
+    query = AuditLog.query
+    for field, column in (("actor_user_id", AuditLog.actor_user_id), ("action", AuditLog.action), ("status", AuditLog.status)):
+        value = str(request.args.get(field) or "").strip()
+        if value:
+            if len(value) > 100:
+                return jsonify({"status": "error", "message": f"Invalid {field} filter."}), 400
+            query = query.filter(column == value)
+    search = str(request.args.get("search") or "").strip()
+    if search:
+        if len(search) > 200:
+            return jsonify({"status": "error", "message": "Invalid search filter."}), 400
+        escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        query = query.filter((AuditLog.action.ilike(f"%{escaped}%", escape="\\")) | (AuditLog.details.ilike(f"%{escaped}%", escape="\\")))
+    query, error = _date_filter(query, AuditLog.created_at, "start_date")
+    if error:
+        return error
+    query, error = _date_filter(query, AuditLog.created_at, "end_date")
+    if error:
+        return error
+    query = query.order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
+    if request.args.get("format") == "csv":
+        denied = _super_admin_required(admin_user)
+        if denied:
+            return denied
+        rows = query.limit(10000).all()
+        output = StringIO()
+        writer = csv.DictWriter(output, fieldnames=["id", "created_at", "actor_user_id", "action", "status", "ip_address", "details"])
+        writer.writeheader()
+        for entry in rows:
+            writer.writerow({"id": entry.id, "created_at": entry.created_at.isoformat() if entry.created_at else "", "actor_user_id": entry.actor_user_id or "", "action": entry.action, "status": entry.status or "", "ip_address": entry.ip_address or "", "details": entry.details or ""})
+        return Response(output.getvalue(), mimetype="text/csv", headers={"Content-Disposition": "attachment; filename=isolde-audit.csv"})
     result = _page(query, lambda entry: entry.to_dict())
     if not result:
         return jsonify({"status": "error", "message": "Invalid pagination."}), 400
@@ -206,13 +284,228 @@ def admin_audit(admin_user):
 def admin_capabilities(admin_user):
     return jsonify({"status": "success", "api_version": "v1", "capabilities": {
         "users": True, "organizations": True, "provider_configuration": True,
+        "api_keys": admin_user.role == SUPER_ADMIN_ROLE,
         "feature_flags": True, "branding_text": True, "branding_asset_upload": "NOT_CONFIGURED",
         "billing": True, "billing_ledger": True, "payment_events": True,
         "rag_storage_status": True, "rag_admin_inspection": True,
         "workflow_administration": True, "admin_session": True, "audit": True,
+        "memory_administration": admin_user.role == SUPER_ADMIN_ROLE,
+        "file_administration": admin_user.role == SUPER_ADMIN_ROLE,
+        "coding_administration": admin_user.role == SUPER_ADMIN_ROLE,
+        "conversation_pagination": True, "audit_export": admin_user.role == SUPER_ADMIN_ROLE,
         "image": "NOT_CONFIGURED", "video": "NOT_CONFIGURED", "training": "NOT_SUPPORTED",
         "deployment_execution": "NOT_SUPPORTED",
     }}), 200
+
+
+@admin_bp.route("/admin/v1/memory", methods=["GET"], strict_slashes=False)
+@admin_bp.route("/admin/v1/memory/<int:memory_id>", methods=["GET", "DELETE"], strict_slashes=False)
+@jwt_required()
+@admin_required
+def admin_memory(admin_user, memory_id=None):
+    denied = _super_admin_required(admin_user)
+    if denied:
+        return denied
+    if memory_id is not None:
+        item = db.session.get(UserMemory, memory_id)
+        if not item:
+            return jsonify({"status": "error", "message": "Memory not found."}), 404
+        if request.method == "GET":
+            return jsonify({"status": "success", "memory": _memory_payload(item, include_value=True)}), 200
+        _audit(admin_user, "ADMIN_MEMORY_DELETE", {"memory_id": item.id, "user_id": item.user_id})
+        db.session.delete(item)
+        db.session.commit()
+        return jsonify({"status": "success", "message": "Memory deleted."}), 200
+    query = UserMemory.query
+    user_id = str(request.args.get("user_id") or "").strip()
+    category = str(request.args.get("category") or "").strip()
+    if user_id:
+        query = query.filter(UserMemory.user_id == user_id)
+    if category:
+        query = query.filter(UserMemory.category == category)
+    search = str(request.args.get("search") or "").strip()
+    if search:
+        if len(search) > 200:
+            return jsonify({"status": "error", "message": "Invalid search filter."}), 400
+        query = query.filter((UserMemory.key.ilike(f"%{search}%")) | (UserMemory.memory.ilike(f"%{search}%")))
+    query = query.order_by(UserMemory.updated_at.desc(), UserMemory.id.desc())
+    result = _page(query, _memory_payload)
+    if not result:
+        return jsonify({"status": "error", "message": "Invalid pagination."}), 400
+    return jsonify({"status": "success", "memory": result["items"], "pagination": result["pagination"]}), 200
+
+
+@admin_bp.route("/admin/v1/files", methods=["GET"], strict_slashes=False)
+@admin_bp.route("/admin/v1/files/<file_id>", methods=["GET", "DELETE"], strict_slashes=False)
+@jwt_required()
+@admin_required
+def admin_files(admin_user, file_id=None):
+    denied = _super_admin_required(admin_user)
+    if denied:
+        return denied
+    if file_id is not None:
+        item = db.session.get(UploadedFile, file_id)
+        if not item:
+            return jsonify({"status": "error", "message": "File not found."}), 404
+        if request.method == "GET":
+            return jsonify({"status": "success", "file": {**item.to_dict(), "user_id": item.user_id}}), 200
+        try:
+            get_storage().delete(item.stored_path)
+        except StorageNotConfigured:
+            return jsonify({"status": "error", "message": "File storage is not configured."}), 503
+        except Exception:
+            current_app.logger.exception("Admin stored-file deletion failed.")
+            return jsonify({"status": "error", "message": "File could not be deleted."}), 503
+        _audit(admin_user, "ADMIN_FILE_DELETE", {"file_id": item.id, "user_id": item.user_id})
+        db.session.delete(item)
+        db.session.commit()
+        return jsonify({"status": "success", "message": "File deleted."}), 200
+    query = UploadedFile.query
+    user_id = str(request.args.get("user_id") or "").strip()
+    file_type = str(request.args.get("file_type") or "").strip()
+    if user_id:
+        query = query.filter(UploadedFile.user_id == user_id)
+    if file_type:
+        query = query.filter(UploadedFile.file_type == file_type)
+    search = str(request.args.get("search") or "").strip()
+    if search:
+        query = query.filter(UploadedFile.filename.ilike(f"%{search[:200]}%"))
+    result = _page(query.order_by(UploadedFile.created_at.desc(), UploadedFile.id.desc()), lambda item: {**item.to_dict(), "user_id": item.user_id})
+    if not result:
+        return jsonify({"status": "error", "message": "Invalid pagination."}), 400
+    return jsonify({"status": "success", "files": result["items"], "pagination": result["pagination"]}), 200
+
+
+@admin_bp.route("/admin/v1/coding/projects", methods=["GET"], strict_slashes=False)
+@admin_bp.route("/admin/v1/coding/projects/<int:project_id>", methods=["GET"], strict_slashes=False)
+@admin_bp.route("/admin/v1/coding/projects/<int:project_id>/files", methods=["GET"], strict_slashes=False)
+@admin_bp.route("/admin/v1/coding/projects/<int:project_id>/files/<int:file_id>", methods=["GET"], strict_slashes=False)
+@admin_bp.route("/admin/v1/coding/projects/<int:project_id>/tasks", methods=["GET"], strict_slashes=False)
+@admin_bp.route("/admin/v1/coding/projects/<int:project_id>/tasks/<int:task_id>", methods=["GET"], strict_slashes=False)
+@admin_bp.route("/admin/v1/coding/projects/<int:project_id>/tasks/<int:task_id>/cancel", methods=["POST"], strict_slashes=False)
+@jwt_required()
+@admin_required
+def admin_coding(admin_user, project_id=None, file_id=None, task_id=None):
+    denied = _super_admin_required(admin_user)
+    if denied:
+        return denied
+    if project_id is None:
+        query = CodexProject.query.order_by(CodexProject.updated_at.desc(), CodexProject.id.desc())
+        owner_id = str(request.args.get("user_id") or "").strip()
+        if owner_id:
+            query = query.filter(CodexProject.user_id == owner_id)
+        result = _page(query, lambda item: item.to_dict())
+        if not result:
+            return jsonify({"status": "error", "message": "Invalid pagination."}), 400
+        return jsonify({"status": "success", "projects": result["items"], "pagination": result["pagination"]}), 200
+    project = db.session.get(CodexProject, project_id)
+    if not project:
+        return jsonify({"status": "error", "message": "Coding project not found."}), 404
+    if file_id is not None:
+        item = CodexProjectFile.query.filter_by(id=file_id, project_id=project.id).first()
+        if not item:
+            return jsonify({"status": "error", "message": "Coding file not found."}), 404
+        return jsonify({"status": "success", "file": _codex_file_payload(item, include_content=True)}), 200
+    if task_id is not None:
+        task = CodexTask.query.filter_by(id=task_id, project_id=project.id).first()
+        if not task:
+            return jsonify({"status": "error", "message": "Coding task not found."}), 404
+        if request.method == "POST":
+            if task.status not in {"pending", "running"}:
+                return jsonify({"status": "error", "message": "Task cannot be cancelled."}), 409
+            task.status = "cancelled"
+            task.completed_at = datetime.utcnow()
+            _audit(admin_user, "ADMIN_CODING_TASK_CANCEL", {"project_id": project.id, "task_id": task.id})
+            db.session.commit()
+        return jsonify({"status": "success", "task": task.to_dict()}), 200
+    endpoint = request.path.rstrip("/")
+    if endpoint.endswith("/files"):
+        result = _page(CodexProjectFile.query.filter_by(project_id=project.id).order_by(CodexProjectFile.updated_at.desc(), CodexProjectFile.id.desc()), _codex_file_payload)
+        if not result:
+            return jsonify({"status": "error", "message": "Invalid pagination."}), 400
+        return jsonify({"status": "success", "files": result["items"], "pagination": result["pagination"]}), 200
+    if endpoint.endswith("/tasks"):
+        result = _page(CodexTask.query.filter_by(project_id=project.id).order_by(CodexTask.updated_at.desc(), CodexTask.id.desc()), lambda item: item.to_dict())
+        if not result:
+            return jsonify({"status": "error", "message": "Invalid pagination."}), 400
+        return jsonify({"status": "success", "tasks": result["items"], "pagination": result["pagination"]}), 200
+    return jsonify({"status": "success", "project": project.to_dict()}), 200
+
+
+@admin_bp.route("/admin/v1/api-keys", methods=["GET", "POST"], strict_slashes=False)
+@jwt_required()
+@admin_required
+def admin_api_keys(admin_user):
+    """Super-Admin API key control plane; plaintext is returned only at creation."""
+    denied = _super_admin_required(admin_user)
+    if denied:
+        return denied
+    if request.method == "GET":
+        query = ApiKey.query.order_by(ApiKey.created_at.desc())
+        user_id = str(request.args.get("user_id") or "").strip()
+        if user_id:
+            if len(user_id) > 100:
+                return jsonify({"status": "error", "message": "Invalid user filter."}), 400
+            query = query.filter_by(user_id=user_id)
+        result = _page(query, lambda key: key.to_dict())
+        if not result:
+            return jsonify({"status": "error", "message": "Invalid pagination."}), 400
+        return jsonify({"status": "success", "keys": result["items"], "pagination": result["pagination"]}), 200
+
+    data = request.get_json(silent=True) or {}
+    allowed = {"user_id", "name", "permissions", "expires_in_days"}
+    if set(data) - allowed:
+        return jsonify({"status": "error", "message": "Unsupported API-key field."}), 400
+    user_id = str(data.get("user_id") or "").strip()
+    name = str(data.get("name") or "").strip()
+    if not user_id or not db.session.get(User, user_id):
+        return jsonify({"status": "error", "message": "Target user not found."}), 404
+    if not name or len(name) > 100:
+        return jsonify({"status": "error", "message": "A key name of 100 characters or fewer is required."}), 400
+    permissions = data.get("permissions", "read,write")
+    if not isinstance(permissions, str):
+        return jsonify({"status": "error", "message": "Permissions must be a comma-separated string."}), 400
+    normalized = {item.strip().lower() for item in permissions.split(",") if item.strip()}
+    if not normalized or not normalized.issubset({"read", "write", "admin"}):
+        return jsonify({"status": "error", "message": "Invalid API-key permissions."}), 400
+    expiry = data.get("expires_in_days")
+    expires_at = None
+    if expiry is not None:
+        try:
+            expiry = int(expiry)
+        except (TypeError, ValueError):
+            return jsonify({"status": "error", "message": "expires_in_days must be a positive integer."}), 400
+        if not 0 < expiry <= 3650:
+            return jsonify({"status": "error", "message": "expires_in_days must be between 1 and 3650."}), 400
+        expires_at = datetime.utcnow() + timedelta(days=expiry)
+    try:
+        raw_key, metadata = create_api_key(user_id, name, ",".join(sorted(normalized)), expires_at)
+        _audit(admin_user, "ADMIN_API_KEY_CREATE", {"target_user_id": user_id, "key_id": metadata["id"], "permissions": metadata["permissions"]})
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Admin API-key creation failed.")
+        return jsonify({"status": "error", "message": "Failed to create API key."}), 500
+    return jsonify({"status": "success", "api_key": raw_key, "metadata": metadata}), 201
+
+
+@admin_bp.route("/admin/v1/api-keys/<int:key_id>/revoke", methods=["POST"], strict_slashes=False)
+@jwt_required()
+@admin_required
+def admin_revoke_api_key(admin_user, key_id):
+    denied = _super_admin_required(admin_user)
+    if denied:
+        return denied
+    key = db.session.get(ApiKey, key_id)
+    if not key:
+        return jsonify({"status": "error", "message": "API key not found."}), 404
+    already_revoked = bool(key.is_revoked)
+    if not already_revoked:
+        key.is_active = False
+        key.is_revoked = True
+        _audit(admin_user, "ADMIN_API_KEY_REVOKE", {"target_user_id": key.user_id, "key_id": key.id})
+        db.session.commit()
+    return jsonify({"status": "success", "key": key.to_dict(), "idempotent": already_revoked}), 200
 
 
 @admin_bp.route("/admin/v1/release", methods=["GET"], strict_slashes=False)
@@ -925,22 +1218,29 @@ def delete_user(admin_user, user_id):
 @jwt_required()
 @admin_required
 def list_conversations(admin_user):
-    conversations = (
-        Conversation.query
-        .order_by(Conversation.created_at.desc())
-        .all()
-    )
-
-    result = []
-    for convo in conversations:
-        item = convo.to_dict()
-        item["message_count"] = len(convo.messages)
-        item["user_email"] = None
-        if convo.user:
-            item["user_email"] = convo.user.email
-        result.append(item)
-
-    return jsonify({"status": "success", "conversations": result}), 200
+    query = Conversation.query
+    user_id = str(request.args.get("user_id") or "").strip()
+    if user_id:
+        query = query.filter(Conversation.user_id == user_id)
+    search = str(request.args.get("search") or "").strip()
+    if search:
+        if len(search) > 200:
+            return jsonify({"status": "error", "message": "Invalid search filter."}), 400
+        escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        query = query.outerjoin(User).filter((Conversation.title.ilike(f"%{escaped}%", escape="\\")) | (User.email.ilike(f"%{escaped}%", escape="\\")))
+    query, error = _date_filter(query, Conversation.created_at, "start_date")
+    if error:
+        return error
+    query, error = _date_filter(query, Conversation.created_at, "end_date")
+    if error:
+        return error
+    result = _page(query.order_by(Conversation.created_at.desc(), Conversation.id.desc()), lambda convo: {
+        **convo.to_dict(), "message_count": Message.query.filter_by(conversation_id=convo.id).count(),
+        "user_email": convo.user.email if convo.user else None,
+    })
+    if not result:
+        return jsonify({"status": "error", "message": "Invalid pagination."}), 400
+    return jsonify({"status": "success", "conversations": result["items"], "pagination": result["pagination"]}), 200
 
 
 @admin_bp.route("/admin/conversations/<conversation_id>", methods=["GET"], strict_slashes=False)

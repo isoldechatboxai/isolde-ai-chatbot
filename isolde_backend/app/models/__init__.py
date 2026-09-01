@@ -15,6 +15,7 @@ import app.models.analytics_model
 import app.models.billing_model
 import app.models.chat_extended_models
 import app.models.collaboration_model
+import app.models.codex_model
 import app.models.enterprise_models
 import app.models.feedback
 import app.models.intelligence_model

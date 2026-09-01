@@ -1,5 +1,7 @@
 from flask_jwt_extended import decode_token
+from sqlalchemy.exc import OperationalError
 
+from app.extensions import db as database
 from app.models.auth_model import AuthSession, AuthToken, OAuthAccount, token_digest
 from app.models.user import User
 from app.services.oauth_service import OAuthIdentity
@@ -53,6 +55,40 @@ def test_auth_email_delivery_is_bounded_and_reports_result(app, monkeypatch):
     assert start_email_worker(app, "Verify", "user@example.test", "body") is False
 
 
+def test_forgot_password_is_truthful_when_email_delivery_is_not_configured(client, app):
+    app.config.update({
+        "TESTING": False,
+        "MAIL_SERVER": "",
+        "MAIL_USERNAME": "",
+        "MAIL_PASSWORD": "",
+        "MAIL_DEFAULT_SENDER": "",
+    })
+    response = client.post("/api/forgot-password", json={"email": "unknown@example.test"})
+    assert response.status_code == 503
+    assert response.get_json() == {"error": "Password reset email delivery is not configured."}
+
+
+def test_registration_database_outage_is_rolled_back_and_truthful(client, monkeypatch):
+    original_rollback = database.session.rollback
+    rolled_back = []
+
+    def unavailable_flush():
+        raise OperationalError("INSERT INTO users", {}, OSError("connection closed"))
+
+    def rollback():
+        rolled_back.append(True)
+        original_rollback()
+
+    monkeypatch.setattr(database.session, "flush", unavailable_flush)
+    monkeypatch.setattr(database.session, "rollback", rollback)
+    response = client.post("/api/register", json={
+        "name": "Unavailable Database", "email": "outage@example.test", "password": "StrongPass123!",
+    })
+    assert response.status_code == 503
+    assert response.get_json() == {"error": "Registration is temporarily unavailable. Please try again later."}
+    assert rolled_back == [True]
+
+
 def test_logout_revokes_current_session(client):
     _register(client)
     login = _login(client).get_json()
@@ -79,12 +115,38 @@ def test_password_reset_is_hashed_single_use_and_revokes_sessions(client, db):
     record = AuthToken.query.filter_by(token_hash=token_digest(reset)).one()
     assert record.purpose == "password_reset"
 
-    response = client.post("/api/reset-password", json={"token": reset, "new_password": "NewStrong456!"})
+    assert client.post("/api/reset-password", json={
+        "token": reset, "new_password": "NewStrong456!", "confirm_password": "Different456!",
+    }).status_code == 400
+    response = client.post("/api/reset-password", json={
+        "token": reset, "new_password": "NewStrong456!", "confirm_password": "NewStrong456!",
+    })
     assert response.status_code == 200
     db.session.refresh(user)
     assert user.is_verified is True
-    assert client.post("/api/reset-password", json={"token": reset, "new_password": "Another789!"}).status_code == 400
+    assert client.post("/api/reset-password", json={
+        "token": reset, "new_password": "Another789!", "confirm_password": "Another789!",
+    }).status_code == 400
     assert client.get("/api/sessions", headers={"Authorization": f"Bearer {access_token}"}).status_code == 401
+    assert _login(client, password="NewStrong456!").status_code == 200
+
+
+def test_change_password_requires_matching_confirmation(client):
+    _register(client)
+    access_token = _login(client).get_json()["access_token"]
+    headers = {"Authorization": f"Bearer {access_token}"}
+
+    assert client.post("/api/settings/password", headers=headers, json={
+        "old_password": "StrongPass123!",
+        "new_password": "NewStrong456!",
+        "confirm_password": "Different456!",
+    }).status_code == 400
+
+    assert client.post("/api/settings/password", headers=headers, json={
+        "old_password": "StrongPass123!",
+        "new_password": "NewStrong456!",
+        "confirm_password": "NewStrong456!",
+    }).status_code == 200
     assert _login(client, password="NewStrong456!").status_code == 200
 
 
@@ -178,3 +240,18 @@ def test_oauth_account_cannot_be_linked_to_second_user(client, db, monkeypatch):
     )
     response = client.get("/api/oauth/google/callback?code=test&state=test")
     assert response.status_code == 409
+
+
+def test_oauth_link_does_not_complete_for_disabled_user(client, db, monkeypatch):
+    user = User(name="Disabled", email="disabled-link@example.com", is_verified=True, status="Disabled")
+    db.session.add(user)
+    db.session.commit()
+    identity = OAuthIdentity("google", "subject-disabled", "disabled-link@example.com", True, "Disabled")
+    monkeypatch.setattr(
+        "app.routes.auth_routes.complete_authorization", lambda provider, code, state: (identity, user.id)
+    )
+
+    response = client.get("/api/oauth/google/callback?code=test&state=test")
+
+    assert response.status_code == 401
+    assert OAuthAccount.query.filter_by(provider="google", provider_subject="subject-disabled").first() is None

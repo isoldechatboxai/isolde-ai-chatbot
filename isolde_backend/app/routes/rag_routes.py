@@ -16,6 +16,10 @@ from app.services.rag_service import (
 rag_bp = Blueprint("rag", __name__)
 
 RAG_ALLOWED_EXTENSIONS = {"pdf", "docx", "txt", "csv", "xlsx"}
+# The temporary name has a 32-character UUID plus an underscore prefix.  Keep
+# the client-visible portion below Windows' 255-character component limit as
+# well as the 255-character database column limit.
+RAG_MAX_FILENAME_LENGTH = 220
 
 
 def _allowed_rag_file(filename):
@@ -52,7 +56,19 @@ def upload_rag_file():
 
     original_filename = file.filename
 
-    if not _allowed_rag_file(original_filename):
+    # Keep the database-visible filename and temporary path independent of
+    # client-controlled path syntax.  ``secure_filename`` can legitimately
+    # produce an empty value for a filename made only of unsafe characters.
+    if "\x00" in original_filename:
+        return jsonify({"status": "error", "message": "Invalid filename."}), 400
+    safe_name = secure_filename(original_filename)
+    if not safe_name:
+        return jsonify({"status": "error", "message": "Invalid filename."}), 400
+    if len(safe_name) > RAG_MAX_FILENAME_LENGTH:
+        stem, extension = os.path.splitext(safe_name)
+        safe_name = stem[: RAG_MAX_FILENAME_LENGTH - len(extension)] + extension
+
+    if not _allowed_rag_file(safe_name):
         allowed_str = ", ".join(sorted(RAG_ALLOWED_EXTENSIONS))
         return jsonify({
             "status": "error",
@@ -62,7 +78,6 @@ def upload_rag_file():
     file_path = None
 
     try:
-        safe_name = secure_filename(original_filename)
         unique_name = f"{uuid.uuid4().hex}_{safe_name}"
 
         upload_folder = current_app.config.get("UPLOAD_FOLDER", "uploads")
@@ -78,7 +93,7 @@ def upload_rag_file():
         }), 500
 
     try:
-        indexed_chunks = process_and_index_file(file_path, original_filename, user_id)
+        indexed_chunks = process_and_index_file(file_path, safe_name, user_id)
 
         if indexed_chunks == 0:
             try:
@@ -92,7 +107,7 @@ def upload_rag_file():
             }), 422
 
         current_app.logger.info(
-            f"RAG file indexed: {original_filename} ({indexed_chunks} chunks) by user: {user_id}"
+            "RAG file indexed: %s (%s chunks) by user: %s", safe_name, indexed_chunks, user_id
         )
 
         try:
@@ -109,7 +124,7 @@ def upload_rag_file():
         }), 200
 
     except Exception as e:
-        current_app.logger.error(f"RAG indexing error for {original_filename}: {e}")
+        current_app.logger.error("RAG indexing error for %s: %s", safe_name, e)
 
         if file_path:
             try:

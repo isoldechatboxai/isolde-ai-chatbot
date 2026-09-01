@@ -1,4 +1,4 @@
-const workflowToken = localStorage.getItem("access_token");
+const workflowToken = sessionStorage.getItem("access_token");
 if (!workflowToken) window.location.replace("/login.html");
 
 const workflowMessage = document.getElementById("workflow-message");
@@ -26,7 +26,8 @@ async function workflowApi(path, options = {}) {
   }
   const data = await response.json().catch(() => ({}));
   if (response.status === 401) {
-    localStorage.removeItem("access_token");
+    sessionStorage.removeItem("access_token");
+    sessionStorage.removeItem("user");
     window.location.replace("/login.html");
     throw new Error("Session expired.");
   }

@@ -49,6 +49,25 @@ def _normalize_database_url(database_url: str) -> str:
     return database_url
 
 
+def _database_engine_options(database_url: str) -> dict:
+    """Return conservative pool settings only for networked PostgreSQL.
+
+    Managed PostgreSQL services can close an idle TLS connection while it is
+    still present in a worker pool. ``pool_pre_ping`` discards that stale
+    connection before a request starts; ``pool_recycle`` limits its age.
+    Neither setting retries an application write or changes TLS verification.
+    """
+    if not database_url.startswith(("postgresql://", "postgres://")):
+        return {}
+    return {
+        "pool_pre_ping": True,
+        "pool_recycle": _env_int("DB_POOL_RECYCLE_SECONDS", 1800),
+        "pool_size": _env_int("DB_POOL_SIZE", 5),
+        "max_overflow": _env_int("DB_POOL_MAX_OVERFLOW", 5),
+        "pool_timeout": _env_int("DB_POOL_TIMEOUT_SECONDS", 30),
+    }
+
+
 class Config:
     # ==========================================================
     # Environment
@@ -100,6 +119,10 @@ class Config:
         )
 
     SQLALCHEMY_TRACK_MODIFICATIONS = False
+
+    # Keep managed PostgreSQL connections healthy across long-lived Gunicorn
+    # workers. Local/test engines keep their existing default behavior.
+    SQLALCHEMY_ENGINE_OPTIONS = _database_engine_options(SQLALCHEMY_DATABASE_URI)
 
     # Avoid leaking SQL queries in production logs.
     SQLALCHEMY_ECHO = _env_bool(

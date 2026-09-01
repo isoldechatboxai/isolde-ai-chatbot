@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "check": "node --check script.js && node --check register.js && node --check ai_studio.js && node --check billing.js && node --check marketplace.js && node --check organization.js && node --check smart_library.js && node --check workflows.js && node --check admin.js"
+  }
+}

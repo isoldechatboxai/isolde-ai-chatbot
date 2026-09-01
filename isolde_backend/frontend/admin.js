@@ -2,7 +2,7 @@ const tokenKey = "admin_access_token";
 const supportedProviders = ["gemini", "groq", "openai", "claude", "openrouter", "deepseek", "mistral"];
 
 async function adminApi(path, options = {}) {
-  const token = localStorage.getItem(tokenKey);
+  const token = sessionStorage.getItem(tokenKey);
   let response;
   try { response = await fetch(path, {
       ...options,
@@ -11,7 +11,7 @@ async function adminApi(path, options = {}) {
   } catch (_) { throw new Error("Network request failed."); }
   const data = await response.json().catch(() => ({}));
   if (response.status === 401) {
-    localStorage.removeItem(tokenKey);
+    sessionStorage.removeItem(tokenKey);
     document.getElementById("admin-dashboard").hidden = true;
     document.getElementById("admin-login").hidden = false;
   }
@@ -97,7 +97,7 @@ document.getElementById("admin-login-form").addEventListener("submit", async (ev
   button.disabled = true;
   try {
     const data = await adminApi("/api/admin/login", { method: "POST", body: JSON.stringify({ email: document.getElementById("admin-email").value.trim(), password: document.getElementById("admin-password").value }) });
-    localStorage.setItem(tokenKey, data.access_token);
+    sessionStorage.setItem(tokenKey, data.access_token);
     await loadDashboard();
   } catch (error) { document.getElementById("admin-message").textContent = error.message; }
   finally { button.disabled = false; }
@@ -105,8 +105,8 @@ document.getElementById("admin-login-form").addEventListener("submit", async (ev
 
 document.getElementById("admin-logout").addEventListener("click", async () => {
   try { await adminApi("/api/logout", { method: "POST" }); } catch (_) {}
-  localStorage.removeItem(tokenKey);
+  sessionStorage.removeItem(tokenKey);
   window.location.reload();
 });
 
-if (localStorage.getItem(tokenKey)) loadDashboard().catch((error) => { document.getElementById("admin-message").textContent = error.message; });
+if (sessionStorage.getItem(tokenKey)) loadDashboard().catch((error) => { document.getElementById("admin-message").textContent = error.message; });

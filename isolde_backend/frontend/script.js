@@ -4,6 +4,15 @@
 (() => {
   "use strict";
 
+  // Clear persistent state left by pre-session-only frontend releases.
+  function clearLegacyPersistentState() {
+    try {
+      ["access_token", "user", "isolde-conversations", "isolde-active-conversation"]
+        .forEach((key) => localStorage.removeItem(key));
+    } catch (_) {}
+  }
+  clearLegacyPersistentState();
+
   function escapeText(str) {
     const div = document.createElement("div");
     div.textContent = str ?? "";
@@ -136,7 +145,7 @@
     if (includeJson) {
       headers["Content-Type"] = "application/json";
     }
-    const token = localStorage.getItem("access_token");
+    const token = sessionStorage.getItem("access_token");
     if (token && token !== "null" && token !== "undefined") {
       headers["Authorization"] = `Bearer ${token}`;
     }
@@ -193,8 +202,8 @@
             });
             const data = await response.json();
             if (response.ok && data.access_token) {
-              localStorage.setItem("access_token", data.access_token);
-              localStorage.setItem("user", JSON.stringify(data.user || {}));
+              sessionStorage.setItem("access_token", data.access_token);
+              sessionStorage.setItem("user", JSON.stringify(data.user || {}));
               showMessage("success", "Welcome back! Redirecting...");
               setTimeout(() => { window.location.href = "/"; }, 1000);
             } else {
@@ -219,15 +228,13 @@
   }
 
   function initChatbotApp() {
-    const accessToken = localStorage.getItem("access_token");
+    const accessToken = sessionStorage.getItem("access_token");
     if (!accessToken || accessToken === "null" || accessToken === "undefined") {
       window.location.replace("/login.html");
       return;
     }
     const STORAGE_KEYS = {
       THEME: "isolde-theme",
-      CONVERSATIONS: "isolde-conversations",
-      ACTIVE_CONVERSATION: "isolde-active-conversation",
       PREFERENCES: "isolde-preferences",
     };
 
@@ -451,8 +458,11 @@
           const value = (attr.value || "").trim().toLowerCase();
           if (name.startsWith("on")) {
             el.removeAttribute(attr.name);
-          } else if (["href", "src", "xlink:href", "action", "formaction", "data", "background"].includes(name) && value.startsWith("javascript:")) {
-            el.removeAttribute(attr.name);
+          } else if (["href", "src", "xlink:href", "action", "formaction", "data", "background"].includes(name)) {
+            try {
+              const url = new URL(attr.value, window.location.origin);
+              if (!["http:", "https:", "mailto:"].includes(url.protocol)) el.removeAttribute(attr.name);
+            } catch (_) { el.removeAttribute(attr.name); }
           }
         });
       });
@@ -465,36 +475,20 @@
     }
 
     function saveChat() {
-      try {
-        localStorage.setItem(STORAGE_KEYS.CONVERSATIONS, JSON.stringify(state.conversations));
-        localStorage.setItem(STORAGE_KEYS.ACTIVE_CONVERSATION, state.activeConversationId ?? "");
-      } catch (err) {
-        console.error("Isolde: failed to save chat to localStorage.", err);
-      }
+      // Conversation content remains in memory only. The authenticated backend
+      // history API is authoritative after reload.
     }
 
     function loadChat() {
-      try {
-        const rawConversations = localStorage.getItem(STORAGE_KEYS.CONVERSATIONS);
-        const rawActiveId = localStorage.getItem(STORAGE_KEYS.ACTIVE_CONVERSATION);
-        if (rawConversations) {
-          const parsed = JSON.parse(rawConversations);
-          state.conversations = { ...parsed, ...state.conversations };
-        }
-        if (rawActiveId && state.conversations[rawActiveId]) {
-          state.activeConversationId = rawActiveId;
-        }
-      } catch (err) {
-        console.error("Isolde: failed to load chat from localStorage.", err);
-      }
+      // Deliberately no browser conversation cache.
     }
 
     function saveTheme(theme) {
-      try { localStorage.setItem(STORAGE_KEYS.THEME, theme); } catch (err) {}
+      try { sessionStorage.setItem(STORAGE_KEYS.THEME, theme); } catch (err) {}
     }
 
     function loadTheme() {
-      try { return localStorage.getItem(STORAGE_KEYS.THEME); } catch (err) { return null; }
+      try { return sessionStorage.getItem(STORAGE_KEYS.THEME); } catch (err) { return null; }
     }
 
     function applyTheme(theme) {
@@ -523,12 +517,12 @@
     }
 
     function savePreferences() {
-      try { localStorage.setItem(STORAGE_KEYS.PREFERENCES, JSON.stringify(preferences)); } catch (err) {}
+      try { sessionStorage.setItem(STORAGE_KEYS.PREFERENCES, JSON.stringify(preferences)); } catch (err) {}
     }
 
     function loadPreferences() {
       try {
-        const raw = localStorage.getItem(STORAGE_KEYS.PREFERENCES);
+        const raw = sessionStorage.getItem(STORAGE_KEYS.PREFERENCES);
         if (raw) {
           const parsed = JSON.parse(raw);
           preferences = { ...preferences, ...parsed };
@@ -917,12 +911,25 @@
           if (dom.memoryList) {
             dom.memoryList.innerHTML = "";
             if (!data.memories || data.memories.length === 0) {
-              dom.memoryList.innerHTML = `<li class="memory-empty">No memories saved yet.</li>`;
+              const empty = document.createElement("li");
+              empty.className = "memory-empty";
+              empty.textContent = "No memories saved yet.";
+              dom.memoryList.appendChild(empty);
               return;
             }
             data.memories.forEach((mem) => {
               const li = document.createElement("li");
-              li.innerHTML = `<span><b>[${escapeHtml(mem.category)}]</b> ${escapeHtml(mem.memory)}</span> <button class="delete-memory-btn" data-id="${mem.id}" title="Delete memory">❌</button>`;
+              const text = document.createElement("span");
+              const category = document.createElement("b");
+              category.textContent = `[${mem.category || "Uncategorized"}]`;
+              text.append(category, document.createTextNode(` ${mem.memory || ""}`));
+              const remove = document.createElement("button");
+              remove.className = "delete-memory-btn";
+              remove.type = "button";
+              remove.dataset.id = String(mem.id);
+              remove.title = "Delete memory";
+              remove.textContent = "❌";
+              li.append(text, document.createTextNode(" "), remove);
               dom.memoryList.appendChild(li);
             });
             dom.memoryList.querySelectorAll(".delete-memory-btn").forEach((btn) => {
@@ -1061,9 +1068,15 @@
         if (sources && sources.length > 0) {
           const sourcesDiv = document.createElement("div");
           sourcesDiv.className = "message-sources";
-          let sourcesHtml = "<strong>📎 Sources:</strong> ";
-          sourcesHtml += sources.map(s => `<span>${escapeHtml(s)}</span>`).join(", ");
-          sourcesDiv.innerHTML = sourcesHtml;
+          const label = document.createElement("strong");
+          label.textContent = "📎 Sources: ";
+          sourcesDiv.appendChild(label);
+          sources.forEach((source, index) => {
+            if (index) sourcesDiv.appendChild(document.createTextNode(", "));
+            const item = document.createElement("span");
+            item.textContent = String(source);
+            sourcesDiv.appendChild(item);
+          });
           content.appendChild(sourcesDiv);
         }
 
@@ -1253,8 +1266,8 @@
         state.streamingTextEl = null;
         const errorData = await response.json().catch(() => ({}));
         if (response.status === 401) {
-          localStorage.removeItem("access_token");
-          localStorage.removeItem("user");
+          sessionStorage.removeItem("access_token");
+          sessionStorage.removeItem("user");
           window.location.assign("/login.html");
         }
         if (response.status === 429) throw new Error("Rate limit reached. Please wait before retrying.");
@@ -1338,9 +1351,15 @@
       if (botMsgObj.sources && botMsgObj.sources.length > 0 && textEl) {
         const sourcesDiv = document.createElement("div");
         sourcesDiv.className = "message-sources";
-        let sourcesHtml = "<strong>📎 Sources:</strong> ";
-        sourcesHtml += botMsgObj.sources.map(s => `<span>${escapeHtml(s)}</span>`).join(", ");
-        sourcesDiv.innerHTML = sourcesHtml;
+        const label = document.createElement("strong");
+        label.textContent = "📎 Sources: ";
+        sourcesDiv.appendChild(label);
+        botMsgObj.sources.forEach((source, index) => {
+          if (index) sourcesDiv.appendChild(document.createTextNode(", "));
+          const item = document.createElement("span");
+          item.textContent = String(source);
+          sourcesDiv.appendChild(item);
+        });
         const messageContent = textEl.closest(".message-content");
         if (messageContent) messageContent.appendChild(sourcesDiv);
       }
@@ -1499,12 +1518,12 @@
         appendBotMessage(`Uploading **${file.name}** for RAG document analysis...`);
         const response = await fetch("/api/rag/upload", {
           method: "POST",
-          headers: { Authorization: `Bearer ${localStorage.getItem("access_token") || ""}` },
+          headers: { Authorization: `Bearer ${sessionStorage.getItem("access_token") || ""}` },
           body: formData,
         });
         const data = await response.json().catch(() => ({}));
         if (response.status === 401) {
-          localStorage.removeItem("access_token"); localStorage.removeItem("user");
+          sessionStorage.removeItem("access_token"); sessionStorage.removeItem("user");
           window.location.assign("/login.html"); return;
         }
         if (response.ok && data.status === "success") {
@@ -1553,8 +1572,9 @@
 
     async function logout() {
       try { await fetch("/api/logout", { method: "POST", headers: getAuthHeaders() }); } catch (e) {}
-      localStorage.removeItem("access_token");
-      localStorage.removeItem("user");
+      sessionStorage.removeItem("access_token");
+      sessionStorage.removeItem("user");
+      clearLegacyPersistentState();
       window.location.href = "login.html";
     }
 
@@ -1643,7 +1663,7 @@
               <div class="profile-avatar">👤</div>
               <h3 class="profile-name">${escapeHtml(userName)}</h3>
               <p class="profile-email">${escapeHtml(userEmail)}</p>
-              <div class="profile-plan">🚀 Plan: Pro Glass Workspace (Active)</div>
+              <div class="profile-plan">Plan details are available in Billing.</div>
               <button id="close-profile-modal" class="profile-close-btn" type="button">Close</button>
               <button id="modal-logout-btn" class="profile-logout-btn" type="button">Logout</button>
             </div>`;
@@ -1806,7 +1826,8 @@ onDocumentReady(() => {
       const response = await fetch("/api/studio/capabilities", { headers: getAuthHeaders() });
       const data = await response.json().catch(() => ({}));
       if (response.status === 401) {
-        localStorage.removeItem("access_token");
+        sessionStorage.removeItem("access_token");
+        sessionStorage.removeItem("user");
         window.location.replace("/login.html");
         return;
       }
@@ -2111,7 +2132,7 @@ document.addEventListener("click", async (e) => {
 
     async function settingsApi(method, url, body) {
       const headers = {};
-      const token = localStorage.getItem("access_token");
+      const token = sessionStorage.getItem("access_token");
       if (token && token !== "null" && token !== "undefined") {
         headers["Authorization"] = `Bearer ${token}`;
       }
@@ -2161,7 +2182,7 @@ document.addEventListener("click", async (e) => {
 
     function getLocalNotificationSettings() {
       try {
-        return JSON.parse(localStorage.getItem(NOTIFICATION_STORAGE_KEY) || "{}");
+        return JSON.parse(sessionStorage.getItem(NOTIFICATION_STORAGE_KEY) || "{}");
       } catch (err) {
         return {};
       }
@@ -2179,7 +2200,7 @@ document.addEventListener("click", async (e) => {
           next[key] = Boolean(payload[key]);
         }
       });
-      localStorage.setItem(NOTIFICATION_STORAGE_KEY, JSON.stringify(next));
+      sessionStorage.setItem(NOTIFICATION_STORAGE_KEY, JSON.stringify(next));
     }
 
     function populateLanguageSelect(select, value) {
@@ -2202,7 +2223,7 @@ document.addEventListener("click", async (e) => {
     function applySettingsTheme(theme) {
       const nextTheme = theme === "light" ? "light" : "dark";
       document.documentElement.setAttribute("data-theme", nextTheme);
-      localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+      sessionStorage.setItem(THEME_STORAGE_KEY, nextTheme);
       const themeToggleBtn = document.querySelector(".theme-toggle-btn");
       if (themeToggleBtn) {
         themeToggleBtn.setAttribute("data-theme", nextTheme);
@@ -2238,16 +2259,6 @@ document.addEventListener("click", async (e) => {
         );
         return true;
       } catch (err) {
-        if (onlyNotificationFields) {
-          Object.assign(currentSettings, payload);
-          persistLocalNotificationSettings(payload);
-          showSettingsStatus(
-            statusEl,
-            "success",
-            successMessage || "Settings saved."
-          );
-          return true;
-        }
         showSettingsStatus(
           statusEl,
           "error",
@@ -2310,7 +2321,7 @@ document.addEventListener("click", async (e) => {
         }
 
         const savedTheme =
-          localStorage.getItem(THEME_STORAGE_KEY) ||
+          sessionStorage.getItem(THEME_STORAGE_KEY) ||
           document.documentElement.getAttribute("data-theme") ||
           "dark";
         if (themeSelect) {
@@ -2484,6 +2495,7 @@ document.addEventListener("click", async (e) => {
           const result = await settingsApi("POST", "/api/settings/password", {
             old_password: oldPassword,
             new_password: newPassword,
+            confirm_password: confirmPassword,
           });
           if (oldPasswordInput) {
             oldPasswordInput.value = "";
@@ -2571,8 +2583,8 @@ document.addEventListener("click", async (e) => {
         deleteAccountBtn.disabled = true;
         try {
           await settingsApi("DELETE", "/api/account");
-          localStorage.removeItem("access_token");
-          localStorage.removeItem("user");
+          sessionStorage.removeItem("access_token");
+          sessionStorage.removeItem("user");
           window.location.href = "login.html";
         } catch (err) {
           showSettingsStatus(
@@ -2585,22 +2597,22 @@ document.addEventListener("click", async (e) => {
       });
     }
 
-    overlay.querySelector("#export-json-btn").addEventListener("click", () => {
-      const rawConvos = localStorage.getItem("isolde-conversations") || "{}";
-      const exportData = {
-        conversations: JSON.parse(rawConvos),
-        exportDate: new Date().toISOString(),
-      };
-      const blob = new Blob([JSON.stringify(exportData, null, 2)], {
-        type: "application/json",
-      });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `isolde-backup-${new Date().toISOString().split("T")[0]}.json`;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-      alert("✅ Conversation history exported successfully!");
+    overlay.querySelector("#export-json-btn").addEventListener("click", async () => {
+      try {
+        const history = await fetch("/api/history", { headers: getAuthHeaders() });
+        if (!history.ok) throw new Error("Backend conversation history could not be loaded.");
+        const summary = await history.json();
+        const conversations = await Promise.all((summary.conversations || []).map(async (conversation) => {
+          const response = await fetch(`/api/history/${encodeURIComponent(conversation.id)}`, { headers: getAuthHeaders() });
+          if (!response.ok) throw new Error("A conversation could not be exported.");
+          const payload = await response.json();
+          return payload.conversation;
+        }));
+        downloadJson({ conversations, exportDate: new Date().toISOString() }, `isolde-backup-${new Date().toISOString().split("T")[0]}.json`);
+        alert("Conversation history exported successfully.");
+      } catch (err) {
+        alert(err.message || "Failed to export conversation history.");
+      }
     });
 
     overlay.querySelector("#delete-chats-btn").addEventListener("click", async () => {
@@ -2612,7 +2624,7 @@ document.addEventListener("click", async (e) => {
         return;
       }
       try {
-        const token = localStorage.getItem("access_token");
+        const token = sessionStorage.getItem("access_token");
         if (token && token !== "null" && token !== "undefined") {
           const response = await fetch("/api/history", {
             method: "DELETE",
@@ -2629,8 +2641,6 @@ document.addEventListener("click", async (e) => {
         alert(err.message || "Failed to clear chat history.");
         return;
       }
-      localStorage.removeItem("isolde-conversations");
-      localStorage.removeItem("isolde-active-conversation");
       alert("🗑️ All chats cleared successfully.");
       window.location.reload();
     });

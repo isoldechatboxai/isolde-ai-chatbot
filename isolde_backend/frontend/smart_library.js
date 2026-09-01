@@ -1,7 +1,7 @@
 (() => {
     'use strict';
 
-    if (!localStorage.getItem("access_token")) {
+    if (!sessionStorage.getItem("access_token")) {
         window.location.replace("/login.html");
         return;
     }
@@ -25,7 +25,7 @@
     const ALLOWED_EXTENSIONS = [".pdf", ".docx", ".txt", ".csv", ".xlsx"];
 
     const getAuthHeader = () => {
-        const token = localStorage.getItem("access_token");
+        const token = sessionStorage.getItem("access_token");
         return token ? `Bearer ${token}` : "";
     };
 
@@ -125,7 +125,11 @@
             });
 
             if (!response.ok) {
-                if (response.status === 401) return window.location.replace("/login.html");
+                if (response.status === 401) {
+                    sessionStorage.removeItem("access_token");
+                    sessionStorage.removeItem("user");
+                    return window.location.replace("/login.html");
+                }
                 throw new Error(`Server returned ${response.status}`);
             }
 
@@ -172,7 +176,11 @@
             const data = await response.json().catch(() => ({}));
 
             if (!response.ok) {
-                if (response.status === 401) return window.location.replace("/login.html");
+                if (response.status === 401) {
+                    sessionStorage.removeItem("access_token");
+                    sessionStorage.removeItem("user");
+                    return window.location.replace("/login.html");
+                }
                 throw new Error(data.message || "Upload failed due to a server error.");
             }
 
@@ -210,7 +218,11 @@
             const data = await response.json().catch(() => ({}));
 
             if (!response.ok) {
-                if (response.status === 401) return window.location.replace("/login.html");
+                if (response.status === 401) {
+                    sessionStorage.removeItem("access_token");
+                    sessionStorage.removeItem("user");
+                    return window.location.replace("/login.html");
+                }
                 throw new Error(data.message || "Deletion failed due to a server error.");
             }
 

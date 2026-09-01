@@ -42,6 +42,13 @@ def app(tmp_path):
         SQLALCHEMY_DATABASE_URI = f"sqlite:///{tmp_path / 'test_isolde.db'}"
         SQLALCHEMY_TRACK_MODIFICATIONS = False
         IS_PRODUCTION = False
+        # Test suites must never inherit local developer/demo settings or make
+        # cloud calls. Production keeps its explicit S3-only validation.
+        IS_DEMO_STAGING = False
+        DEMO_ADMIN_BOOTSTRAP_ENABLED = False
+        STORAGE_BACKEND = "local"
+        S3_BUCKET = ""
+        CANCELLATION_REDIS_URL = ""
         RATELIMIT_ENABLED = False
         # Direct runtime directories to temp path to avoid polluting project
         UPLOAD_FOLDER = str(tmp_path / "uploads")

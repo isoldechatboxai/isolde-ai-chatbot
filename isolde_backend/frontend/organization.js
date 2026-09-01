@@ -1,4 +1,4 @@
-const token = localStorage.getItem("access_token");
+const token = sessionStorage.getItem("access_token");
 if (!token) window.location.replace("/login.html");
 const headers = {Authorization: `Bearer ${token || ""}`, "Content-Type": "application/json"};
 const message = document.getElementById("org-message");
@@ -11,7 +11,7 @@ async function api(path, options = {}) {
   let response;
   try { response = await fetch(path, {...options, headers: {...headers, ...(options.headers || {})}}); }
   catch (_) { throw new Error("Network request failed."); }
-  if (response.status === 401) { localStorage.removeItem("access_token"); location.href = "/login.html"; throw new Error("Session expired."); }
+  if (response.status === 401) { sessionStorage.removeItem("access_token"); sessionStorage.removeItem("user"); location.href = "/login.html"; throw new Error("Session expired."); }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || `Request failed (${response.status}).`);
   return data;
