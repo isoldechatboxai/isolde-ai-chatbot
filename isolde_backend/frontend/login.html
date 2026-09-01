@@ -86,7 +86,21 @@
 
         .input-group input:focus {
             border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
         }
+
+        .password-wrap { position: relative; }
+        .password-wrap input { padding-right: 72px; }
+        .password-toggle {
+            position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+            min-height: 36px; border: 0; border-radius: 8px; background: transparent;
+            color: var(--text-muted); cursor: pointer; font: inherit; font-size: 12px;
+        }
+        .password-toggle:hover, .password-toggle:focus-visible { color: white; background: rgba(255,255,255,.08); outline: 2px solid var(--primary); outline-offset: 1px; }
+        .auth-btn:disabled, .guest-btn:disabled { cursor: not-allowed; opacity: .58; }
+        .verification-panel { display: none; margin-bottom: 15px; padding: 12px; border: 1px solid rgba(251,191,36,.45); border-radius: 10px; background: rgba(251,191,36,.12); color: #fef3c7; font-size: 13px; line-height: 1.45; }
+        .verification-panel.visible { display: block; }
+        @media (max-width: 480px) { body { align-items: flex-start; overflow: auto; padding: 24px 12px; box-sizing: border-box; } .auth-card { padding: 28px 22px; } }
 
         .auth-btn {
             width: 100%;
@@ -214,16 +228,22 @@
             <p>Your intelligent AI assistant</p>
         </div>
 
-        <div id="message-container" class="message"></div>
+        <div id="message-container" class="message" role="alert" aria-live="polite"></div>
+        <div id="verification-panel" class="verification-panel" role="status" aria-live="polite">
+            Please verify your email before signing in. Check the verification link sent when you registered.
+        </div>
 
-        <form id="login-form">
+        <form id="login-form" novalidate>
             <div class="input-group">
-                <label>Email</label>
-                <input type="email" id="email" placeholder="name@example.com" required>
+                <label for="email">Email</label>
+                <input type="email" id="email" name="email" autocomplete="email" placeholder="name@example.com" required aria-describedby="message-container">
             </div>
             <div class="input-group" style="margin-bottom: 8px;">
-                <label>Password</label>
-                <input type="password" id="password" placeholder="••••••••" required>
+                <label for="password">Password</label>
+                <div class="password-wrap">
+                    <input type="password" id="password" name="password" autocomplete="current-password" placeholder="••••••••" required>
+                    <button type="button" class="password-toggle" data-password-toggle="password" aria-label="Show password" aria-pressed="false">Show</button>
+                </div>
             </div>
             
             <div class="forgot-link">
@@ -251,15 +271,15 @@
             <div id="modal-msg" class="message" style="margin-bottom: 10px;"></div>
 
             <div class="input-group">
-                <label>Email Address</label>
-                <input type="email" id="forgot-email" placeholder="name@example.com">
+                <label for="forgot-email">Email address</label>
+                <input type="email" id="forgot-email" autocomplete="email" placeholder="name@example.com">
             </div>
 
             <div class="input-group" id="otp-group" style="display:none;">
-                <label>Reset Token / New Password</label>
+                <label for="forgot-token">Reset token</label>
                 <input type="text" id="forgot-token" placeholder="Single-use reset token" style="margin-bottom: 10px;">
-                <input type="password" id="new-password" placeholder="New Password">
-                <input type="password" id="confirm-new-password" placeholder="Confirm New Password" style="margin-top: 10px;">
+                <div class="password-wrap"><input type="password" id="new-password" autocomplete="new-password" placeholder="New password"><button type="button" class="password-toggle" data-password-toggle="new-password" aria-label="Show new password" aria-pressed="false">Show</button></div>
+                <div class="password-wrap" style="margin-top: 10px;"><input type="password" id="confirm-new-password" autocomplete="new-password" placeholder="Confirm new password"><button type="button" class="password-toggle" data-password-toggle="confirm-new-password" aria-label="Show confirmation password" aria-pressed="false">Show</button></div>
             </div>
 
             <button type="button" class="auth-btn" id="send-otp-btn">Send Reset Link</button>
@@ -272,14 +292,35 @@
         document.addEventListener('DOMContentLoaded', () => {
             const form = document.getElementById('login-form');
             const msg = document.getElementById('message-container');
+            const verificationPanel = document.getElementById('verification-panel');
+            const showMessage = (type, text) => { msg.textContent = text; msg.className = `message ${type}`; };
+            document.querySelectorAll('[data-password-toggle]').forEach((button) => {
+                button.addEventListener('click', () => {
+                    const input = document.getElementById(button.dataset.passwordToggle);
+                    const show = input.type === 'password';
+                    input.type = show ? 'text' : 'password';
+                    button.textContent = show ? 'Hide' : 'Show';
+                    button.setAttribute('aria-label', `${show ? 'Hide' : 'Show'} password`);
+                    button.setAttribute('aria-pressed', String(show));
+                });
+            });
 
             form.addEventListener('submit', async (e) => {
                 e.preventDefault();
                 const loginButton = document.getElementById('login-btn');
                 if (loginButton.disabled) return;
                 loginButton.disabled = true;
+                let loginSucceeded = false;
+                loginButton.querySelector('.btn-text').textContent = 'Signing in…';
                 const email = document.getElementById('email').value.trim();
                 const password = document.getElementById('password').value;
+                verificationPanel.classList.remove('visible');
+                if (!email || !password) {
+                    showMessage('error', 'Enter your email address and password.');
+                    loginButton.disabled = false;
+                    loginButton.querySelector('.btn-text').textContent = 'Login';
+                    return;
+                }
 
                 try {
                     const res = await fetch('/api/login', {
@@ -287,23 +328,25 @@
                         headers: {'Content-Type': 'application/json'},
                         body: JSON.stringify({email, password})
                     });
-                    const data = await res.json();
+                    const data = await res.json().catch(() => ({}));
 
                     if(res.ok && data.access_token) {
+                        loginSucceeded = true;
                         sessionStorage.setItem('access_token', data.access_token);
                         sessionStorage.setItem('user', JSON.stringify(data.user || {}));
-                        msg.textContent = "Login successful! Redirecting...";
-                        msg.className = "message success";
+                        showMessage('success', 'Login successful. Redirecting…');
                         setTimeout(() => window.location.href = "/", 1000);
                     } else {
-                        msg.textContent = data.error || "Invalid email or password.";
-                        msg.className = "message error";
+                        if (res.status === 403 && data.verification_required) verificationPanel.classList.add('visible');
+                        showMessage('error', data.error || `Unable to sign in (${res.status}).`);
                     }
                 } catch(err) {
-                    msg.textContent = "Server connection error.";
-                    msg.className = "message error";
+                    showMessage('error', 'Unable to connect to ISOLDE. Please try again.');
                 } finally {
-                    loginButton.disabled = false;
+                    if (!loginSucceeded) {
+                        loginButton.disabled = false;
+                        loginButton.querySelector('.btn-text').textContent = 'Login';
+                    }
                 }
             });
 

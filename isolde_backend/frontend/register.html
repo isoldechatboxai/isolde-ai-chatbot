@@ -149,22 +149,27 @@
             <p>Register to use Isolde AI</p>
         </div>
 
-        <div id="message-container" class="message"></div>
+        <div id="message-container" class="message" role="alert" aria-live="polite"></div>
 
-        <form id="register-form">
+        <form id="register-form" novalidate>
             <div class="input-group">
-                <label>Username</label>
-                <input type="text" id="username" placeholder="Your name" required>
+                <label for="username">Name</label>
+                <input type="text" id="username" name="name" autocomplete="name" placeholder="Your name" required>
             </div>
 
             <div class="input-group">
-                <label>Email</label>
-                <input type="email" id="email" placeholder="name@example.com" required>
+                <label for="email">Email</label>
+                <input type="email" id="email" name="email" autocomplete="email" placeholder="name@example.com" required>
             </div>
 
             <div class="input-group">
-                <label>Password</label>
-                <input type="password" id="password" placeholder="••••••••" required>
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" autocomplete="new-password" placeholder="At least 8 characters, including a letter and number" required>
+            </div>
+
+            <div class="input-group">
+                <label for="confirm-password">Confirm password</label>
+                <input type="password" id="confirm-password" name="confirm-password" autocomplete="new-password" placeholder="Repeat your password" required>
             </div>
 
             <button type="submit" class="auth-btn" id="register-btn">
@@ -191,6 +196,19 @@
                     const name = document.getElementById('username').value.trim();
                     const email = document.getElementById('email').value.trim();
                     const password = document.getElementById('password').value;
+                    const confirmPassword = document.getElementById('confirm-password').value;
+                    if (!name || !email || !password) {
+                        msg.textContent = 'Complete every field to create your account.';
+                        msg.className = 'message error';
+                        button.disabled = false;
+                        return;
+                    }
+                    if (password !== confirmPassword) {
+                        msg.textContent = 'Password and confirmation do not match.';
+                        msg.className = 'message error';
+                        button.disabled = false;
+                        return;
+                    }
 
                     try {
                         const res = await fetch('/api/register', {
@@ -198,7 +216,7 @@
                             headers: {'Content-Type': 'application/json'},
                             body: JSON.stringify({name, email, password})
                         });
-                        const data = await res.json();
+                        const data = await res.json().catch(() => ({}));
 
                         if(res.ok) {
                             msg.textContent = data.message || "Registration successful. Check your email to verify the account.";
@@ -208,7 +226,7 @@
                             msg.className = "message error";
                         }
                     } catch(err) {
-                        msg.textContent = "Server connection error.";
+                        msg.textContent = "Unable to connect to ISOLDE. Please try again.";
                         msg.className = "message error";
                     } finally {
                         button.disabled = false;
