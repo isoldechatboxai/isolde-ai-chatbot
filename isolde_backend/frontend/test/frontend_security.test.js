@@ -59,3 +59,21 @@ test("password flows use backend endpoints and do not persist reset tokens", () 
   assert.match(script, /"\/api\/settings\/password"/);
   assert.doesNotMatch(login, /sessionStorage\.setItem\(['"](?:reset|forgot|password)/i);
 });
+
+test("auth forms use real loading states and never fake a completed request", () => {
+  const login = read("login.html");
+  const register = read("register.html");
+  assert.match(login, /setButtonState\(loginButton, true, 'Login'\)/);
+  assert.match(login, /window\.location\.replace\('\/'\)/);
+  assert.doesNotMatch(login, /setTimeout\(/);
+  assert.match(register, /fetch\('\/api\/register'/);
+  assert.match(register, /password !== confirmPassword/);
+  assert.match(register, /data-password-toggle/);
+});
+
+test("OAuth provider controls are backend-configured and unavailable providers are disabled", () => {
+  const login = read("login.html");
+  assert.match(login, /fetch\('\/api\/oauth\/providers'\)/);
+  assert.match(login, /button\.disabled = !configured/);
+  assert.match(login, /\/api\/oauth\/\$\{provider\}\/start/);
+});

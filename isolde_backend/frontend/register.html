@@ -81,7 +81,12 @@
         .input-group input:focus {
             outline: none;
             border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, .2);
         }
+        .password-wrap { position: relative; }
+        .password-wrap input { padding-right: 68px; }
+        .password-toggle { position: absolute; right: 7px; top: 50%; transform: translateY(-50%); min-height: 36px; border: 0; border-radius: 7px; background: transparent; color: var(--text-muted); cursor: pointer; }
+        .password-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 
         .auth-btn {
             width: 100%;
@@ -100,6 +105,12 @@
         .auth-btn:hover {
             background-color: var(--primary-hover);
         }
+        .auth-btn:disabled { cursor: not-allowed; opacity: .62; }
+        .auth-btn[aria-busy="true"] .btn-text::before { content: ""; display: inline-block; width: .8em; height: .8em; margin-right: .5em; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: auth-spin .75s linear infinite; }
+        @keyframes auth-spin { to { transform: rotate(360deg); } }
+        .password-guidance { margin: -12px 0 16px; font-size: 12px; color: var(--text-muted); }
+        @media (max-width: 480px) { body { height: auto; min-height: 100vh; align-items: flex-start; padding: 24px 12px; box-sizing: border-box; } .auth-card { padding: 28px 22px; } }
+        @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
 
         .switch-page {
             text-align: center;
@@ -164,12 +175,13 @@
 
             <div class="input-group">
                 <label for="password">Password</label>
-                <input type="password" id="password" name="password" autocomplete="new-password" placeholder="At least 8 characters, including a letter and number" required>
+                <div class="password-wrap"><input type="password" id="password" name="password" autocomplete="new-password" placeholder="At least 8 characters, including a letter and number" required><button type="button" class="password-toggle" data-password-toggle="password" aria-label="Show password" aria-pressed="false">Show</button></div>
             </div>
+            <p class="password-guidance">Use at least 8 characters with a letter and a number.</p>
 
             <div class="input-group">
                 <label for="confirm-password">Confirm password</label>
-                <input type="password" id="confirm-password" name="confirm-password" autocomplete="new-password" placeholder="Repeat your password" required>
+                <div class="password-wrap"><input type="password" id="confirm-password" name="confirm-password" autocomplete="new-password" placeholder="Repeat your password" required><button type="button" class="password-toggle" data-password-toggle="confirm-password" aria-label="Show confirmation password" aria-pressed="false">Show</button></div>
             </div>
 
             <button type="submit" class="auth-btn" id="register-btn">
@@ -186,6 +198,15 @@
         document.addEventListener('DOMContentLoaded', () => {
             const form = document.getElementById('register-form');
             const msg = document.getElementById('message-container');
+            const setMessage = (type, text) => { msg.textContent = text; msg.className = `message ${type}`; };
+            document.querySelectorAll('[data-password-toggle]').forEach((button) => button.addEventListener('click', () => {
+                const input = document.getElementById(button.dataset.passwordToggle);
+                const visible = input.type === 'password';
+                input.type = visible ? 'text' : 'password';
+                button.textContent = visible ? 'Hide' : 'Show';
+                button.setAttribute('aria-pressed', String(visible));
+                button.setAttribute('aria-label', `${visible ? 'Hide' : 'Show'} password`);
+            }));
 
             if (form) {
                 form.addEventListener('submit', async (e) => {
@@ -193,20 +214,24 @@
                     const button = document.getElementById('register-btn');
                     if (button.disabled) return;
                     button.disabled = true;
+                    button.setAttribute('aria-busy', 'true');
+                    button.querySelector('.btn-text').textContent = 'Creating account…';
                     const name = document.getElementById('username').value.trim();
                     const email = document.getElementById('email').value.trim();
                     const password = document.getElementById('password').value;
                     const confirmPassword = document.getElementById('confirm-password').value;
                     if (!name || !email || !password) {
-                        msg.textContent = 'Complete every field to create your account.';
-                        msg.className = 'message error';
+                        setMessage('error', 'Complete every field to create your account.');
                         button.disabled = false;
+                        button.setAttribute('aria-busy', 'false');
+                        button.querySelector('.btn-text').textContent = 'Register';
                         return;
                     }
                     if (password !== confirmPassword) {
-                        msg.textContent = 'Password and confirmation do not match.';
-                        msg.className = 'message error';
+                        setMessage('error', 'Password and confirmation do not match.');
                         button.disabled = false;
+                        button.setAttribute('aria-busy', 'false');
+                        button.querySelector('.btn-text').textContent = 'Register';
                         return;
                     }
 
@@ -219,17 +244,16 @@
                         const data = await res.json().catch(() => ({}));
 
                         if(res.ok) {
-                            msg.textContent = data.message || "Registration successful. Check your email to verify the account.";
-                            msg.className = "message success";
+                            setMessage('success', data.message || "Registration successful. Check your email to verify the account.");
                         } else {
-                            msg.textContent = data.error || "Registration failed";
-                            msg.className = "message error";
+                            setMessage('error', data.error || (res.status === 429 ? 'Too many attempts. Please wait and try again.' : 'Registration failed.'));
                         }
                     } catch(err) {
-                        msg.textContent = "Unable to connect to ISOLDE. Please try again.";
-                        msg.className = "message error";
+                        setMessage('error', "Unable to connect to ISOLDE. Please try again.");
                     } finally {
                         button.disabled = false;
+                        button.setAttribute('aria-busy', 'false');
+                        button.querySelector('.btn-text').textContent = 'Register';
                     }
                 });
             }

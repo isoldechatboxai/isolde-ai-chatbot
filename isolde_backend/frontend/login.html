@@ -97,7 +97,9 @@
             color: var(--text-muted); cursor: pointer; font: inherit; font-size: 12px;
         }
         .password-toggle:hover, .password-toggle:focus-visible { color: white; background: rgba(255,255,255,.08); outline: 2px solid var(--primary); outline-offset: 1px; }
-        .auth-btn:disabled, .guest-btn:disabled { cursor: not-allowed; opacity: .58; }
+        .auth-btn:disabled, .guest-btn:disabled { cursor: not-allowed; opacity: .58; box-shadow: none; }
+        .auth-btn[aria-busy="true"] .btn-text::before { content: ""; display: inline-block; width: .85em; height: .85em; margin-right: .55em; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; vertical-align: -0.1em; animation: auth-spin .75s linear infinite; }
+        @keyframes auth-spin { to { transform: rotate(360deg); } }
         .verification-panel { display: none; margin-bottom: 15px; padding: 12px; border: 1px solid rgba(251,191,36,.45); border-radius: 10px; background: rgba(251,191,36,.12); color: #fef3c7; font-size: 13px; line-height: 1.45; }
         .verification-panel.visible { display: block; }
         @media (max-width: 480px) { body { align-items: flex-start; overflow: auto; padding: 24px 12px; box-sizing: border-box; } .auth-card { padding: 28px 22px; } }
@@ -195,6 +197,7 @@
             color: #10b981;
             border: 1px solid rgba(16, 185, 129, 0.4);
         }
+        .message.warning { display: block; background: rgba(251, 191, 36, .12); color: #fef3c7; border: 1px solid rgba(251, 191, 36, .42); }
 
         /* Modal Overlay for Forgot Password */
         #forgot-modal {
@@ -216,7 +219,9 @@
             max-width: 360px;
             border: 1px solid var(--border-color);
             box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);
+            box-sizing: border-box;
         }
+        @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
     </style>
 </head>
 <body>
@@ -263,10 +268,10 @@
     </div>
 
     <!-- Forgot Password Modal Popup -->
-    <div id="forgot-modal">
+    <div id="forgot-modal" role="dialog" aria-modal="true" aria-labelledby="recovery-title">
         <div class="modal-card">
-            <h3>Reset Password</h3>
-            <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 15px;">Request a single-use reset link, then paste its token below if this page did not open it automatically.</p>
+            <h3 id="recovery-title">Password recovery</h3>
+            <p id="recovery-description" style="font-size: 12px; color: var(--text-muted); margin-bottom: 15px;">Enter your email address. If a matching account exists, we’ll send reset instructions.</p>
             
             <div id="modal-msg" class="message" style="margin-bottom: 10px;"></div>
 
@@ -282,7 +287,7 @@
                 <div class="password-wrap" style="margin-top: 10px;"><input type="password" id="confirm-new-password" autocomplete="new-password" placeholder="Confirm new password"><button type="button" class="password-toggle" data-password-toggle="confirm-new-password" aria-label="Show confirmation password" aria-pressed="false">Show</button></div>
             </div>
 
-            <button type="button" class="auth-btn" id="send-otp-btn">Send Reset Link</button>
+            <button type="button" class="auth-btn" id="send-otp-btn"><span class="btn-text">Send reset instructions</span></button>
             <button type="button" class="guest-btn" id="verify-reset-btn" style="display:none;">Reset Password</button>
             <button type="button" class="guest-btn" id="close-modal-btn" style="margin-top: 8px;">Cancel</button>
         </div>
@@ -294,6 +299,18 @@
             const msg = document.getElementById('message-container');
             const verificationPanel = document.getElementById('verification-panel');
             const showMessage = (type, text) => { msg.textContent = text; msg.className = `message ${type}`; };
+            const readJson = (response) => response.json().catch(() => ({}));
+            const messageFor = (response, data, fallback) => {
+                if (data && typeof data.error === 'string') return data.error;
+                if (response.status === 429) return 'Too many attempts. Please wait and try again.';
+                if ([500, 502, 503, 504].includes(response.status)) return 'ISOLDE is temporarily unavailable. Please try again.';
+                return fallback;
+            };
+            const setButtonState = (button, loading, idleLabel) => {
+                button.disabled = loading;
+                button.setAttribute('aria-busy', String(loading));
+                button.querySelector('.btn-text').textContent = loading ? 'Please wait…' : idleLabel;
+            };
             document.querySelectorAll('[data-password-toggle]').forEach((button) => {
                 button.addEventListener('click', () => {
                     const input = document.getElementById(button.dataset.passwordToggle);
@@ -309,16 +326,14 @@
                 e.preventDefault();
                 const loginButton = document.getElementById('login-btn');
                 if (loginButton.disabled) return;
-                loginButton.disabled = true;
                 let loginSucceeded = false;
-                loginButton.querySelector('.btn-text').textContent = 'Signing in…';
+                setButtonState(loginButton, true, 'Login');
                 const email = document.getElementById('email').value.trim();
                 const password = document.getElementById('password').value;
                 verificationPanel.classList.remove('visible');
                 if (!email || !password) {
                     showMessage('error', 'Enter your email address and password.');
-                    loginButton.disabled = false;
-                    loginButton.querySelector('.btn-text').textContent = 'Login';
+                    setButtonState(loginButton, false, 'Login');
                     return;
                 }
 
@@ -328,24 +343,22 @@
                         headers: {'Content-Type': 'application/json'},
                         body: JSON.stringify({email, password})
                     });
-                    const data = await res.json().catch(() => ({}));
+                    const data = await readJson(res);
 
                     if(res.ok && data.access_token) {
                         loginSucceeded = true;
                         sessionStorage.setItem('access_token', data.access_token);
                         sessionStorage.setItem('user', JSON.stringify(data.user || {}));
-                        showMessage('success', 'Login successful. Redirecting…');
-                        setTimeout(() => window.location.href = "/", 1000);
+                        window.location.replace('/');
                     } else {
                         if (res.status === 403 && data.verification_required) verificationPanel.classList.add('visible');
-                        showMessage('error', data.error || `Unable to sign in (${res.status}).`);
+                        showMessage(res.status === 403 ? 'warning' : 'error', messageFor(res, data, `Unable to sign in (${res.status}).`));
                     }
                 } catch(err) {
                     showMessage('error', 'Unable to connect to ISOLDE. Please try again.');
                 } finally {
                     if (!loginSucceeded) {
-                        loginButton.disabled = false;
-                        loginButton.querySelector('.btn-text').textContent = 'Login';
+                        setButtonState(loginButton, false, 'Login');
                     }
                 }
             });
@@ -383,32 +396,40 @@
             });
 
             // Modal Logic
+            const modal = document.getElementById('forgot-modal');
+            const closeRecovery = () => { modal.style.display = 'none'; document.getElementById('open-forgot-modal').focus(); };
             document.getElementById('open-forgot-modal').addEventListener('click', (e) => {
                 e.preventDefault();
-                document.getElementById('forgot-modal').style.display = 'flex';
+                modal.style.display = 'flex';
+                document.getElementById('forgot-email').focus();
             });
             document.getElementById('close-modal-btn').addEventListener('click', () => {
-                document.getElementById('forgot-modal').style.display = 'none';
+                closeRecovery();
             });
             document.getElementById('send-otp-btn').addEventListener('click', async () => {
-                const email = document.getElementById('forgot-email').value;
+                const email = document.getElementById('forgot-email').value.trim();
                 const m = document.getElementById('modal-msg');
-                if(!email) { alert("Please enter email"); return; }
+                const button = document.getElementById('send-otp-btn');
+                if(!email) { m.textContent = 'Enter your email address.'; m.className = 'message error'; return; }
+                button.disabled = true;
+                button.setAttribute('aria-busy', 'true');
+                button.querySelector('.btn-text').textContent = 'Please wait…';
                 
                 try {
                     const res = await fetch('/api/forgot-password', {
                         method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({email})
                     });
-                    const data = await res.json();
+                    const data = await readJson(res);
                     if (!res.ok) throw new Error(data.error || `Reset request failed (${res.status}).`);
                     m.textContent = data.message || "Reset instructions requested";
                     m.className = "message success";
-                    document.getElementById('otp-group').style.display = 'block';
-                    document.getElementById('send-otp-btn').style.display = 'none';
-                    document.getElementById('verify-reset-btn').style.display = 'block';
                 } catch(err) {
-                    m.textContent = err.message || "Unable to request reset instructions";
+                    m.textContent = err.message || "Unable to connect to ISOLDE. Please try again.";
                     m.className = "message error";
+                } finally {
+                    button.disabled = false;
+                    button.setAttribute('aria-busy', 'false');
+                    button.querySelector('.btn-text').textContent = 'Send reset instructions';
                 }
             });
             document.getElementById('verify-reset-btn').addEventListener('click', async () => {
@@ -423,22 +444,29 @@
                     return;
                 }
 
+                const button = document.getElementById('verify-reset-btn');
+                if (!token || !new_password || !confirm_password) { m.textContent = 'Complete all reset fields.'; m.className = 'message error'; return; }
+                button.disabled = true;
                 try {
                     const res = await fetch('/api/reset-password', {
                         method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({token, new_password, confirm_password})
                     });
-                    const data = await res.json();
+                    const data = await readJson(res);
                     if(res.ok) {
                         m.textContent = data.message;
                         m.className = "message success";
-                        setTimeout(() => document.getElementById('forgot-modal').style.display = 'none', 2000);
+                        document.getElementById('new-password').value = '';
+                        document.getElementById('confirm-new-password').value = '';
+                        document.getElementById('verify-reset-btn').style.display = 'none';
                     } else {
                         m.textContent = data.error || "Failed";
                         m.className = "message error";
                     }
                 } catch(err) {
-                    m.textContent = "Server error";
+                    m.textContent = "Unable to connect to ISOLDE. Please try again.";
                     m.className = "message error";
+                } finally {
+                    button.disabled = false;
                 }
             });
 
@@ -451,6 +479,7 @@
                 document.getElementById('forgot-token').value = resetToken;
                 history.replaceState({}, '', '/login.html');
             }
+            document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && modal.style.display === 'flex') closeRecovery(); });
         });
     </script>
 </body>
