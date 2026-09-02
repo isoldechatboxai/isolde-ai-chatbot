@@ -93,7 +93,14 @@ class SearchRouter:
                 })
 
         if current_app:
-            current_app.logger.info(f"[SearchRouter] Executed cross-domain search for query: '{query}'. Found {len(all_results)} total matches.")
+            # Queries can contain private document text or other personal data.
+            # Keep operational telemetry useful without writing that content to
+            # application logs.
+            current_app.logger.info(
+                "[SearchRouter] Executed cross-domain search. query_length=%d total_matches=%d",
+                len(query),
+                len(all_results),
+            )
 
         return {
             "query": query,

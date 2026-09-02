@@ -1,6 +1,6 @@
 import os
 import click
-from flask import Flask, jsonify, send_from_directory, request
+from flask import Flask, jsonify, send_from_directory, request, g
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from sqlalchemy import text, inspect
@@ -32,6 +32,34 @@ limiter = Limiter(
     key_func=get_remote_address,
     default_limits=["120 per minute"],
 )
+
+
+def _readiness_error_category(error: Exception) -> str:
+    """Classify dependency failures without retaining sensitive error text."""
+    message = str(error).lower()
+    if "timeout" in message or "timed out" in message:
+        return "TIMEOUT"
+    if any(token in message for token in ("access denied", "forbidden", "unauthorized", "permission denied")):
+        return "ACCESS_DENIED"
+    if any(token in message for token in ("credential", "authentication", "no credentials")):
+        return "AUTHENTICATION_ERROR"
+    if "bucket" in message and any(token in message for token in ("not found", "nosuchbucket", "does not exist")):
+        return "BUCKET_NOT_FOUND"
+    if "region" in message and any(token in message for token in ("mismatch", "redirect", "incorrect")):
+        return "REGION_MISMATCH"
+    if any(token in message for token in ("connect", "network", "connection refused", "name resolution")):
+        return "NETWORK_ERROR"
+    return "UNAVAILABLE"
+
+
+def _log_readiness_failure(app, component: str, error: Exception) -> None:
+    """Emit correlation-friendly readiness telemetry without endpoint details."""
+    app.logger.error(
+        "Readiness check failed. request_id=%s component=%s category=%s",
+        getattr(g, "request_id", "N/A"),
+        component,
+        _readiness_error_category(error),
+    )
 
 
 def _user_lookup_error(message: str, jwt_header, jwt_payload):
@@ -656,16 +684,13 @@ def create_app(config_class=Config):
             db.session.query(RAGDocument.id).limit(1).all()
             checks["vector_store"] = True
         except Exception as error:
-            app.logger.error(
-                "Readiness database check failed: %s",
-                error,
-            )
+            _log_readiness_failure(app, "database", error)
 
         try:
             from app.services.storage_service import get_storage
             checks["storage"] = get_storage().check()
         except Exception as error:
-            app.logger.error("Readiness storage check failed: %s", error)
+            _log_readiness_failure(app, "storage", error)
 
         required_directories = {}
         if app.config.get("LOG_TO_FILE", False):
@@ -674,11 +699,7 @@ def create_app(config_class=Config):
             try:
                 checks[check_name] = os.path.isdir(directory)
             except OSError as error:
-                app.logger.error(
-                    "Readiness directory check failed for %s: %s",
-                    check_name,
-                    error,
-                )
+                _log_readiness_failure(app, check_name, error)
 
         try:
             cancellation_url = app.config.get("CANCELLATION_REDIS_URL", "")
@@ -693,7 +714,7 @@ def create_app(config_class=Config):
             else:
                 checks["cancellation"] = not app.config.get("IS_PRODUCTION", False)
         except Exception as error:
-            app.logger.error("Readiness cancellation check failed: %s", error)
+            _log_readiness_failure(app, "cancellation", error)
 
         ready = all(checks.values())
         return jsonify({

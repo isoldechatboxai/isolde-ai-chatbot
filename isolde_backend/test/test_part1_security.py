@@ -46,9 +46,16 @@ class TestConfig(Config):
 
 
 @pytest.fixture
-def app_context():
+def app_context(tmp_path):
     """Create app context with database."""
-    app = create_app(TestConfig)
+    # Keep filesystem artifacts isolated to pytest's writable temporary
+    # directory.  The production runtime directories remain untouched.
+    class SecurityTestConfig(TestConfig):
+        UPLOAD_FOLDER = str(tmp_path / "uploads")
+        LOG_DIR = str(tmp_path / "logs")
+        VECTOR_STORE_DIR = str(tmp_path / "vectors")
+
+    app = create_app(SecurityTestConfig)
 
     with app.app_context():
         db.create_all()

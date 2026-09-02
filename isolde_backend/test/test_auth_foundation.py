@@ -68,7 +68,24 @@ def test_forgot_password_is_truthful_when_email_delivery_is_not_configured(clien
     assert response.get_json() == {"error": "Password reset email delivery is not configured."}
 
 
-def test_registration_database_outage_is_rolled_back_and_truthful(client, monkeypatch):
+def test_registration_requires_configured_delivery_when_verification_is_required(client, app, db):
+    app.config.update({
+        "TESTING": False,
+        "REQUIRE_EMAIL_VERIFICATION": True,
+        "MAIL_SERVER": "",
+        "MAIL_USERNAME": "",
+        "MAIL_PASSWORD": "",
+        "MAIL_DEFAULT_SENDER": "",
+    })
+
+    response = _register(client, "verification-delivery-unavailable@example.test")
+
+    assert response.status_code == 503
+    assert response.get_json() == {"error": "Registration is temporarily unavailable. Please try again later."}
+    assert User.query.filter_by(email="verification-delivery-unavailable@example.test").first() is None
+
+
+def test_registration_database_outage_is_rolled_back_and_truthful(client, monkeypatch, caplog):
     original_rollback = database.session.rollback
     rolled_back = []
 
@@ -87,6 +104,8 @@ def test_registration_database_outage_is_rolled_back_and_truthful(client, monkey
     assert response.status_code == 503
     assert response.get_json() == {"error": "Registration is temporarily unavailable. Please try again later."}
     assert rolled_back == [True]
+    assert "category=DATABASE_UNAVAILABLE" in caplog.text
+    assert "request_id=" in caplog.text
 
 
 def test_logout_revokes_current_session(client):

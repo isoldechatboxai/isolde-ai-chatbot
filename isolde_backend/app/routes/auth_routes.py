@@ -1,7 +1,7 @@
 import os
 from datetime import datetime, timezone
 
-from flask import Blueprint, current_app, jsonify, make_response, redirect, request, send_from_directory
+from flask import Blueprint, current_app, g, jsonify, make_response, redirect, request, send_from_directory
 from flask_jwt_extended import create_access_token, get_jwt, get_jwt_identity, jwt_required
 from sqlalchemy.exc import IntegrityError, OperationalError
 
@@ -153,6 +153,18 @@ def register():
     ok, reason = is_valid_password(password)
     if not ok:
         return jsonify({"error": reason}), 400
+    # A production account that must verify its email cannot be usable unless
+    # the verification message can actually be delivered.  Refuse before any
+    # database mutation instead of returning a successful registration for an
+    # account that has no path to sign in.
+    if current_app.config.get("REQUIRE_EMAIL_VERIFICATION") and not all((
+        current_app.config.get("MAIL_SERVER"),
+        current_app.config.get("MAIL_USERNAME"),
+        current_app.config.get("MAIL_PASSWORD"),
+        current_app.config.get("MAIL_DEFAULT_SENDER"),
+    )) and not current_app.config.get("TESTING"):
+        current_app.logger.error("Registration is unavailable: verification email delivery is not configured.")
+        return jsonify({"error": "Registration is temporarily unavailable. Please try again later."}), 503
     user = User(name=name, email=email, is_verified=False)
     user.set_password(password)
     db.session.add(user)
@@ -167,11 +179,17 @@ def register():
         db.session.rollback()
         # The request did not commit. Do not expose database details or claim
         # successful registration when the database is unavailable.
-        current_app.logger.warning("Registration database operation was unavailable.")
+        current_app.logger.warning(
+            "Registration failed. request_id=%s category=DATABASE_UNAVAILABLE",
+            getattr(g, "request_id", "N/A"),
+        )
         return jsonify({"error": "Registration is temporarily unavailable. Please try again later."}), 503
     except Exception:
         db.session.rollback()
-        current_app.logger.exception("Registration failed.")
+        current_app.logger.error(
+            "Registration failed. request_id=%s category=INTERNAL_ERROR",
+            getattr(g, "request_id", "N/A"),
+        )
         return jsonify({"error": "An internal server error occurred."}), 500
     log_event(current_app, "REGISTER", "new user", user.id)
     _deliver_auth_email(user.email, "Verify your Isolde email", "/api/verify-email", raw)
