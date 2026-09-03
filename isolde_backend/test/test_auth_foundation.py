@@ -33,6 +33,42 @@ def test_password_hash_and_single_use_email_verification(client, db):
     assert user.is_verified is True
 
 
+def test_registration_accepts_a_genuinely_new_email(client):
+    response = _register(client, "genuinely-new@example.test")
+
+    assert response.status_code == 201
+    assert response.get_json()["user"]["email"] == "genuinely-new@example.test"
+
+
+def test_registration_rejects_an_exact_duplicate_email(client):
+    assert _register(client, "exact-duplicate@example.test").status_code == 201
+
+    duplicate = _register(client, "exact-duplicate@example.test")
+
+    assert duplicate.status_code == 409
+    assert duplicate.get_json() == {"error": "An account with this email already exists."}
+
+
+def test_registration_rejects_a_case_and_whitespace_normalized_duplicate(client):
+    assert _register(client, "normalized-duplicate@example.test").status_code == 201
+
+    duplicate = _register(client, "  Normalized-Duplicate@Example.Test  ")
+
+    assert duplicate.status_code == 409
+    assert duplicate.get_json() == {"error": "An account with this email already exists."}
+
+
+def test_registration_accepts_two_different_emails(client):
+    first = _register(client, "different-one@example.test")
+    second = _register(client, "different-two@example.test")
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert User.query.filter(User.email.in_([
+        "different-one@example.test", "different-two@example.test",
+    ])).count() == 2
+
+
 def test_auth_email_delivery_is_bounded_and_reports_result(app, monkeypatch):
     app.config.update({
         "MAIL_SERVER": "smtp.example.test", "MAIL_PORT": 587,

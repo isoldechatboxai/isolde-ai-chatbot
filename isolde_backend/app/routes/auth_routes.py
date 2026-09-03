@@ -36,6 +36,13 @@ def _deliver_auth_email(recipient, subject, path, token):
     )
 
 
+def _user_with_normalized_email(email):
+    """Return the user whose stored email normalizes to ``email``."""
+    return User.query.filter(
+        db.func.lower(db.func.trim(User.email)) == email
+    ).first()
+
+
 def _issue_user_token(user, purpose, lifetime_minutes):
     AuthToken.query.filter_by(user_id=user.id, purpose=purpose, used_at=None).update(
         {"used_at": utcnow()}, synchronize_session=False
@@ -156,6 +163,16 @@ def register():
     ok, reason = is_valid_password(password)
     if not ok:
         return jsonify({"error": reason}), 400
+    try:
+        if _user_with_normalized_email(email):
+            return jsonify({"error": "An account with this email already exists."}), 409
+    except OperationalError:
+        db.session.rollback()
+        current_app.logger.warning(
+            "Registration failed. request_id=%s category=DATABASE_UNAVAILABLE",
+            getattr(g, "request_id", "N/A"),
+        )
+        return jsonify({"error": "Registration is temporarily unavailable. Please try again later."}), 503
     # A production account that must verify its email cannot be usable unless
     # the verification message can actually be delivered.  Refuse before any
     # database mutation instead of returning a successful registration for an
@@ -177,7 +194,20 @@ def register():
         db.session.commit()
     except IntegrityError:
         db.session.rollback()
-        return jsonify({"error": "An account with this email already exists."}), 409
+        try:
+            if _user_with_normalized_email(email):
+                return jsonify({"error": "An account with this email already exists."}), 409
+        except OperationalError:
+            current_app.logger.warning(
+                "Registration failed. request_id=%s category=DATABASE_UNAVAILABLE",
+                getattr(g, "request_id", "N/A"),
+            )
+            return jsonify({"error": "Registration is temporarily unavailable. Please try again later."}), 503
+        current_app.logger.error(
+            "Registration failed. request_id=%s category=DATABASE_CONSTRAINT_ERROR",
+            getattr(g, "request_id", "N/A"),
+        )
+        return jsonify({"error": "Registration is temporarily unavailable. Please try again later."}), 503
     except OperationalError:
         db.session.rollback()
         # The request did not commit. Do not expose database details or claim
