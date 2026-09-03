@@ -596,6 +596,42 @@ def create_app(config_class=Config):
             f"skipped {result['ownerless_skipped']} ownerless records."
         )
 
+    @app.cli.command("reset-user")
+    @click.option("--email", required=True, help="User email address.")
+    @click.option("--password", required=True, help="New password (min 8 chars).")
+    def reset_user(email, password):
+        """Reset (or create) a user account and force is_verified=True.
+
+        Safe for use in development, staging, and emergency production recovery.
+        Requires the application context with a live database connection.
+        """
+        from app.utils.validators import is_valid_email, is_valid_password
+        if not is_valid_email(email):
+            raise click.ClickException(f"Invalid email address: {email!r}")
+        ok, reason = is_valid_password(password)
+        if not ok:
+            raise click.ClickException(f"Password rejected: {reason}")
+        email = email.strip().lower()
+        with app.app_context():
+            user = User.query.filter_by(email=email).first()
+            if user:
+                user.set_password(password)
+                user.is_verified = True
+                user.status = "Active"
+                db.session.commit()
+                click.echo(f"User {email!r} password reset and account verified.")
+            else:
+                user = User(
+                    name=email.split("@")[0],
+                    email=email,
+                    is_verified=True,
+                    status="Active",
+                )
+                user.set_password(password)
+                db.session.add(user)
+                db.session.commit()
+                click.echo(f"User {email!r} created with is_verified=True.")
+
     # ----------------------------------------------------------------
     # Error handlers
     # ----------------------------------------------------------------

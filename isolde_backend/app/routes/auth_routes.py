@@ -185,7 +185,19 @@ def register():
     )) and not current_app.config.get("TESTING"):
         current_app.logger.error("Registration is unavailable: verification email delivery is not configured.")
         return jsonify({"error": "Registration is temporarily unavailable. Please try again later."}), 503
-    user = User(name=name, email=email, is_verified=False)
+    # When email verification is not required, or when SMTP is absent in
+    # non-testing mode, mark the new account verified immediately so login
+    # works without an email that can never arrive.
+    smtp_configured = all((
+        current_app.config.get("MAIL_SERVER"),
+        current_app.config.get("MAIL_USERNAME"),
+        current_app.config.get("MAIL_PASSWORD"),
+        current_app.config.get("MAIL_DEFAULT_SENDER"),
+    ))
+    auto_verify = not current_app.config.get("REQUIRE_EMAIL_VERIFICATION") or (
+        not smtp_configured and not current_app.config.get("TESTING")
+    )
+    user = User(name=name, email=email, is_verified=bool(auto_verify))
     user.set_password(password)
     db.session.add(user)
     try:
@@ -292,8 +304,13 @@ def login():
     if not user or not user.check_password(password) or not user.is_active:
         log_event(current_app, "LOGIN_FAILED", "invalid credentials")
         return jsonify({"error": "Invalid email or password."}), 401
-    if current_app.config.get("REQUIRE_EMAIL_VERIFICATION") and not user.is_verified:
-        return jsonify({"error": "Email verification is required.", "verification_required": True}), 403
+    if not user.is_verified:
+        if current_app.config.get("REQUIRE_EMAIL_VERIFICATION"):
+            return jsonify({"error": "Email verification is required.", "verification_required": True}), 403
+        # Verification not required — promote the account silently so legacy
+        # unverified rows are not permanently locked out.
+        user.is_verified = True
+        db.session.commit()
     token, auth_session = _create_login(user)
     log_event(current_app, "LOGIN_SUCCESS", "password", user.id)
     return jsonify({
