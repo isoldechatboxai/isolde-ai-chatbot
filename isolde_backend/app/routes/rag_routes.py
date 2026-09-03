@@ -16,6 +16,15 @@ from app.services.rag_service import (
 rag_bp = Blueprint("rag", __name__)
 
 RAG_ALLOWED_EXTENSIONS = {"pdf", "docx", "txt", "csv", "xlsx"}
+RAG_ALLOWED_MIME_TYPES = {
+    "pdf": {"application/pdf"},
+    "docx": {
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    },
+    "txt": {"text/plain"},
+    "csv": {"text/csv", "application/csv", "application/vnd.ms-excel"},
+    "xlsx": {"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+}
 # The temporary name has a 32-character UUID plus an underscore prefix.  Keep
 # the client-visible portion below Windows' 255-character component limit as
 # well as the 255-character database column limit.
@@ -27,6 +36,33 @@ def _allowed_rag_file(filename):
         "." in filename
         and filename.rsplit(".", 1)[1].lower() in RAG_ALLOWED_EXTENSIONS
     )
+
+
+def _allowed_rag_mime(file, filename):
+    """Reject a declared concrete MIME type that contradicts the extension.
+
+    Browsers and API clients legitimately use an empty or octet-stream MIME
+    type, so those values are not treated as proof of a file type.  The
+    server-owned extension allowlist and bounded parser remain authoritative.
+    """
+    extension = filename.rsplit(".", 1)[1].lower()
+    content_type = (file.mimetype or "").lower().strip()
+    return not content_type or content_type == "application/octet-stream" or content_type in RAG_ALLOWED_MIME_TYPES[extension]
+
+
+def _save_bounded_upload(file, path, max_bytes):
+    """Stream an upload to a server-generated path with an exact byte cap."""
+    written = 0
+    with open(path, "xb") as target:
+        while True:
+            chunk = file.stream.read(64 * 1024)
+            if not chunk:
+                break
+            written += len(chunk)
+            if written > max_bytes:
+                raise ValueError("RAG_UPLOAD_TOO_LARGE")
+            target.write(chunk)
+    return written
 
 
 @rag_bp.route("/api/rag/upload", methods=["POST"], strict_slashes=False)
@@ -74,6 +110,8 @@ def upload_rag_file():
             "status": "error",
             "message": f"File type not supported. Allowed types: {allowed_str}"
         }), 400
+    if not _allowed_rag_mime(file, safe_name):
+        return jsonify({"status": "error", "message": "File MIME type does not match its extension."}), 400
 
     file_path = None
 
@@ -84,9 +122,19 @@ def upload_rag_file():
         os.makedirs(upload_folder, exist_ok=True)
 
         file_path = os.path.join(upload_folder, unique_name)
-        file.save(file_path)
+        max_upload_bytes = int(current_app.config.get("RAG_MAX_UPLOAD_BYTES", current_app.config["MAX_CONTENT_LENGTH"]))
+        if max_upload_bytes <= 0:
+            raise ValueError("RAG_UPLOAD_TOO_LARGE")
+        _save_bounded_upload(file, file_path, max_upload_bytes)
+    except ValueError as error:
+        if file_path and os.path.exists(file_path):
+            os.remove(file_path)
+        if str(error) == "RAG_UPLOAD_TOO_LARGE":
+            return jsonify({"status": "error", "message": "File too large."}), 413
+        current_app.logger.warning("RAG upload rejected category=INVALID_UPLOAD")
+        return jsonify({"status": "error", "message": "Invalid upload."}), 400
     except Exception as e:
-        current_app.logger.error(f"RAG file save error: {e}")
+        current_app.logger.error("RAG file save failed category=STORAGE_ERROR")
         return jsonify({
             "status": "error",
             "message": "Failed to save the uploaded file."

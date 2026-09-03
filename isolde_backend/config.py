@@ -235,6 +235,10 @@ class Config:
         * 1024
         * 1024
     )
+    # RAG uploads are streamed and checked independently of Flask's global
+    # Content-Length guard.  This also protects deployments receiving
+    # chunked multipart bodies without a trustworthy Content-Length header.
+    RAG_MAX_UPLOAD_BYTES = _env_int("RAG_MAX_UPLOAD_BYTES", MAX_CONTENT_LENGTH)
 
     ALLOWED_EXTENSIONS = {
         "pdf",

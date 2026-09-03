@@ -11,8 +11,24 @@ class HealthService:
     and liveness/readiness probes for containerized and cloud deployments.
     """
 
-    def __init__(self):
-        pass
+    @staticmethod
+    def _error_category(error: Exception) -> str:
+        """Classify dependency failures without placing raw details in logs."""
+        message = str(error).lower()
+        if "timeout" in message or "timed out" in message:
+            return "TIMEOUT"
+        if any(value in message for value in ("permission", "forbidden", "access denied", "unauthorized")):
+            return "ACCESS_DENIED"
+        if any(value in message for value in ("connect", "connection", "network", "resolution")):
+            return "NETWORK_ERROR"
+        return "UNAVAILABLE"
+
+    def _record_failure(self, component: str, error: Exception) -> None:
+        current_app.logger.error(
+            "Health dependency check failed component=%s category=%s",
+            component,
+            self._error_category(error),
+        )
 
     def check_system_health(self) -> Dict[str, Any]:
         """Performs liveness checks across database connectivity, storage, and runtime status."""
@@ -30,8 +46,7 @@ class HealthService:
             health_status["database"] = "connected"
         except Exception as e:
             health_status["status"] = "degraded"
-            if current_app:
-                current_app.logger.error(f"[HealthService] Database health check failed: {str(e)}")
+            self._record_failure("database", e)
 
         # 2. Check the configured private storage backend.
         try:
@@ -40,8 +55,7 @@ class HealthService:
                 health_status["storage"] = "available"
         except Exception as e:
             health_status["status"] = "degraded"
-            if current_app:
-                current_app.logger.error(f"[HealthService] Storage health check failed: {str(e)}")
+            self._record_failure("storage", e)
 
         try:
             cancellation_url = current_app.config.get("CANCELLATION_REDIS_URL", "")
@@ -59,7 +73,7 @@ class HealthService:
                 health_status["status"] = "degraded"
         except Exception as e:
             health_status["status"] = "degraded"
-            current_app.logger.error("[HealthService] Cancellation storage check failed: %s", e)
+            self._record_failure("cancellation", e)
 
         return health_status
 

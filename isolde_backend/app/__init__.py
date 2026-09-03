@@ -723,6 +723,38 @@ def create_app(config_class=Config):
             "checks": checks,
         }), 200 if ready else 503
 
+    @app.route("/api/capabilities", methods=["GET"])
+    def capabilities():
+        """Public, secret-free runtime capability registry for API clients."""
+        from app.services.research_service import capability as research_capability
+        from app.services.provider_router import get_provider_manager, KNOWN_PROVIDERS
+
+        manager = get_provider_manager()
+        configured_provider = False
+        for provider in KNOWN_PROVIDERS:
+            try:
+                if manager.get_api_key_for_provider(provider):
+                    configured_provider = True
+                    break
+            except Exception:
+                # A settings-store failure is not evidence that a provider is
+                # available.  Do not expose the underlying database error.
+                continue
+        google_configured = all(app.config.get(key) for key in (
+            "GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET", "GOOGLE_OAUTH_REDIRECT_URI",
+        ))
+        research_configured = research_capability()["configured"]
+        cancellation_configured = bool(app.config.get("CANCELLATION_REDIS_URL"))
+        return jsonify({"capabilities": {
+            "ai": "AVAILABLE" if configured_provider else "NOT_CONFIGURED",
+            "rag": "AVAILABLE" if configured_provider else "NOT_CONFIGURED",
+            "research": "AVAILABLE" if research_configured else "NOT_CONFIGURED",
+            "google_oauth": "AVAILABLE" if google_configured else "NOT_CONFIGURED",
+            "cancellation": "AVAILABLE" if cancellation_configured else "NOT_CONFIGURED",
+            "admin": "AVAILABLE",
+            "deep_research": "NOT_SUPPORTED",
+        }}), 200
+
     @app.route(
         "/api/v1/health",
         methods=["GET"],
