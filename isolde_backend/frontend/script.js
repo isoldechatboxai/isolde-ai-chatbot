@@ -254,6 +254,7 @@
       streamingTextEl: null,
       generationId: null,
       webSearchEnabled: false,
+      capabilities: {},
     };
 
     let preferences = {
@@ -332,8 +333,8 @@
         webBtn.type = "button";
         webBtn.id = "web-search-toggle-btn";
         webBtn.className = "web-search-toggle-btn";
-        webBtn.textContent = "🌐 Web: OFF";
-        webBtn.title = "Toggle web search";
+        webBtn.textContent = "🌐 Web: AUTO";
+        webBtn.title = "Automatically use web research for current or comparison questions";
         webBtn.addEventListener("click", (e) => {
           e.preventDefault();
           state.webSearchEnabled = !state.webSearchEnabled;
@@ -341,7 +342,7 @@
             webBtn.textContent = "🌐 Web: ON";
             webBtn.classList.add("is-on");
           } else {
-            webBtn.textContent = "🌐 Web: OFF";
+            webBtn.textContent = "🌐 Web: AUTO";
             webBtn.classList.remove("is-on");
           }
         });
@@ -1244,6 +1245,7 @@
             conversation_id: state.backendConversationId,
             model: model,
             web_search: state.webSearchEnabled,
+            research_mode: state.webSearchEnabled ? "required" : "auto",
           }),
           signal: controller.signal,
         });
@@ -1766,6 +1768,23 @@
       updateSendButtonState();
       bindEvents();
       injectDynamicButtons();
+      try {
+        const response = await fetch("/api/capabilities", { headers: getAuthHeaders() });
+        if (response.ok) {
+          state.capabilities = (await response.json()).capabilities || {};
+          if (dom.webSearchToggleBtn && state.capabilities.research !== "AVAILABLE") {
+            state.webSearchEnabled = false;
+            dom.webSearchToggleBtn.disabled = true;
+            dom.webSearchToggleBtn.textContent = "🌐 Web: Unavailable";
+            dom.webSearchToggleBtn.title = "Web research is not configured on the server";
+          }
+        }
+      } catch (_) {
+        if (dom.webSearchToggleBtn) {
+          dom.webSearchToggleBtn.disabled = true;
+          dom.webSearchToggleBtn.textContent = "🌐 Web: Unavailable";
+        }
+      }
       updateStopButtonVisibility();
     }
 

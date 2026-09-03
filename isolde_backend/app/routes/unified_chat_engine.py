@@ -34,7 +34,7 @@ HISTORY_LIMIT = 20
 # ---------------------------------------------------------------------------
 # Unified Authentication Decorator
 # ---------------------------------------------------------------------------
-def unified_auth_required():
+def unified_auth_required(required_permission=None):
     """
     Allows access via either:
     1. Valid JWT token (internal/admin access)
@@ -72,6 +72,16 @@ def unified_auth_required():
                 from app.services.api_key_service import verify_api_key
                 key_record = verify_api_key(api_key)
                 if key_record:
+                    permissions = {
+                        item.strip().lower()
+                        for item in (key_record.permissions or "").split(",")
+                        if item.strip()
+                    }
+                    if required_permission and required_permission not in permissions and "admin" not in permissions:
+                        return jsonify({
+                            "error": "Forbidden",
+                            "message": f"API key lacks required permission: '{required_permission}'.",
+                        }), 403
                     g.auth_user_id = key_record.user_id
                     g.auth_method = 'api_key'
                     g.api_key = key_record
@@ -190,7 +200,8 @@ def _track_api_key_usage(tokens_used=None) -> None:
 # Route
 # ---------------------------------------------------------------------------
 @unified_engine_bp.route("/engine/chat", methods=["POST"], strict_slashes=False)
-@unified_auth_required()
+@unified_engine_bp.route("/v1/chat", methods=["POST"], strict_slashes=False)
+@unified_auth_required("write")
 def handle_unified_chat():
     """
     POST /api/engine/chat

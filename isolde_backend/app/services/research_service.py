@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from abc import ABC, abstractmethod
 import ipaddress
 import json
 import socket
@@ -216,8 +217,24 @@ def _canonical_url(value: str) -> str | None:
     return urlunsplit((parsed.scheme, parsed.netloc, parsed.path or "/", parsed.query, ""))
 
 
-class TavilySearchProvider:
+class ResearchProvider(ABC):
+    """Normalized boundary for real, configured research providers."""
+
+    name: str
+    latency_rank: int = 100
+
+    @abstractmethod
+    def configured(self) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    def search(self, query: str, limit: int) -> list[dict]:
+        raise NotImplementedError
+
+
+class TavilySearchProvider(ResearchProvider):
     name = "tavily"
+    latency_rank = 10
 
     def configured(self) -> bool:
         return bool(current_app.config.get("TAVILY_API_KEY"))
@@ -257,13 +274,21 @@ def capability() -> dict:
             "configured": configured, "enabled": configured, "provider": provider.name if configured else None}
 
 
+def select_research_provider(plan: ResearchPlan) -> ResearchProvider:
+    """Choose one suitable configured provider; never fan out implicitly."""
+    providers: list[ResearchProvider] = [TavilySearchProvider()]
+    configured = [provider for provider in providers if provider.configured()]
+    if not configured:
+        raise ResearchUnavailable("RESEARCH_PROVIDER_NOT_CONFIGURED")
+    return min(configured, key=lambda provider: provider.latency_rank)
+
+
 def research(question: str, requested: bool) -> tuple[ResearchPlan, list[dict]]:
     plan = classify_intent(question)
     if not requested:
         return plan, []
-    if not TavilySearchProvider().configured():
-        raise ResearchUnavailable("RESEARCH_PROVIDER_NOT_CONFIGURED")
-    sources = TavilySearchProvider().search(question, plan.max_sources or 3)
+    provider = select_research_provider(plan)
+    sources = provider.search(question, plan.max_sources or 3)
     fetch_budget = min(
         plan.max_parallel_requests,
         max(0, current_app.config.get("RESEARCH_FETCH_MAX_SOURCES", 2)),

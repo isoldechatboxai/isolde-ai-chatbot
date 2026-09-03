@@ -100,6 +100,31 @@ def _get_logger():
     except RuntimeError:
         return _fallback_logger
 
+
+def _provider_error_category(error: Exception) -> str:
+    """Map upstream failures to stable categories without retaining response text."""
+    value = str(error).lower()
+    if any(marker in value for marker in (
+        "no api key", "not configured", "not installed", "base url",
+    )):
+        return "PROVIDER_NOT_CONFIGURED"
+    if "429" in value or "rate limit" in value or "too many requests" in value:
+        return "PROVIDER_RATE_LIMITED"
+    if "timeout" in value or "timed out" in value:
+        return "PROVIDER_TIMEOUT"
+    if any(marker in value for marker in ("401", "403", "unauthorized", "forbidden")):
+        return "PROVIDER_AUTHENTICATION_FAILED"
+    if "malformed response" in value:
+        return "PROVIDER_INVALID_RESPONSE"
+    return "PROVIDER_UPSTREAM_ERROR"
+
+
+def _provider_error_is_retryable(error: Exception, category: str) -> bool:
+    value = str(error).lower()
+    return category in {"PROVIDER_RATE_LIMITED", "PROVIDER_TIMEOUT"} or any(
+        marker in value for marker in (" 500", "(500", " 502", "(502", " 503", "(503", " 504", "(504")
+    )
+
 # ---------------------------------------------------------------------------
 # Connection-pooled HTTP session (singleton, thread-safe)
 # ---------------------------------------------------------------------------
@@ -472,19 +497,27 @@ class ProviderManager:
                     tokens_used=usage.get("total_tokens"),
                 )
             except RuntimeError as conf_err:
-                # Configuration errors (missing key, invalid URL) should not be retried
                 latency = (time.time() - start) * 1000
                 self.metrics.record(provider, latency, False)
-                last_error = str(conf_err)
-                _get_logger().error(f"Provider '{provider}' configuration error: {conf_err}")
-                return ProviderResponse(success=False, error=last_error, provider=provider)
+                category = _provider_error_category(conf_err)
+                last_error = category
+                _get_logger().warning(
+                    "Provider '%s' attempt %s/%s failed category=%s",
+                    provider, attempt, MAX_RETRIES, category,
+                )
+                if not _provider_error_is_retryable(conf_err, category):
+                    return ProviderResponse(success=False, error=category, provider=provider)
+                breaker.record_failure()
+                if attempt < MAX_RETRIES:
+                    time.sleep(BACKOFF_BASE * (2 ** (attempt - 1)))
             except Exception as exc:
                 latency = (time.time() - start) * 1000
                 self.metrics.record(provider, latency, False)
                 breaker.record_failure()
-                last_error = str(exc)
+                last_error = _provider_error_category(exc)
                 _get_logger().warning(
-                    f"Provider '{provider}' attempt {attempt}/{MAX_RETRIES} failed: {exc}"
+                    "Provider '%s' attempt %s/%s failed category=%s",
+                    provider, attempt, MAX_RETRIES, last_error,
                 )
                 if attempt < MAX_RETRIES:
                     time.sleep(BACKOFF_BASE * (2 ** (attempt - 1)))
@@ -821,7 +854,8 @@ class ProviderManager:
                 return result
 
             _get_logger().warning(
-                f"Provider '{provider}' failed: {result.error}. Trying next."
+                "Provider '%s' failed category=%s; trying next configured provider.",
+                provider, result.error,
             )
 
         return ProviderResponse(success=False, error="All providers failed or unavailable.")
@@ -858,7 +892,10 @@ class ProviderManager:
                 breaker.record_success()
                 return
             except RuntimeError as conf_err:
-                _get_logger().error(f"Provider '{provider}' streaming configuration error: {conf_err}")
+                category = _provider_error_category(conf_err)
+                _get_logger().warning(
+                    "Provider '%s' streaming failed category=%s", provider, category,
+                )
                 self.metrics.record(provider, (time.time() - start) * 1000, False)
                 continue
             except Exception as exc:
@@ -866,7 +903,10 @@ class ProviderManager:
                 self.metrics.record(provider, latency, False)
                 breaker.record_failure()
                 self.health_cache.mark_unhealthy(provider)
-                _get_logger().exception(f"Provider '{provider}' streaming failed with {type(exc).__name__}")
+                _get_logger().warning(
+                    "Provider '%s' streaming failed category=%s",
+                    provider, _provider_error_category(exc),
+                )
                 continue
 
         yield "[ERROR] All providers failed."

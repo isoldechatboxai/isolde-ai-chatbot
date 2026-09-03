@@ -1,5 +1,5 @@
 # app/services/api_key_service.py
-from datetime import datetime
+from datetime import datetime, timezone
 
 from flask import current_app
 
@@ -116,8 +116,10 @@ def track_api_usage(key_hash: str, tokens_used: int = 0, cost: float = 0.0):
     try:
         record = ApiKey.query.filter_by(key_hash=key_hash).first()
         if record:
-            record.total_tokens_used += int(tokens_used or 0)
-            record.total_cost += float(cost or 0.0)
+            record.total_requests = (record.total_requests or 0) + 1
+            record.total_tokens_used = (record.total_tokens_used or 0) + int(tokens_used or 0)
+            record.total_cost = (record.total_cost or 0.0) + float(cost or 0.0)
+            record.last_used_at = datetime.now(timezone.utc).replace(tzinfo=None)
             db.session.commit()
     except Exception:
         db.session.rollback()

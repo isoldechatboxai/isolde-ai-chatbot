@@ -227,6 +227,7 @@ class Config:
     RESEARCH_FETCH_MAX_SOURCES = _env_int("RESEARCH_FETCH_MAX_SOURCES", 2)
     RESEARCH_FETCH_MAX_BYTES = _env_int("RESEARCH_FETCH_MAX_BYTES", 200_000)
     RESEARCH_FETCH_MAX_CHARS = _env_int("RESEARCH_FETCH_MAX_CHARS", 12_000)
+    RESEARCH_CONTEXT_MAX_CHARS = _env_int("RESEARCH_CONTEXT_MAX_CHARS", 24_000)
 
     # ==========================================================
     # Uploads

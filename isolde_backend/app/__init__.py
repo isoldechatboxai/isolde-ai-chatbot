@@ -395,6 +395,7 @@ def create_app(config_class=Config):
     from app.routes.unified_chat_engine import unified_engine_bp
     from app.routes.settings_routes import settings_bp
     from app.routes.codex_routes import codex_bp  # Codex Project Engineering
+    from app.routes.public_api_routes import public_api_bp
 
     # Health and analytics
     from app.routes.health_routes import health_bp
@@ -512,6 +513,7 @@ def create_app(config_class=Config):
         codex_bp,
         url_prefix="/api",
     )
+    app.register_blueprint(public_api_bp, url_prefix="/api")
 
     # Health blueprint already defines /api/health.
     app.register_blueprint(health_bp)
@@ -724,6 +726,7 @@ def create_app(config_class=Config):
         }), 200 if ready else 503
 
     @app.route("/api/capabilities", methods=["GET"])
+    @app.route("/api/v1/capabilities", methods=["GET"])
     def capabilities():
         """Public, secret-free runtime capability registry for API clients."""
         from app.services.research_service import capability as research_capability
@@ -745,6 +748,8 @@ def create_app(config_class=Config):
         ))
         research_configured = research_capability()["configured"]
         cancellation_configured = bool(app.config.get("CANCELLATION_REDIS_URL"))
+        image_status = "NOT_CONFIGURED" if not app.config.get("IMAGE_PROVIDER") else "NOT_SUPPORTED"
+        video_status = "NOT_CONFIGURED" if not app.config.get("VIDEO_PROVIDER") else "NOT_SUPPORTED"
         pgvector_status = "NOT_SUPPORTED"
         try:
             if db.engine.dialect.name == "postgresql":
@@ -754,15 +759,23 @@ def create_app(config_class=Config):
                 pgvector_status = "AVAILABLE" if installed else "NOT_CONFIGURED"
         except Exception:
             pgvector_status = "UNAVAILABLE"
+        rag_status = "AVAILABLE" if configured_provider else "NOT_CONFIGURED"
+        if app.config.get("IS_PRODUCTION") and configured_provider and pgvector_status != "AVAILABLE":
+            rag_status = "UNAVAILABLE" if pgvector_status == "UNAVAILABLE" else "NOT_CONFIGURED"
         return jsonify({"capabilities": {
             "ai": "AVAILABLE" if configured_provider else "NOT_CONFIGURED",
-            "rag": "AVAILABLE" if configured_provider else "NOT_CONFIGURED",
+            "ai_streaming": "AVAILABLE" if configured_provider else "NOT_CONFIGURED",
+            "rag": rag_status,
             "research": "AVAILABLE" if research_configured else "NOT_CONFIGURED",
+            "tavily_research": "AVAILABLE" if research_configured else "NOT_CONFIGURED",
             "google_oauth": "AVAILABLE" if google_configured else "NOT_CONFIGURED",
             "cancellation": "AVAILABLE" if cancellation_configured else "NOT_CONFIGURED",
             "admin": "AVAILABLE",
             "deep_research": "NOT_SUPPORTED",
             "pgvector": pgvector_status,
+            "file_upload": "AVAILABLE",
+            "image_generation": image_status,
+            "video_generation": video_status,
         }}), 200
 
     @app.route(
