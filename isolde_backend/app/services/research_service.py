@@ -10,7 +10,7 @@ from html.parser import HTMLParser
 from urllib.parse import urlsplit, urlunsplit
 
 import requests
-from flask import current_app
+from flask import current_app, has_app_context
 
 
 class ResearchUnavailable(RuntimeError):
@@ -39,8 +39,15 @@ def _safe_host(host: str) -> None:
     except OSError as exc: raise ResearchFetchBlocked('RESEARCH_FETCH_FAILED') from exc
     for item in addresses:
         address = ipaddress.ip_address(item[4][0])
-        if not address.is_global:
+        if not _is_public_address(address):
             raise ResearchFetchBlocked('RESEARCH_FETCH_BLOCKED')
+
+
+def _is_public_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    return not any((
+        address.is_private, address.is_loopback, address.is_link_local,
+        address.is_multicast, address.is_reserved, address.is_unspecified,
+    ))
 
 
 def fetch_evidence(source: dict, max_bytes: int = 200_000, max_chars: int = 12_000) -> dict:
@@ -50,7 +57,8 @@ def fetch_evidence(source: dict, max_bytes: int = 200_000, max_chars: int = 12_0
     url = _canonical_url(str(source.get('canonical_url') or source.get('url') or ''))
     if not url or urlsplit(url).scheme != 'https': raise ResearchFetchBlocked('RESEARCH_FETCH_BLOCKED')
     _safe_host(urlsplit(url).hostname or '')
-    response = requests.get(url, timeout=(3, 8), allow_redirects=False, stream=True,
+    timeout = current_app.config.get('RESEARCH_HTTP_TIMEOUT_SECONDS', 8) if has_app_context() else 8
+    response = requests.get(url, timeout=(min(3, timeout), timeout), allow_redirects=False, stream=True,
                             headers={'User-Agent': 'IsoldeResearch/1.0'})
     if 300 <= response.status_code < 400: raise ResearchFetchBlocked('RESEARCH_FETCH_BLOCKED')
     response.raise_for_status(); content_type = response.headers.get('Content-Type','').split(';')[0].lower()
@@ -94,17 +102,31 @@ class ResearchPlan:
 
 
 def build_result(question: str, requested: bool, sources: list[dict]) -> dict:
-    """Create the stable, snippet-only research contract used by chat."""
+    """Create a result that distinguishes fetched evidence from search snippets."""
     plan = classify_intent(question)
-    evidence = [{"source_id": item["id"], "claim": item["title"],
-                 "evidence": item.get("snippet", ""), "confidence": 0.5}
-                for item in sources if item.get("snippet")]
+    evidence = []
+    for item in sources:
+        fetched = item.get("fetched_evidence") or {}
+        evidence_text = fetched.get("text") or item.get("snippet", "")
+        if evidence_text:
+            evidence.append({"source_id": item["id"], "claim": item["title"],
+                             "evidence": evidence_text,
+                             "evidence_mode": fetched.get("evidence_mode", "SNIPPET_ONLY"),
+                             "confidence": 0.7 if fetched else 0.5})
     cross_check = cross_check_evidence(evidence, sources)
     citations = validate_citations(sources, evidence)
+    fetched_count = sum(1 for item in sources if item.get("fetched_evidence"))
+    public_sources = [{
+        key: item[key] for key in (
+            "id", "url", "canonical_url", "title", "snippet", "domain",
+            "provider", "retrieved_at", "fetch_status",
+        ) if key in item
+    } for item in sources]
     return {"question": question, "intent": plan.intent, "research_required": requested,
-            "plan": {"source_budget": plan.max_sources, "fetch_budget": 0,
+            "plan": {"source_budget": plan.max_sources,
+                     "fetch_budget": min(plan.max_parallel_requests, current_app.config.get("RESEARCH_FETCH_MAX_SOURCES", 2)),
                      "time_budget": current_app.config.get("RESEARCH_HTTP_TIMEOUT_SECONDS", 8),
-                     "evidence_mode": "SNIPPET_ONLY"}, "sources": sources, "evidence": evidence,
+                     "evidence_mode": "FULL_PAGE" if fetched_count else "SNIPPET_ONLY"}, "sources": public_sources, "evidence": evidence,
             "cross_check": cross_check, "citations": citations,
             "status": "COMPLETED" if sources else "PARTIAL"}
 
@@ -187,7 +209,7 @@ def _canonical_url(value: str) -> str | None:
     if host in {"localhost", "127.0.0.1", "0.0.0.0", "::1"} or host.endswith(".local"):
         return None
     try:
-        if ipaddress.ip_address(host).is_private or ipaddress.ip_address(host).is_loopback or ipaddress.ip_address(host).is_link_local:
+        if not _is_public_address(ipaddress.ip_address(host)):
             return None
     except ValueError:
         pass
@@ -241,4 +263,26 @@ def research(question: str, requested: bool) -> tuple[ResearchPlan, list[dict]]:
         return plan, []
     if not TavilySearchProvider().configured():
         raise ResearchUnavailable("RESEARCH_PROVIDER_NOT_CONFIGURED")
-    return plan, TavilySearchProvider().search(question, plan.max_sources or 3)
+    sources = TavilySearchProvider().search(question, plan.max_sources or 3)
+    fetch_budget = min(
+        plan.max_parallel_requests,
+        max(0, current_app.config.get("RESEARCH_FETCH_MAX_SOURCES", 2)),
+    )
+    for source in sources[:fetch_budget]:
+        try:
+            source["fetched_evidence"] = fetch_evidence(
+                source,
+                max_bytes=current_app.config.get("RESEARCH_FETCH_MAX_BYTES", 200_000),
+                max_chars=current_app.config.get("RESEARCH_FETCH_MAX_CHARS", 12_000),
+            )
+            source["fetch_status"] = "COMPLETED"
+        except (ResearchFetchBlocked, requests.RequestException, ValueError) as exc:
+            # A page-level failure must not make a search result look like a
+            # verified full-page citation or leak the external URL in logs.
+            source["fetch_status"] = "BLOCKED" if isinstance(exc, ResearchFetchBlocked) else "FAILED"
+            current_app.logger.warning(
+                "Research evidence fetch did not complete category=%s source_id=%s",
+                str(exc) if isinstance(exc, ResearchFetchBlocked) else "RESEARCH_FETCH_FAILED",
+                source["id"],
+            )
+    return plan, sources

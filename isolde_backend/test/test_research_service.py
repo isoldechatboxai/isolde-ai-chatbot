@@ -21,6 +21,8 @@ def test_intent_planning_requires_web_for_current_questions():
 def test_canonical_url_rejects_ssrf_targets():
     assert research_service._canonical_url("http://127.0.0.1/admin") is None
     assert research_service._canonical_url("http://10.0.0.2/metadata") is None
+    assert research_service._canonical_url("https://224.0.0.1/metadata") is None
+    assert research_service._canonical_url("https://[ff02::1]/metadata") is None
     assert research_service._canonical_url("https://docs.example.test/path#fragment") == "https://docs.example.test/path"
 
 
@@ -109,6 +111,26 @@ def test_cross_check_requires_independent_identical_evidence():
     result = research_service.cross_check_evidence(evidence, sources)
     assert result["status"] == "AGREEMENT"
     assert result["agreements"][0]["source_ids"] == ["web-1", "web-2"]
+
+
+def test_research_enriches_only_the_bounded_source_budget(app, monkeypatch):
+    app.config.update(TAVILY_API_KEY="test-key", RESEARCH_FETCH_MAX_SOURCES=1)
+    sources = [
+        {"id": "web-1", "url": "https://one.example.test/a", "title": "One", "domain": "one.example.test", "snippet": "snippet one"},
+        {"id": "web-2", "url": "https://two.example.test/a", "title": "Two", "domain": "two.example.test", "snippet": "snippet two"},
+    ]
+    monkeypatch.setattr(research_service.TavilySearchProvider, "search", lambda *_args: sources)
+    monkeypatch.setattr(research_service, "fetch_evidence", lambda source, **_kwargs: {
+        "source_id": source["id"], "evidence_mode": "FULL_PAGE", "text": "verified page text",
+    })
+    with app.app_context():
+        _plan, result_sources = research_service.research("latest release", requested=True)
+        result = research_service.build_result("latest release", True, result_sources)
+    assert result_sources[0]["fetch_status"] == "COMPLETED"
+    assert "fetched_evidence" not in result_sources[1]
+    assert result["plan"]["evidence_mode"] == "FULL_PAGE"
+    assert result["evidence"][0]["evidence"] == "verified page text"
+    assert "fetched_evidence" not in result["sources"][0]
 
 
 def test_research_sse_events_are_typed_and_never_deltas():

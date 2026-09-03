@@ -212,6 +212,9 @@ class Config:
     # web research unavailable instead of falling back to an implicit service.
     TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
     RESEARCH_HTTP_TIMEOUT_SECONDS = _env_int("RESEARCH_HTTP_TIMEOUT_SECONDS", 8)
+    RESEARCH_FETCH_MAX_SOURCES = _env_int("RESEARCH_FETCH_MAX_SOURCES", 2)
+    RESEARCH_FETCH_MAX_BYTES = _env_int("RESEARCH_FETCH_MAX_BYTES", 200_000)
+    RESEARCH_FETCH_MAX_CHARS = _env_int("RESEARCH_FETCH_MAX_CHARS", 12_000)
 
     # ==========================================================
     # Uploads
