@@ -30,7 +30,15 @@ def _expect_status(response, expected, operation):
 def test_real_production_auth_provider_stream_research_rag_and_logout():
     base_url = _required_environment("ISOLDE_E2E_BASE_URL").rstrip("/")
     parsed = urlsplit(base_url)
-    assert parsed.scheme == "https" and parsed.netloc, "ISOLDE_E2E_BASE_URL must be an HTTPS origin"
+    assert (
+        parsed.scheme == "https"
+        and parsed.netloc
+        and not parsed.username
+        and not parsed.password
+        and parsed.path in {"", "/"}
+        and not parsed.query
+        and not parsed.fragment
+    ), "ISOLDE_E2E_BASE_URL must be an HTTPS origin"
     email = _required_environment("ISOLDE_E2E_EMAIL")
     password = _required_environment("ISOLDE_E2E_PASSWORD")
     timeout = float(os.getenv("ISOLDE_E2E_TIMEOUT_SECONDS", "30"))
@@ -75,13 +83,14 @@ def test_real_production_auth_provider_stream_research_rag_and_logout():
         stream_text = stream.text
         assert '"delta"' in stream_text and "[DONE]" in stream_text and "[ERROR]" not in stream_text
 
-        rag = session.post(
-            f"{base_url}/api/v1/rag/query", headers=headers,
-            json={"query": os.getenv("ISOLDE_E2E_RAG_QUERY", "production readiness"), "top_k": 3},
-            timeout=timeout,
-        )
-        _expect_status(rag, 200, "RAG query")
-        assert isinstance(rag.json().get("data", {}).get("chunks"), list)
+        if capabilities.get("rag") == "AVAILABLE":
+            rag = session.post(
+                f"{base_url}/api/v1/rag/query", headers=headers,
+                json={"query": os.getenv("ISOLDE_E2E_RAG_QUERY", "production readiness"), "top_k": 3},
+                timeout=timeout,
+            )
+            _expect_status(rag, 200, "RAG query")
+            assert isinstance(rag.json().get("data", {}).get("chunks"), list)
 
         if capabilities.get("research") == "AVAILABLE":
             research = session.post(
@@ -95,6 +104,9 @@ def test_real_production_auth_provider_stream_research_rag_and_logout():
 
         upload_path = os.getenv("ISOLDE_E2E_UPLOAD_FILE", "").strip()
         if upload_path:
+            assert capabilities.get("rag") == "AVAILABLE", (
+                "ISOLDE_E2E_UPLOAD_FILE requires the deployed RAG capability to be AVAILABLE"
+            )
             path = Path(upload_path)
             assert path.is_file(), "ISOLDE_E2E_UPLOAD_FILE does not identify a file"
             with path.open("rb") as handle:
