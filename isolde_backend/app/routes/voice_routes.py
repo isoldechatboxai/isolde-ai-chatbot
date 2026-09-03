@@ -1,5 +1,5 @@
 # app/routes/voice_routes.py
-from datetime import datetime
+from datetime import datetime, timezone
 from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app import db
@@ -88,7 +88,7 @@ def end_voice_session(session_id):
             return jsonify({"error": "Session not found"}), 404
         
         session.status = "Ended"
-        session.end_time = datetime.utcnow()
+        session.end_time = datetime.now(timezone.utc)
         
         # Here we would trigger the Voice -> Memory extraction service asynchronously
         # e.g., extract_memory_from_session.delay(session_id)
@@ -148,3 +148,4 @@ def get_session_transcripts(session_id):
     except Exception:
         current_app.logger.exception("Transcript listing failed.")
         return jsonify({"error": "Transcripts are unavailable."}), 500
+

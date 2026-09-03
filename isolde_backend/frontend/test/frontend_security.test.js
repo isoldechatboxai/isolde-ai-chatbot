@@ -71,9 +71,12 @@ test("auth forms use real loading states and never fake a completed request", ()
   assert.match(register, /data-password-toggle/);
 });
 
-test("OAuth provider controls are backend-configured and unavailable providers are disabled", () => {
+test("OAuth provider controls are backend-configured and unavailable providers are not rendered as dead buttons", () => {
   const login = read("login.html");
   assert.match(login, /fetch\('\/api\/oauth\/providers'\)/);
-  assert.match(login, /button\.disabled = !configured/);
+  assert.match(login, /filter\(\(\[, configured\]\) => configured\)/);
+  assert.match(login, /if \(!configuredProviders\.length\) return/);
+  assert.match(login, /Social sign-in is currently unavailable\./);
+  assert.doesNotMatch(login, /button\.disabled = !configured/);
   assert.match(login, /\/api\/oauth\/\$\{provider\}\/start/);
 });

@@ -1,5 +1,5 @@
-﻿"""
-Isolde backend â€” Codex Project Service.
+"""
+Isolde backend — Codex Project Service.
 
 Codex project/file/task business logic with:
 - strict user ownership
@@ -17,7 +17,7 @@ Project files are stored in the Codex database.
 import json
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 
 from flask import current_app
@@ -680,7 +680,7 @@ def cancel_task(user_id: str, project_id: int, task_id: int) -> Dict[str, Any]:
     try:
         task.status = "cancelled"
         task.error_message = None
-        task.completed_at = datetime.utcnow()
+        task.completed_at = datetime.now(timezone.utc)
         db.session.commit()
         return {"success": True, "data": task.to_dict()}
     except Exception:
@@ -713,7 +713,7 @@ def _build_project_context(project: CodexProject) -> str:
 
         if total + len(block) > MAX_CONTEXT_LENGTH:
             parts.append(
-                "\n[CONTEXT LIMIT REACHED â€” remaining files omitted]"
+                "\n[CONTEXT LIMIT REACHED — remaining files omitted]"
             )
             break
 
@@ -987,7 +987,7 @@ Rules:
                 "PLAN_ONLY: AI plan generated and validated. "
                 "No files were modified."
             )
-            task.completed_at = datetime.utcnow()
+            task.completed_at = datetime.now(timezone.utc)
 
             db.session.commit()
 
@@ -1049,12 +1049,12 @@ Rules:
                     ) from exc
 
                 validation_messages.append(
-                    f"PASS: Python syntax â€” {path}"
+                    f"PASS: Python syntax — {path}"
                 )
 
             else:
                 validation_messages.append(
-                    f"PASS: File safety validation â€” {path}"
+                    f"PASS: File safety validation — {path}"
                 )
 
         if not validation_messages:
@@ -1067,7 +1067,7 @@ Rules:
             validation_messages
         )
         task.error_message = None
-        task.completed_at = datetime.utcnow()
+        task.completed_at = datetime.now(timezone.utc)
 
         db.session.commit()
 

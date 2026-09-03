@@ -50,7 +50,8 @@ def _resolve_user_id():
         return None
 
     try:
-        user = User.query.get(user_id)
+        from app.extensions import db as _db
+        user = _db.session.get(User, user_id)
     except Exception:
         return None
 

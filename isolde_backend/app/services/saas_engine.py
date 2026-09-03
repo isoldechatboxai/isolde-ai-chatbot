@@ -8,7 +8,7 @@ IMPORTANT:
 - All functions are BEST-EFFORT and MUST NOT block or crash the chat request.
 """
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from flask import current_app
 from app.extensions import db
 
@@ -58,7 +58,7 @@ def save_chat_history(user_id: str, conversation_id: str, role: str, content: st
         
         convo = db.session.get(Conversation, conversation_id)
         if convo:
-            convo.updated_at = datetime.utcnow()
+            convo.updated_at = datetime.now(timezone.utc)
             # Optional: Update title if it's still default and this is the first user msg
             if role == 'user' and convo.title == "New Conversation":
                 convo.title = content[:50].strip()
@@ -68,3 +68,4 @@ def save_chat_history(user_id: str, conversation_id: str, role: str, content: st
     except Exception as e:
         logger.debug(f"Legacy history hook skipped (non-fatal): {str(e)}")
         return True
+

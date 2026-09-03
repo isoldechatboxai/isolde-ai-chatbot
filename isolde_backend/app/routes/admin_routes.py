@@ -11,7 +11,7 @@ import os
 import json
 import csv
 from io import StringIO
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from functools import wraps
 
 from flask import Blueprint, request, jsonify, current_app, Response
@@ -414,7 +414,7 @@ def admin_coding(admin_user, project_id=None, file_id=None, task_id=None):
             if task.status not in {"pending", "running"}:
                 return jsonify({"status": "error", "message": "Task cannot be cancelled."}), 409
             task.status = "cancelled"
-            task.completed_at = datetime.utcnow()
+            task.completed_at = datetime.now(timezone.utc)
             _audit(admin_user, "ADMIN_CODING_TASK_CANCEL", {"project_id": project.id, "task_id": task.id})
             db.session.commit()
         return jsonify({"status": "success", "task": task.to_dict()}), 200
@@ -477,7 +477,7 @@ def admin_api_keys(admin_user):
             return jsonify({"status": "error", "message": "expires_in_days must be a positive integer."}), 400
         if not 0 < expiry <= 3650:
             return jsonify({"status": "error", "message": "expires_in_days must be between 1 and 3650."}), 400
-        expires_at = datetime.utcnow() + timedelta(days=expiry)
+        expires_at = datetime.now(timezone.utc) + timedelta(days=expiry)
     try:
         raw_key, metadata = create_api_key(user_id, name, ",".join(sorted(normalized)), expires_at)
         _audit(admin_user, "ADMIN_API_KEY_CREATE", {"target_user_id": user_id, "key_id": metadata["id"], "permissions": metadata["permissions"]})

@@ -65,7 +65,7 @@ def update_task(task_id):
     for field in ("title", "description", "priority", "status", "due_date", "category"):
         if field in data:
             setattr(task, field, data[field])
-    task.completed_at = datetime.utcnow() if task.status == "Completed" else None
+    task.completed_at = datetime.now(timezone.utc) if task.status == "Completed" else None
     db.session.commit()
     return jsonify({"message": "Task updated", "task": task.to_dict()}), 200
 

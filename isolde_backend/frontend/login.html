@@ -141,6 +141,13 @@
             background-color: rgba(255, 255, 255, 0.05);
             color: white;
         }
+        .oauth-section { margin-top: 18px; }
+        .oauth-divider { display: flex; align-items: center; gap: 10px; color: var(--text-muted); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+        .oauth-divider::before, .oauth-divider::after { content: ""; height: 1px; flex: 1; background: var(--border-color); }
+        .oauth-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+        .oauth-options .guest-btn { margin-top: 0; min-height: 44px; }
+        .oauth-status { margin: 14px 0 0; color: var(--text-muted); font-size: 12px; text-align: center; }
+        @media (max-width: 360px) { .oauth-options { grid-template-columns: 1fr; } }
 
         .switch-page {
             text-align: center;
@@ -259,7 +266,11 @@
                 <span class="btn-text">Login</span>
             </button>
 
-            <div id="oauth-options" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px;"></div>
+            <section id="oauth-section" class="oauth-section" aria-live="polite" hidden>
+                <div class="oauth-divider">or continue with</div>
+                <div id="oauth-options" class="oauth-options" role="group" aria-label="Social sign-in options"></div>
+            </section>
+            <p id="oauth-status" class="oauth-status" aria-live="polite">Checking social sign-in availability…</p>
         </form>
 
         <div class="switch-page">
@@ -366,33 +377,46 @@
             const oauthStatus = new URLSearchParams(window.location.search).get('oauth');
             if (oauthStatus === 'complete') {
                 fetch('/api/oauth/session', {method: 'POST'}).then(async (res) => {
-                    const data = await res.json();
+                    const data = await readJson(res);
                     if (!res.ok || !data.access_token) throw new Error(data.error || 'OAuth login failed.');
                     sessionStorage.setItem('access_token', data.access_token);
                     sessionStorage.setItem('user', JSON.stringify(data.user || {}));
                     history.replaceState({}, '', '/login.html');
                     window.location.replace('/');
                 }).catch((error) => {
-                    msg.textContent = error.message;
-                    msg.className = 'message error';
+                    history.replaceState({}, '', '/login.html');
+                    showMessage('error', error.message || 'Social sign-in could not be completed. Please try again.');
                 });
             }
 
-            fetch('/api/oauth/providers').then((res) => res.json()).then((data) => {
+            fetch('/api/oauth/providers').then(async (res) => {
+                const data = await readJson(res);
+                if (!res.ok || !data.providers || typeof data.providers !== 'object') throw new Error('unavailable');
+                return data;
+            }).then((data) => {
                 const container = document.getElementById('oauth-options');
-                Object.entries(data.providers || {}).forEach(([provider, configured]) => {
+                const section = document.getElementById('oauth-section');
+                const status = document.getElementById('oauth-status');
+                const configuredProviders = Object.entries(data.providers).filter(([, configured]) => configured);
+                status.hidden = true;
+                if (!configuredProviders.length) return;
+                section.hidden = false;
+                configuredProviders.forEach(([provider]) => {
                     const button = document.createElement('button');
                     button.type = 'button';
                     button.className = 'guest-btn';
                     button.textContent = `Continue with ${provider[0].toUpperCase() + provider.slice(1)}`;
-                    button.disabled = !configured;
-                    button.title = configured ? '' : `${provider} login is not configured`;
-                    button.addEventListener('click', () => window.location.assign(`/api/oauth/${provider}/start`));
+                    button.setAttribute('aria-label', `Continue with ${provider[0].toUpperCase() + provider.slice(1)}`);
+                    button.addEventListener('click', () => {
+                        button.disabled = true;
+                        button.setAttribute('aria-busy', 'true');
+                        window.location.assign(`/api/oauth/${provider}/start`);
+                    });
                     container.appendChild(button);
                 });
             }).catch(() => {
-                const container = document.getElementById('oauth-options');
-                container.textContent = 'OAuth provider status unavailable. Email/password login remains available.';
+                const status = document.getElementById('oauth-status');
+                status.textContent = 'Social sign-in is currently unavailable.';
             });
 
             // Modal Logic

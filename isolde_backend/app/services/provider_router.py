@@ -1017,7 +1017,8 @@ def _build_agent_workspace_context(
 
     if agent_id:
         try:
-            agent = Agent.query.get(agent_id)
+            from app.extensions import db as _db
+            agent = _db.session.get(Agent, agent_id)
             if agent and agent.is_active:
                 agent_block = f"ACTIVE AGENT PERSONA ({agent.name}):\n{agent.system_prompt}"
                 if agent.role_description:
@@ -1028,7 +1029,8 @@ def _build_agent_workspace_context(
 
     if workspace_id:
         try:
-            workspace = Workspace.query.get(workspace_id)
+            from app.extensions import db as _db
+            workspace = _db.session.get(Workspace, workspace_id)
             if workspace:
                 docs = WorkspaceDocument.query.filter_by(
                     workspace_id=workspace_id, project_id=None
@@ -1044,7 +1046,8 @@ def _build_agent_workspace_context(
 
     if project_id:
         try:
-            project = Project.query.get(project_id)
+            from app.extensions import db as _db
+            project = _db.session.get(Project, project_id)
             if project:
                 proj_docs = WorkspaceDocument.query.filter_by(project_id=project_id).limit(5).all()
                 proj_snippets = [d.extracted_text[:1500] for d in proj_docs if d.extracted_text]

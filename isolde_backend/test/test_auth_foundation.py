@@ -1,4 +1,5 @@
 from flask_jwt_extended import decode_token
+from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
 from app.extensions import db as database
@@ -67,6 +68,31 @@ def test_registration_accepts_two_different_emails(client):
     assert User.query.filter(User.email.in_([
         "different-one@example.test", "different-two@example.test",
     ])).count() == 2
+
+
+def test_registration_does_not_misclassify_an_unrelated_integrity_error(client, caplog):
+    database.session.execute(text("""
+        CREATE TRIGGER reject_constraint_conflict_registration
+        BEFORE INSERT ON users
+        WHEN NEW.name = 'Constraint Conflict'
+        BEGIN
+            SELECT RAISE(ABORT, 'unrelated registration constraint');
+        END
+    """))
+    database.session.commit()
+
+    response = client.post("/api/register", json={
+        "name": "Constraint Conflict",
+        "email": "constraint-conflict@example.test",
+        "password": "StrongPass123!",
+    })
+
+    assert response.status_code == 503
+    assert response.get_json() == {
+        "error": "Registration is temporarily unavailable. Please try again later."
+    }
+    assert User.query.filter_by(email="constraint-conflict@example.test").first() is None
+    assert "category=DATABASE_CONSTRAINT_ERROR" in caplog.text
 
 
 def test_auth_email_delivery_is_bounded_and_reports_result(app, monkeypatch):

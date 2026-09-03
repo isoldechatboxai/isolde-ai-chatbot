@@ -511,7 +511,7 @@ def create_app(config_class=Config):
         settings_bp,
         url_prefix="/api",
     )
-# Codex Project Engineering blueprint
+    # Codex Project Engineering blueprint
     app.register_blueprint(
         codex_bp,
         url_prefix="/api",
@@ -717,7 +717,17 @@ def create_app(config_class=Config):
                 ).ping()
                 checks["cancellation"] = True
             else:
-                checks["cancellation"] = not app.config.get("IS_PRODUCTION", False)
+                # No Redis URL configured. Cancellation is not available via
+                # distributed storage. In production this is blocked by
+                # Config.validate() before we ever reach this point. In
+                # non-production environments, exclude cancellation from the
+                # required-health checks so readiness is not blocked, but
+                # report the accurate NOT_CONFIGURED state in the response.
+                if app.config.get("IS_PRODUCTION", False):
+                    checks["cancellation"] = False
+                else:
+                    del checks["cancellation"]
+                    checks["cancellation_info"] = "NOT_CONFIGURED"
         except Exception as error:
             _log_readiness_failure(app, "cancellation", error)
 
@@ -743,7 +753,10 @@ def create_app(config_class=Config):
         google_configured = provider_is_configured("google")
         oauth_configured = any(provider_is_configured(provider) for provider in PROVIDERS)
         research_configured = research_capability()["configured"]
-        cancellation_configured = bool(app.config.get("CANCELLATION_REDIS_URL"))
+        # Cancellation is reported as AVAILABLE when a Redis URL is configured.
+        # The /api/ready endpoint uses the same URL check so both endpoints agree.
+        _cancellation_url = app.config.get("CANCELLATION_REDIS_URL", "")
+        cancellation_configured = bool(_cancellation_url)
         image_status = "NOT_CONFIGURED" if not app.config.get("IMAGE_PROVIDER") else "NOT_SUPPORTED"
         video_status = "NOT_CONFIGURED" if not app.config.get("VIDEO_PROVIDER") else "NOT_SUPPORTED"
         try:
