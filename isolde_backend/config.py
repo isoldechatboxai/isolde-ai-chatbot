@@ -208,6 +208,11 @@ class Config:
     DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
     MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "").strip()
 
+    # Optional web research provider.  Empty credentials deliberately leave
+    # web research unavailable instead of falling back to an implicit service.
+    TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
+    RESEARCH_HTTP_TIMEOUT_SECONDS = _env_int("RESEARCH_HTTP_TIMEOUT_SECONDS", 8)
+
     # ==========================================================
     # Uploads
     # ==========================================================

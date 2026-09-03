@@ -1317,7 +1317,21 @@
               let delta = dataText;
               try {
                 const parsed = JSON.parse(dataText);
-                if (parsed && typeof parsed.delta === "string") delta = parsed.delta;
+                if (parsed && typeof parsed.delta === "string") {
+                  delta = parsed.delta;
+                } else if (parsed && typeof parsed.event === "string" && parsed.event.startsWith("research_")) {
+                  // Typed research events are provenance metadata, never model
+                  // text. Keeping them out of the transcript avoids a source
+                  // payload being rendered as an assistant response.
+                  botMsgObj.research = botMsgObj.research || { citations: [], status: "" };
+                  if (parsed.event === "research_citation" && parsed.citation) {
+                    botMsgObj.research.citations.push(parsed.citation);
+                  }
+                  if (parsed.event === "research_completed") {
+                    botMsgObj.research.status = parsed.status || "COMPLETED";
+                  }
+                  continue;
+                }
               } catch (err) {}
               accumulatedText += delta;
               botMsgObj.text = accumulatedText;
@@ -1362,6 +1376,25 @@
         });
         const messageContent = textEl.closest(".message-content");
         if (messageContent) messageContent.appendChild(sourcesDiv);
+      }
+
+      if (botMsgObj.research?.citations?.length > 0 && textEl) {
+        const citationsDiv = document.createElement("div");
+        citationsDiv.className = "message-sources research-citations";
+        const label = document.createElement("strong");
+        label.textContent = "🔎 Web research: ";
+        citationsDiv.appendChild(label);
+        botMsgObj.research.citations.forEach((citation, index) => {
+          if (index) citationsDiv.appendChild(document.createTextNode(", "));
+          const link = document.createElement("a");
+          link.href = String(citation.url || "");
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+          link.textContent = String(citation.title || citation.domain || "Source");
+          citationsDiv.appendChild(link);
+        });
+        const messageContent = textEl.closest(".message-content");
+        if (messageContent) messageContent.appendChild(citationsDiv);
       }
 
       if (isNewChat) {
