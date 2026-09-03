@@ -745,6 +745,15 @@ def create_app(config_class=Config):
         ))
         research_configured = research_capability()["configured"]
         cancellation_configured = bool(app.config.get("CANCELLATION_REDIS_URL"))
+        pgvector_status = "NOT_SUPPORTED"
+        try:
+            if db.engine.dialect.name == "postgresql":
+                installed = db.session.execute(text(
+                    "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector')"
+                )).scalar()
+                pgvector_status = "AVAILABLE" if installed else "NOT_CONFIGURED"
+        except Exception:
+            pgvector_status = "UNAVAILABLE"
         return jsonify({"capabilities": {
             "ai": "AVAILABLE" if configured_provider else "NOT_CONFIGURED",
             "rag": "AVAILABLE" if configured_provider else "NOT_CONFIGURED",
@@ -753,6 +762,7 @@ def create_app(config_class=Config):
             "cancellation": "AVAILABLE" if cancellation_configured else "NOT_CONFIGURED",
             "admin": "AVAILABLE",
             "deep_research": "NOT_SUPPORTED",
+            "pgvector": pgvector_status,
         }}), 200
 
     @app.route(

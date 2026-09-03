@@ -29,6 +29,18 @@ def _env_int(name: str, default: int) -> int:
         ) from exc
 
 
+def _env_float(name: str, default: float) -> float:
+    value = os.getenv(name)
+    if value is None or value.strip() == "":
+        return default
+    try:
+        return float(value)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"Environment variable {name} must be a valid number."
+        ) from exc
+
+
 def _env_list(name: str, default: str = "") -> list[str]:
     value = os.getenv(name, default)
     return [
@@ -285,6 +297,7 @@ class Config:
     IMAGE_PROVIDER = os.getenv("IMAGE_PROVIDER", "").strip().lower()
     VIDEO_PROVIDER = os.getenv("VIDEO_PROVIDER", "").strip().lower()
     RAG_STORAGE_BACKEND = os.getenv("RAG_STORAGE_BACKEND", "database").strip().lower()
+    RAG_RELEVANCE_THRESHOLD = _env_float("RAG_RELEVANCE_THRESHOLD", 0.55)
 
     # ==========================================================
     # Logging

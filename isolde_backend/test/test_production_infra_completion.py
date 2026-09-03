@@ -110,7 +110,7 @@ def test_empty_database_bootstrap_creates_current_schema(tmp_path):
     with bootstrap_app.app_context():
         tables = set(inspect(extension_db.engine).get_table_names())
         assert {"users", "rag_documents", "rag_chunks", "billing_credit_ledger", "organization_projects", "organization_policies", "alembic_version"} <= tables
-        assert extension_db.session.execute(text("SELECT version_num FROM alembic_version")).scalar() == "20260827_000008"
+        assert extension_db.session.execute(text("SELECT version_num FROM alembic_version")).scalar() == "20260903_000009"
 
 
 def test_bootstrap_refuses_nonempty_unversioned_database(tmp_path):
@@ -165,4 +165,4 @@ def test_existing_database_migrates_from_previous_release_head(app):
     assert upgraded.exit_code == 0, upgraded.output
     with app.app_context():
         assert {"billing_credit_ledger", "organization_projects", "organization_policies"} <= set(inspect(extension_db.engine).get_table_names())
-        assert extension_db.session.execute(text("SELECT version_num FROM alembic_version")).scalar() == "20260827_000008"
+        assert extension_db.session.execute(text("SELECT version_num FROM alembic_version")).scalar() == "20260903_000009"

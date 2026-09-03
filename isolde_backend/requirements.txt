@@ -21,3 +21,6 @@ requests==2.32.3
 psycopg2-binary==2.9.9
 redis==8.1.0
 boto3==1.40.21
+# PostgreSQL pgvector SQLAlchemy integration. SQLite test databases use the
+# JSON variant declared in app.models.rag_model.
+pgvector==0.3.6

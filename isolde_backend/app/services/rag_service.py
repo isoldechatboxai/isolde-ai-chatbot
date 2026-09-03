@@ -3,8 +3,8 @@
 Minimal Retrieval-Augmented-Generation store.
 
 Embeddings and chunks are persisted transactionally in the application
-database. Retrieval intentionally retains the existing cosine-similarity
-behavior so callers and answer quality remain stable.
+database. PostgreSQL deployments use pgvector cosine distance in the database;
+SQLite remains a compatibility-only test backend.
 """
 
 import json
@@ -15,7 +15,7 @@ import numpy as np
 
 from typing import Optional, List, Dict
 
-from flask import current_app
+from flask import current_app, has_app_context
 
 from app.extensions import db
 from app.models.rag_model import RAGChunk, RAGDocument
@@ -50,6 +50,13 @@ def _load_index(user_id=None):
         "text": chunk.text,
         "vector": chunk.embedding,
     } for chunk, filename in rows]
+
+
+def _uses_postgres():
+    # Some legacy unit-level callers exercise ownership filtering without an
+    # application context or database. Those callers use the JSON compatibility
+    # path; real requests always have an application context.
+    return has_app_context() and db.session.get_bind().dialect.name == "postgresql"
 
 
 def _save_index(records):
@@ -261,6 +268,7 @@ def index_document(file_id: str, filename: str, text: str, user_id: Optional[str
                 position=position,
                 text=chunk,
                 embedding=vector,
+                embedding_vector=vector,
                 embedding_dimension=len(vector),
             ))
         db.session.commit()
@@ -348,11 +356,6 @@ def search(query: str, top_k: int = 4, user_id: Optional[str] = None) -> List[Di
     if not user_id:
         return []
 
-    records = _load_index(user_id=user_id)
-
-    if not records:
-        return []
-
     try:
         query_vector_raw = embed_text(query)
         query_vec = np.array(query_vector_raw, dtype=float).flatten()
@@ -361,6 +364,17 @@ def search(query: str, top_k: int = 4, user_id: Optional[str] = None) -> List[Di
         return []
 
     if query_vec.size == 0:
+        return []
+
+    # Production PostgreSQL retrieval never materializes every embedding in
+    # Python. pgvector's cosine operator is evaluated after owner and
+    # dimension filters, preserving isolation and avoiding mixed dimensions.
+    if _uses_postgres():
+        return _search_postgres(query_vec.tolist(), top_k, user_id)
+
+    records = _load_index(user_id=user_id)
+
+    if not records:
         return []
 
     scored = []
@@ -408,6 +422,35 @@ def search(query: str, top_k: int = 4, user_id: Optional[str] = None) -> List[Di
             "score": round(score, 3),
         }
         for score, record in scored[:top_k]
+    ]
+
+
+def _search_postgres(query_vector: list[float], top_k: int, user_id: str) -> List[Dict]:
+    """Exact database-side pgvector cosine retrieval for PostgreSQL only.
+
+    The embedding model is configurable, so no fixed-dimension HNSW/IVFFlat
+    index is created. The tenant/dimension B-tree index narrows candidates;
+    pgvector then computes exact cosine distance without a Python full scan.
+    """
+    dimension = len(query_vector)
+    distance = RAGChunk.embedding_vector.cosine_distance(query_vector)
+    max_distance = 1 - float(current_app.config.get("RAG_RELEVANCE_THRESHOLD", DEFAULT_RELEVANCE_THRESHOLD))
+    rows = (
+        db.session.query(RAGChunk, RAGDocument.filename, distance.label("distance"))
+        .join(RAGDocument, RAGDocument.id == RAGChunk.document_id)
+        .filter(
+            RAGChunk.user_id == user_id,
+            RAGChunk.embedding_dimension == dimension,
+            RAGChunk.embedding_vector.isnot(None),
+            distance <= max_distance,
+        )
+        .order_by(distance.asc(), RAGChunk.id.asc())
+        .limit(top_k)
+        .all()
+    )
+    return [
+        {"text": chunk.text, "filename": filename, "score": round(1 - float(value), 3)}
+        for chunk, filename, value in rows
     ]
 
 
