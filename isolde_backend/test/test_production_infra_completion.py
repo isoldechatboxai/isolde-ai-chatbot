@@ -136,7 +136,7 @@ def test_bootstrap_refuses_nonempty_unversioned_database(tmp_path):
 def test_security_sensitive_routes_have_targeted_rate_limits(app):
     sensitive = {
         "auth.login", "auth.register", "auth.verify_email", "auth.forgot_password",
-        "auth.reset_password", "auth.oauth_start", "auth.oauth_callback",
+        "auth.reset_password", "auth.resend_verification", "auth.oauth_start", "auth.oauth_callback",
         "chat.chat", "chat.stream_chat", "upload.upload_file", "rag.upload_rag_file",
         "ai_studio_bp.test_playground_prompt", "admin.admin_login",
         "unified_engine_bp.handle_unified_chat", "memory_bp.save_memory",
@@ -144,6 +144,7 @@ def test_security_sensitive_routes_have_targeted_rate_limits(app):
         "billing_bp.cancel_subscription", "billing_bp.refund_invoice",
         "billing_bp.create_checkout", "billing_bp.payment_webhook",
         "admin.admin_cancel_subscription",
+        "public_api_bp.versioned_research", "public_api_bp.versioned_rag_query",
     }
     for endpoint in sensitive:
         assert getattr(app.view_functions[endpoint], "__security_rate_limited__", False), endpoint

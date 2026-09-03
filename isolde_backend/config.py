@@ -1,6 +1,7 @@
 import os
 import re
 from datetime import timedelta
+from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
 
@@ -191,6 +192,7 @@ class Config:
     MICROSOFT_OAUTH_REDIRECT_URI = os.getenv("MICROSOFT_OAUTH_REDIRECT_URI", "").strip()
     MICROSOFT_OAUTH_TENANT = os.getenv("MICROSOFT_TENANT", "").strip()
     OAUTH_HTTP_TIMEOUT_SECONDS = _env_int("OAUTH_HTTP_TIMEOUT_SECONDS", 10)
+    PROVIDER_HTTP_TIMEOUT_SECONDS = _env_int("PROVIDER_HTTP_TIMEOUT_SECONDS", 60)
 
     # ==========================================================
     # Gemini
@@ -214,6 +216,7 @@ class Config:
     # provider settings in the database. Empty values simply disable a
     # provider; no credentials are ever returned through an API.
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+    OPENAI_EMBEDDING_MODEL = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small").strip()
     CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY", "").strip()
     GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
     OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
@@ -228,6 +231,9 @@ class Config:
     RESEARCH_FETCH_MAX_BYTES = _env_int("RESEARCH_FETCH_MAX_BYTES", 200_000)
     RESEARCH_FETCH_MAX_CHARS = _env_int("RESEARCH_FETCH_MAX_CHARS", 12_000)
     RESEARCH_CONTEXT_MAX_CHARS = _env_int("RESEARCH_CONTEXT_MAX_CHARS", 24_000)
+    CHAT_MAX_PROMPT_CHARS = _env_int("CHAT_MAX_PROMPT_CHARS", 12_000)
+    RESEARCH_QUERY_MAX_CHARS = _env_int("RESEARCH_QUERY_MAX_CHARS", 2_000)
+    RAG_QUERY_MAX_CHARS = _env_int("RAG_QUERY_MAX_CHARS", 4_000)
 
     # ==========================================================
     # Uploads
@@ -432,6 +438,20 @@ class Config:
 
         return False
 
+    @staticmethod
+    def _is_valid_public_url(value: str, require_https: bool = False, origin_only: bool = False) -> bool:
+        try:
+            parsed = urlsplit(value)
+        except ValueError:
+            return False
+        if parsed.scheme not in ({"https"} if require_https else {"http", "https"}):
+            return False
+        if not parsed.netloc or parsed.username or parsed.password or parsed.fragment:
+            return False
+        if origin_only and (parsed.path not in {"", "/"} or parsed.query):
+            return False
+        return True
+
     @classmethod
     def validate(cls) -> None:
         """
@@ -485,12 +505,77 @@ class Config:
             raise RuntimeError(
                 "CORS_ORIGINS must not use '*' in production."
             )
+        if not cors_origins or any(
+            not cls._is_valid_public_url(origin, require_https=True, origin_only=True)
+            for origin in cors_origins
+        ):
+            raise RuntimeError("CORS_ORIGINS must contain only explicit HTTPS origins in production.")
 
         if unsafe:
             raise RuntimeError(
                 "Production secrets must not use empty or insecure placeholder values: "
                 + ", ".join(unsafe)
             )
+
+        if not cls._is_valid_public_url(cls.PUBLIC_APP_URL, require_https=True):
+            raise RuntimeError("PUBLIC_APP_URL must be an absolute HTTPS URL in production.")
+
+        oauth_groups = {
+            "Google": (
+                ("GOOGLE_OAUTH_CLIENT_ID", cls.GOOGLE_OAUTH_CLIENT_ID),
+                ("GOOGLE_OAUTH_CLIENT_SECRET", cls.GOOGLE_OAUTH_CLIENT_SECRET),
+                ("GOOGLE_OAUTH_REDIRECT_URI", cls.GOOGLE_OAUTH_REDIRECT_URI),
+            ),
+            "GitHub": (
+                ("GITHUB_CLIENT_ID", cls.GITHUB_OAUTH_CLIENT_ID),
+                ("GITHUB_CLIENT_SECRET", cls.GITHUB_OAUTH_CLIENT_SECRET),
+                ("GITHUB_OAUTH_REDIRECT_URI", cls.GITHUB_OAUTH_REDIRECT_URI),
+            ),
+            "Apple": (
+                ("APPLE_CLIENT_ID", cls.APPLE_OAUTH_CLIENT_ID),
+                ("APPLE_TEAM_ID", cls.APPLE_TEAM_ID),
+                ("APPLE_KEY_ID", cls.APPLE_KEY_ID),
+                ("APPLE_PRIVATE_KEY", cls.APPLE_PRIVATE_KEY),
+                ("APPLE_OAUTH_REDIRECT_URI", cls.APPLE_OAUTH_REDIRECT_URI),
+            ),
+            "Microsoft": (
+                ("MICROSOFT_CLIENT_ID", cls.MICROSOFT_OAUTH_CLIENT_ID),
+                ("MICROSOFT_CLIENT_SECRET", cls.MICROSOFT_OAUTH_CLIENT_SECRET),
+                ("MICROSOFT_TENANT", cls.MICROSOFT_OAUTH_TENANT),
+                ("MICROSOFT_OAUTH_REDIRECT_URI", cls.MICROSOFT_OAUTH_REDIRECT_URI),
+            ),
+        }
+        for provider, fields in oauth_groups.items():
+            configured = [name for name, value in fields if value]
+            if configured and len(configured) != len(fields):
+                missing_names = [name for name, value in fields if not value]
+                raise RuntimeError(f"{provider} OAuth configuration is incomplete; missing: {', '.join(missing_names)}.")
+            redirect_uri = fields[-1][1]
+            if configured and not cls._is_valid_public_url(redirect_uri, require_https=True):
+                raise RuntimeError(f"{provider} OAuth redirect URI must be an absolute HTTPS URL in production.")
+
+        if cls.REQUIRE_EMAIL_VERIFICATION:
+            mail_fields = (
+                ("MAIL_SERVER", cls.MAIL_SERVER), ("MAIL_USERNAME", cls.MAIL_USERNAME),
+                ("MAIL_PASSWORD", cls.MAIL_PASSWORD), ("MAIL_DEFAULT_SENDER", cls.MAIL_DEFAULT_SENDER),
+            )
+            missing_mail = [name for name, value in mail_fields if not value]
+            if missing_mail:
+                raise RuntimeError(
+                    "Email verification requires configured SMTP settings; missing: "
+                    + ", ".join(missing_mail)
+                    + "."
+                )
+
+        for name, value in (
+            ("PROVIDER_HTTP_TIMEOUT_SECONDS", cls.PROVIDER_HTTP_TIMEOUT_SECONDS),
+            ("OAUTH_HTTP_TIMEOUT_SECONDS", cls.OAUTH_HTTP_TIMEOUT_SECONDS),
+            ("CHAT_MAX_PROMPT_CHARS", cls.CHAT_MAX_PROMPT_CHARS),
+            ("RESEARCH_QUERY_MAX_CHARS", cls.RESEARCH_QUERY_MAX_CHARS),
+            ("RAG_QUERY_MAX_CHARS", cls.RAG_QUERY_MAX_CHARS),
+        ):
+            if value <= 0:
+                raise RuntimeError(f"{name} must be greater than zero.")
 
         provider_keys = (
             ("GEMINI_API_KEY", cls.GEMINI_API_KEY),

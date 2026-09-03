@@ -8,7 +8,10 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from app.extensions import db
 from app.models import User
 from app.models.auth_model import AuthSession, AuthToken, OAuthAccount, RevokedToken, token_digest, utcnow
-from app.services.oauth_service import PROVIDERS, begin_authorization, complete_authorization
+from app.services.oauth_service import (
+    OAuthProviderError, PROVIDERS, begin_authorization, complete_authorization,
+    provider_is_configured,
+)
 from app.utils.logger import log_event
 from app.utils.validators import is_valid_email, is_valid_password, sanitize_text
 from app.workers.email_worker import start_email_worker
@@ -108,8 +111,8 @@ def _oauth_result(identity, link_user_id):
         if not user or not user.is_active:
             return jsonify({"error": "Authentication failed."}), 401
         existing.last_login_at = utcnow()
-        token, _ = _create_login(user)
-        return jsonify({"message": "Login successful.", "access_token": token, "user": user.to_dict()}), 200
+        db.session.commit()
+        return jsonify({"message": "Authentication verified.", "user": user.to_dict()}), 200
 
     # Email equality is not proof of ownership. Existing accounts must sign in
     # first and explicitly link, preventing OAuth-based account takeover.
@@ -126,8 +129,8 @@ def _oauth_result(identity, link_user_id):
         user_id=user.id, provider=identity.provider,
         provider_subject=identity.subject, provider_email=identity.email,
     ))
-    token, _ = _create_login(user)
-    return jsonify({"message": "Account created.", "access_token": token, "user": user.to_dict()}), 201
+    db.session.commit()
+    return jsonify({"message": "Account created.", "user": user.to_dict()}), 201
 
 
 @auth_bp.route("/register", methods=["GET"])
@@ -148,7 +151,7 @@ def register():
     name = sanitize_text(str(data.get("name", ""))).strip()
     email = str(data.get("email") or "").strip().lower()
     password = str(data.get("password") or "")
-    if not name or not is_valid_email(email):
+    if not name or len(name) > 120 or not is_valid_email(email):
         return jsonify({"error": "Valid name and email are required."}), 400
     ok, reason = is_valid_password(password)
     if not ok:
@@ -192,7 +195,12 @@ def register():
         )
         return jsonify({"error": "An internal server error occurred."}), 500
     log_event(current_app, "REGISTER", "new user", user.id)
-    _deliver_auth_email(user.email, "Verify your Isolde email", "/api/verify-email", raw)
+    delivered = _deliver_auth_email(user.email, "Verify your Isolde email", "/api/verify-email", raw)
+    if current_app.config.get("REQUIRE_EMAIL_VERIFICATION") and not delivered and not current_app.config.get("TESTING"):
+        return jsonify({
+            "error": "Registration was saved, but verification email delivery failed. Request a new verification email.",
+            "verification_required": True,
+        }), 503
     response = {"message": "Registration successful. Verify your email before signing in.", "user": user.to_dict()}
     _testing_token(response, "verification_token", raw)
     return jsonify(response), 201
@@ -201,6 +209,8 @@ def register():
 @auth_bp.route("/verify-email", methods=["GET", "POST"])
 def verify_email():
     data = (request.get_json(silent=True) or {}) if request.method == "POST" else {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "Invalid JSON payload."}), 400
     raw_token = request.args.get("token") if request.method == "GET" else data.get("token")
     record = _consume_token(str(raw_token or ""), "verify_email")
     if not record:
@@ -215,6 +225,30 @@ def verify_email():
     return jsonify({"message": "Email verified successfully."}), 200
 
 
+@auth_bp.route("/resend-verification", methods=["POST"])
+def resend_verification():
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "Invalid JSON payload."}), 400
+    email = str(data.get("email") or "").strip().lower()
+    delivery_configured = all(current_app.config.get(key) for key in (
+        "MAIL_SERVER", "MAIL_USERNAME", "MAIL_PASSWORD", "MAIL_DEFAULT_SENDER",
+    ))
+    if not delivery_configured and not current_app.config.get("TESTING"):
+        return jsonify({"error": "Verification email delivery is not configured."}), 503
+    user = User.query.filter_by(email=email).first() if is_valid_email(email) else None
+    delivered = True
+    if user and not user.is_verified:
+        raw = _issue_user_token(user, "verify_email", current_app.config["EMAIL_VERIFICATION_TOKEN_MINUTES"])
+        db.session.commit()
+        delivered = _deliver_auth_email(user.email, "Verify your Isolde email", "/api/verify-email", raw)
+    if not delivered:
+        current_app.logger.warning("Verification email delivery failed category=EMAIL_DELIVERY_FAILED")
+    return jsonify({
+        "message": "If that account requires verification and delivery succeeds, a new link will be sent."
+    }), 200
+
+
 @auth_bp.route("/login", methods=["POST"])
 def login():
     data = request.get_json(silent=True)
@@ -222,6 +256,8 @@ def login():
         return jsonify({"error": "Invalid JSON payload."}), 400
     email = str(data.get("email") or "").strip().lower()
     password = str(data.get("password") or "")
+    if len(password) > 128:
+        return jsonify({"error": "Invalid email or password."}), 401
     user = User.query.filter_by(email=email).first()
     if not user or not user.check_password(password) or not user.is_active:
         log_event(current_app, "LOGIN_FAILED", "invalid credentials")
@@ -287,6 +323,8 @@ def revoke_session(session_id):
 @auth_bp.route("/forgot-password", methods=["POST"])
 def forgot_password():
     data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "Invalid JSON payload."}), 400
     email = str(data.get("email") or "").strip().lower()
     email_delivery_configured = all((
         current_app.config.get("MAIL_SERVER"),
@@ -305,7 +343,7 @@ def forgot_password():
         db.session.commit()
         log_event(current_app, "PASSWORD_RESET_REQUEST", "requested", user.id)
         _deliver_auth_email(user.email, "Reset your Isolde password", "/login.html", raw)
-    response = {"message": "If that account exists, password-reset instructions have been issued."}
+    response = {"message": "If that account exists and delivery succeeds, password-reset instructions will be sent."}
     if raw:
         _testing_token(response, "reset_token", raw)
     return jsonify(response), 200
@@ -314,6 +352,8 @@ def forgot_password():
 @auth_bp.route("/reset-password", methods=["POST"])
 def reset_password():
     data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "Invalid JSON payload."}), 400
     new_password = str(data.get("new_password") or "")
     confirm_password = data.get("confirm_password")
     if not isinstance(confirm_password, str) or new_password != confirm_password:
@@ -339,33 +379,34 @@ def reset_password():
 
 @auth_bp.route("/oauth/<provider>/start", methods=["GET"])
 def oauth_start(provider):
+    if provider not in PROVIDERS:
+        return jsonify({"error": "Unsupported OAuth provider."}), 404
     try:
         return redirect(begin_authorization(provider))
-    except (ValueError, RuntimeError) as error:
-        return jsonify({"error": str(error)}), 400
+    except RuntimeError:
+        return jsonify({"error": "OAuth provider is not configured."}), 503
+    except ValueError:
+        return jsonify({"error": "OAuth authorization could not be started."}), 400
 
 
 @auth_bp.route("/oauth/providers", methods=["GET"])
 def oauth_providers():
-    required = {
-        "google": ("GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET", "GOOGLE_OAUTH_REDIRECT_URI"),
-        "github": ("GITHUB_OAUTH_CLIENT_ID", "GITHUB_OAUTH_CLIENT_SECRET", "GITHUB_OAUTH_REDIRECT_URI"),
-        "apple": ("APPLE_OAUTH_CLIENT_ID", "APPLE_OAUTH_REDIRECT_URI", "APPLE_TEAM_ID", "APPLE_KEY_ID", "APPLE_PRIVATE_KEY"),
-        "microsoft": ("MICROSOFT_OAUTH_CLIENT_ID", "MICROSOFT_OAUTH_CLIENT_SECRET", "MICROSOFT_OAUTH_REDIRECT_URI", "MICROSOFT_OAUTH_TENANT"),
-    }
     return jsonify({"providers": {
-        provider: all(bool(current_app.config.get(key)) for key in keys)
-        for provider, keys in required.items()
+        provider: provider_is_configured(provider) for provider in PROVIDERS
     }}), 200
 
 
 @auth_bp.route("/oauth/<provider>/link", methods=["GET"])
 @jwt_required()
 def oauth_link_start(provider):
+    if provider not in PROVIDERS:
+        return jsonify({"error": "Unsupported OAuth provider."}), 404
     try:
         return redirect(begin_authorization(provider, get_jwt_identity()))
-    except (ValueError, RuntimeError) as error:
-        return jsonify({"error": str(error)}), 400
+    except RuntimeError:
+        return jsonify({"error": "OAuth provider is not configured."}), 503
+    except ValueError:
+        return jsonify({"error": "OAuth authorization could not be started."}), 400
 
 
 @auth_bp.route("/oauth/<provider>/callback", methods=["GET", "POST"])
@@ -388,9 +429,6 @@ def oauth_callback(provider):
         user = db.session.get(User, str((payload.get("user") or {}).get("id")))
         if not user:
             return jsonify({"error": "OAuth login could not be completed."}), 500
-        latest_session = AuthSession.query.filter_by(user_id=user.id, revoked_at=None).order_by(AuthSession.created_at.desc()).first()
-        if latest_session:
-            latest_session.revoked_at = utcnow()
         raw, exchange = AuthToken.issue(user.id, "oauth_exchange", 5)
         db.session.add(exchange)
         db.session.commit()
@@ -401,11 +439,21 @@ def oauth_callback(provider):
             samesite="Lax", path="/api/oauth/session",
         )
         return browser_response
-    except RuntimeError as exc:
-        current_app.logger.warning("OAuth provider is not configured: %s", exc)
-        return jsonify({"error": str(exc)}), 503
+    except OAuthProviderError:
+        db.session.rollback()
+        current_app.logger.warning("OAuth callback failed provider=%s category=UPSTREAM_UNAVAILABLE", provider)
+        return jsonify({"error": "OAuth provider is temporarily unavailable."}), 502
+    except RuntimeError:
+        db.session.rollback()
+        current_app.logger.warning("OAuth callback failed provider=%s category=NOT_CONFIGURED", provider)
+        return jsonify({"error": "OAuth provider is not configured."}), 503
+    except IntegrityError:
+        db.session.rollback()
+        current_app.logger.warning("OAuth callback failed provider=%s category=ACCOUNT_CONFLICT", provider)
+        return jsonify({"error": "OAuth account could not be linked safely."}), 409
     except Exception:
-        current_app.logger.exception("OAuth callback validation failed for %s.", provider)
+        db.session.rollback()
+        current_app.logger.warning("OAuth callback failed provider=%s category=VALIDATION_FAILED", provider)
         return jsonify({"error": "OAuth response could not be verified."}), 400
 
 

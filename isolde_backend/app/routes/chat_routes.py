@@ -13,7 +13,7 @@ from app.services.rag_service import search as rag_search, build_context_block
 from app.services.feedback_service import find_relevant_corrections, build_correction_context
 from app.services.language_service import detect_language, language_instruction
 from app.services.cancellation_service import cancellation_store, CancellationStoreUnavailable
-from app.services.research_service import ResearchUnavailable, research, build_result, classify_intent
+from app.services.research_service import ResearchProviderError, ResearchUnavailable, research, build_result, classify_intent
 
 from app.utils.validators import sanitize_text, is_non_empty
 from app.utils.logger import log_event
@@ -345,6 +345,8 @@ def chat():
         current_app.logger.error(f"Maintenance check error: {e}")
 
     data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be a JSON object."}), 400
 
     raw_message = data.get("message", "")
     conversation_id = data.get("conversation_id")
@@ -352,9 +354,13 @@ def chat():
 
     if not is_non_empty(raw_message):
         return jsonify({"error": "Message cannot be empty."}), 400
+    if len(raw_message) > current_app.config.get("CHAT_MAX_PROMPT_CHARS", 12_000):
+        return jsonify({"error": "Message exceeds the configured length limit."}), 400
 
     message = sanitize_text(raw_message)
     web_search_enabled = _should_use_research(data, message)
+    if web_search_enabled and len(message) > current_app.config.get("RESEARCH_QUERY_MAX_CHARS", 2_000):
+        return jsonify({"error": "Research query exceeds the configured length limit."}), 400
     user_id = get_jwt_identity()
 
     if user_id:
@@ -399,6 +405,8 @@ def chat():
             web_context = ""
     except ResearchUnavailable:
         return jsonify({"error": "RESEARCH_PROVIDER_NOT_CONFIGURED"}), 503
+    except ResearchProviderError:
+        return jsonify({"error": "RESEARCH_PROVIDER_UNAVAILABLE"}), 502
 
     corrections = find_relevant_corrections(message)
     correction_context = build_correction_context(corrections)
@@ -532,6 +540,8 @@ def stream_chat():
         current_app.logger.error(f"Maintenance check error: {e}")
 
     data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be a JSON object."}), 400
 
     raw_message = data.get("message", "")
     conversation_id = data.get("conversation_id")
@@ -539,9 +549,13 @@ def stream_chat():
 
     if not is_non_empty(raw_message):
         return jsonify({"error": "Message cannot be empty."}), 400
+    if len(raw_message) > current_app.config.get("CHAT_MAX_PROMPT_CHARS", 12_000):
+        return jsonify({"error": "Message exceeds the configured length limit."}), 400
 
     message = sanitize_text(raw_message)
     web_search_enabled = _should_use_research(data, message)
+    if web_search_enabled and len(message) > current_app.config.get("RESEARCH_QUERY_MAX_CHARS", 2_000):
+        return jsonify({"error": "Research query exceeds the configured length limit."}), 400
     user_id = get_jwt_identity()
 
     generation_id = str(uuid.uuid4())
@@ -602,6 +616,8 @@ def stream_chat():
                 web_context = ""
         except ResearchUnavailable:
             return jsonify({"error": "RESEARCH_PROVIDER_NOT_CONFIGURED"}), 503
+        except ResearchProviderError:
+            return jsonify({"error": "RESEARCH_PROVIDER_UNAVAILABLE"}), 502
 
         model_context = _model_selection_context(selected_model)
 
@@ -721,6 +737,11 @@ def stream_chat():
         response.headers["X-Generation-ID"] = generation_id
         response.headers["Cache-Control"] = "no-cache, no-store"
         response.headers["X-Accel-Buffering"] = "no"
+        application = current_app._get_current_object()
+        def cleanup_on_close():
+            with application.app_context():
+                _unregister_generation(generation_id)
+        response.call_on_close(cleanup_on_close)
         return response
 
     finally:
@@ -732,6 +753,8 @@ def stream_chat():
 @jwt_required()
 def stop_chat_generation():
     data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be a JSON object."}), 400
 
     generation_id = data.get("generation_id")
     user_id = get_jwt_identity()

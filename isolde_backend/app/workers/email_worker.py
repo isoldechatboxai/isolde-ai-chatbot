@@ -87,5 +87,5 @@ def start_email_worker(app, subject: str, recipient: str, body: str, html_body: 
             app.logger.info("Authentication email delivered.")
             return True
         except Exception:
-            app.logger.exception("Authentication email delivery failed after bounded retries.")
+            app.logger.error("Authentication email delivery failed category=EMAIL_DELIVERY_FAILED")
             return False

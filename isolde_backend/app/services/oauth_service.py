@@ -3,7 +3,7 @@ import hashlib
 import secrets
 import time
 from dataclasses import dataclass
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 import jwt
 import requests
@@ -17,6 +17,10 @@ class OAuthIdentity:
     email: str | None
     email_verified: bool
     name: str | None
+
+
+class OAuthProviderError(RuntimeError):
+    """A configured OAuth provider could not complete an upstream operation."""
 
 
 PROVIDERS = {
@@ -59,8 +63,20 @@ def _config(provider):
     prefix = provider.upper()
     client_id = current_app.config.get(f"{prefix}_OAUTH_CLIENT_ID")
     redirect_uri = current_app.config.get(f"{prefix}_OAUTH_REDIRECT_URI")
-    if not client_id or not redirect_uri:
+    required = [client_id, redirect_uri]
+    if provider == "apple":
+        required.extend(current_app.config.get(key) for key in ("APPLE_TEAM_ID", "APPLE_KEY_ID", "APPLE_PRIVATE_KEY"))
+    else:
+        required.append(current_app.config.get(f"{prefix}_OAUTH_CLIENT_SECRET"))
+    if provider == "microsoft":
+        required.append(current_app.config.get("MICROSOFT_OAUTH_TENANT"))
+    if not all(required):
         raise RuntimeError(f"{provider.title()} OAuth is not configured.")
+    parsed_redirect = urlsplit(redirect_uri)
+    if parsed_redirect.scheme not in {"http", "https"} or not parsed_redirect.netloc or parsed_redirect.fragment:
+        raise RuntimeError(f"{provider.title()} OAuth redirect URI is invalid.")
+    if current_app.config.get("IS_PRODUCTION") and parsed_redirect.scheme != "https":
+        raise RuntimeError(f"{provider.title()} OAuth redirect URI must use HTTPS.")
     config = dict(PROVIDERS[provider])
     tenant = current_app.config.get("MICROSOFT_OAUTH_TENANT", "")
     if provider == "microsoft":
@@ -69,6 +85,14 @@ def _config(provider):
         config = {key: value.format(tenant=tenant) if isinstance(value, str) else value for key, value in config.items()}
     config.update({"client_id": client_id, "redirect_uri": redirect_uri})
     return config
+
+
+def provider_is_configured(provider):
+    try:
+        _config(provider)
+        return True
+    except (RuntimeError, ValueError):
+        return False
 
 
 def _pkce_challenge(verifier):
@@ -127,7 +151,12 @@ def _client_secret(provider, config):
 
 
 def _verified_oidc_identity(provider, config, id_token, nonce):
-    key = jwt.PyJWKClient(config["jwks"]).get_signing_key_from_jwt(id_token).key
+    try:
+        key = jwt.PyJWKClient(
+            config["jwks"], timeout=current_app.config.get("OAUTH_HTTP_TIMEOUT_SECONDS", 10)
+        ).get_signing_key_from_jwt(id_token).key
+    except jwt.PyJWKClientConnectionError as error:
+        raise OAuthProviderError("OAUTH_PROVIDER_UNAVAILABLE") from error
     claims = jwt.decode(
         id_token,
         key,
@@ -148,12 +177,15 @@ def _verified_oidc_identity(provider, config, id_token, nonce):
 def _github_identity(access_token):
     headers = {"Authorization": f"Bearer {access_token}", "Accept": "application/vnd.github+json"}
     timeout = current_app.config.get("OAUTH_HTTP_TIMEOUT_SECONDS", 10)
-    user_response = requests.get("https://api.github.com/user", headers=headers, timeout=timeout)
-    user_response.raise_for_status()
-    profile = user_response.json()
-    emails_response = requests.get("https://api.github.com/user/emails", headers=headers, timeout=timeout)
-    emails_response.raise_for_status()
-    emails = emails_response.json()
+    try:
+        user_response = requests.get("https://api.github.com/user", headers=headers, timeout=timeout)
+        user_response.raise_for_status()
+        profile = user_response.json()
+        emails_response = requests.get("https://api.github.com/user/emails", headers=headers, timeout=timeout)
+        emails_response.raise_for_status()
+        emails = emails_response.json()
+    except requests.RequestException as error:
+        raise OAuthProviderError("OAUTH_PROVIDER_UNAVAILABLE") from error
     verified = next((item for item in emails if item.get("primary") and item.get("verified")), None)
     email = verified.get("email").lower() if verified and verified.get("email") else None
     return OAuthIdentity("github", str(profile["id"]), email, bool(email), profile.get("name") or profile.get("login"))
@@ -166,6 +198,8 @@ def complete_authorization(provider, code, state):
         raise ValueError("OAuth flow expired or was not initiated.")
     if not state or not secrets.compare_digest(str(state), str(flow.get("state", ""))):
         raise ValueError("OAuth state validation failed.")
+    if not isinstance(code, str) or not code or len(code) > 2048:
+        raise ValueError("OAuth authorization code is invalid.")
     secret = _client_secret(provider, config)
     if not secret:
         raise RuntimeError(f"{provider.title()} OAuth client secret is not configured.")
@@ -178,8 +212,11 @@ def complete_authorization(provider, code, state):
         "code_verifier": flow["verifier"],
     }
     timeout = current_app.config.get("OAUTH_HTTP_TIMEOUT_SECONDS", 10)
-    response = requests.post(config["token"], data=payload, headers={"Accept": "application/json"}, timeout=timeout)
-    response.raise_for_status()
+    try:
+        response = requests.post(config["token"], data=payload, headers={"Accept": "application/json"}, timeout=timeout)
+        response.raise_for_status()
+    except requests.RequestException as error:
+        raise OAuthProviderError("OAUTH_PROVIDER_UNAVAILABLE") from error
     tokens = response.json()
     if tokens.get("error"):
         raise ValueError("OAuth provider rejected the authorization code.")

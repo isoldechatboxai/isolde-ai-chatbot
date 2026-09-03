@@ -81,6 +81,8 @@ class TestProductionConfigValidation:
             GEMINI_API_KEY = "test-gemini-api-key"
             GEMINI_MODEL = "gemini-1.5-flash"
             CORS_ORIGINS = ["https://example.com"]
+            PUBLIC_APP_URL = "https://example.com"
+            REQUIRE_EMAIL_VERIFICATION = False
             RATELIMIT_STORAGE_URI = "redis://redis:6379/0"
             CANCELLATION_REDIS_URL = "redis://redis:6379/1"
             RAG_STORAGE_BACKEND = "database"
@@ -156,6 +158,23 @@ class TestProductionConfigValidation:
         production_config = self._make_production_config(RATELIMIT_STORAGE_URI="memory://")
         with pytest.raises(RuntimeError, match="RATELIMIT_STORAGE_URI"):
             production_config.validate()
+
+    def test_production_rejects_non_https_public_and_cors_urls(self):
+        with pytest.raises(RuntimeError, match="PUBLIC_APP_URL"):
+            self._make_production_config(PUBLIC_APP_URL="http://example.com").validate()
+        with pytest.raises(RuntimeError, match="CORS_ORIGINS"):
+            self._make_production_config(CORS_ORIGINS=["https://example.com/path"]).validate()
+
+    def test_production_requires_complete_oauth_configuration(self):
+        with pytest.raises(RuntimeError, match="Google OAuth configuration is incomplete"):
+            self._make_production_config(GOOGLE_OAUTH_CLIENT_ID="client-only").validate()
+
+    def test_production_requires_smtp_when_email_verification_is_enabled(self):
+        with pytest.raises(RuntimeError, match="Email verification requires configured SMTP"):
+            self._make_production_config(
+                REQUIRE_EMAIL_VERIFICATION=True, MAIL_SERVER="", MAIL_USERNAME="",
+                MAIL_PASSWORD="", MAIL_DEFAULT_SENDER="",
+            ).validate()
 
     def test_production_requires_redis_rate_limit_storage(self):
         production_config = self._make_production_config(RATELIMIT_STORAGE_URI="file:///tmp/limits")

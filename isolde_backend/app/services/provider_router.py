@@ -26,7 +26,7 @@ from typing import Optional, List, Dict, Generator, Any
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from flask import current_app
+from flask import current_app, has_app_context
 from app.models.user import Setting
 
 # ---------------------------------------------------------------------------
@@ -124,6 +124,10 @@ def _provider_error_is_retryable(error: Exception, category: str) -> bool:
     return category in {"PROVIDER_RATE_LIMITED", "PROVIDER_TIMEOUT"} or any(
         marker in value for marker in (" 500", "(500", " 502", "(502", " 503", "(503", " 504", "(504")
     )
+
+
+def _provider_timeout() -> int:
+    return current_app.config.get("PROVIDER_HTTP_TIMEOUT_SECONDS", DEFAULT_TIMEOUT) if has_app_context() else DEFAULT_TIMEOUT
 
 # ---------------------------------------------------------------------------
 # Connection-pooled HTTP session (singleton, thread-safe)
@@ -337,7 +341,43 @@ class ProviderManager:
         if legacy_key:
             return self.detect_provider_from_key(legacy_key.strip())
 
+        # Production permits any supported provider to bootstrap from an
+        # environment credential. Select the first actually configured
+        # provider deterministically when no admin selection exists.
+        for provider in ("openai", "claude", "groq", "openrouter", "deepseek", "mistral"):
+            try:
+                if self.get_api_key_for_provider(provider):
+                    return provider
+            except RuntimeError:
+                continue
+
         return "gemini"
+
+    def generation_capability_status(self) -> str:
+        """Return whether the providers the router can actually call are ready."""
+        configured = False
+        for provider in self.get_available_providers():
+            if self._get_call_fn(provider) is None:
+                continue
+            try:
+                self.get_api_key_for_provider(provider)
+            except RuntimeError:
+                continue
+            configured = True
+            if self.health_cache.is_healthy(provider):
+                return "AVAILABLE"
+        return "UNAVAILABLE" if configured else "NOT_CONFIGURED"
+
+    def embedding_capability_status(self) -> str:
+        """RAG embeddings currently require the active Gemini or OpenAI adapter."""
+        provider = self.resolve_active_provider()
+        if provider not in {"gemini", "openai"}:
+            return "NOT_CONFIGURED"
+        try:
+            self.get_api_key_for_provider(provider)
+        except RuntimeError:
+            return "NOT_CONFIGURED"
+        return "AVAILABLE" if self.health_cache.is_healthy(provider) else "UNAVAILABLE"
 
     @staticmethod
     def detect_provider_from_key(api_key: str) -> str:
@@ -361,10 +401,10 @@ class ProviderManager:
             if p not in ordered:
                 ordered.append(p)
         try:
-            from flask import has_request_context
-            from flask_jwt_extended import get_jwt_identity
+            from flask import g, has_request_context
             from app.services.organization_policy_service import effective_policy_for_user
-            identity = get_jwt_identity() if has_request_context() else None
+            jwt_claims = getattr(g, "_jwt_extended_jwt", {}) if has_request_context() else {}
+            identity = jwt_claims.get("sub") if isinstance(jwt_claims, dict) else None
             if identity:
                 allowed = effective_policy_for_user(identity)["allowed_providers"]
                 if allowed is not None:
@@ -465,7 +505,7 @@ class ProviderManager:
 
     # -- retry with backoff -------------------------------------------------
     def _execute_with_retry(self, func, provider: str, timeout: Optional[int] = None) -> ProviderResponse:
-        timeout = timeout or DEFAULT_TIMEOUT
+        timeout = timeout or _provider_timeout()
         breaker = self._get_breaker(provider)
         last_error = ""
 
@@ -879,7 +919,10 @@ class ProviderManager:
 
             start = time.time()
             try:
-                stream = fn(prompt, history, sys_prompt, timeout or DEFAULT_TIMEOUT)
+                stream = fn(
+                    prompt, history, sys_prompt,
+                    timeout or _provider_timeout(),
+                )
                 for chunk in stream:
                     if cancel_event is not None and cancel_event.is_set():
                         close = getattr(stream, "close", None)
@@ -1082,8 +1125,8 @@ def embed_text(text: str):
         resp = session.post(
             "https://api.openai.com/v1/embeddings",
             headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json={"model": "text-embedding-3-small", "input": text},
-            timeout=30,
+            json={"model": current_app.config.get("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"), "input": text},
+            timeout=_provider_timeout(),
         )
         if resp.status_code == 200:
             try:
@@ -1105,7 +1148,10 @@ def embed_text(text: str):
 
     api_key = manager.get_api_key_for_provider("gemini")
     client  = genai.Client(api_key=api_key)
-    result  = client.models.embed_content(model="gemini-embedding-2", contents=text)
+    result  = client.models.embed_content(
+        model=current_app.config.get("GEMINI_EMBEDDING_MODEL") or "gemini-embedding-2",
+        contents=text,
+    )
     return list(result.embeddings[0].values)
 
 def analyze_image(image_bytes: bytes, mime_type: str, question: str) -> str:

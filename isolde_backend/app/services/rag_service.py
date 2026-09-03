@@ -25,6 +25,10 @@ INDEX_FILENAME = "index.json"
 DEFAULT_RELEVANCE_THRESHOLD = 0.55
 
 
+class RAGEmbeddingUnavailable(RuntimeError):
+    """Raised when a requested RAG operation cannot obtain an embedding."""
+
+
 def _index_path():
     store_dir = current_app.config.get("VECTOR_STORE_DIR", "vector_store")
     os.makedirs(store_dir, exist_ok=True)
@@ -104,18 +108,16 @@ def _extract_pdf_text(file_path: str, filename: str) -> str:
             for page in reader.pages:
                 try:
                     extracted = page.extract_text()
-                except Exception as page_error:
-                    current_app.logger.error(
-                        f"Failed to extract a page from {filename}: {page_error}"
-                    )
+                except Exception:
+                    current_app.logger.error("PDF page extraction failed category=INVALID_DOCUMENT")
                     continue
 
                 if extracted:
                     text_parts.append(extracted)
 
         return "\n".join(text_parts)
-    except Exception as e:
-        current_app.logger.error(f"Failed to extract PDF {filename}: {e}")
+    except Exception:
+        current_app.logger.error("PDF extraction failed category=INVALID_DOCUMENT")
         return ""
 
 
@@ -150,8 +152,8 @@ def _extract_docx_text(file_path: str, filename: str) -> str:
                     text_parts.append(row_text)
 
         return "\n".join(text_parts)
-    except Exception as e:
-        current_app.logger.error(f"Failed to extract DOCX {filename}: {e}")
+    except Exception:
+        current_app.logger.error("DOCX extraction failed category=INVALID_DOCUMENT")
         return ""
 
 
@@ -168,7 +170,7 @@ def extract_text_from_file(file_path: str, filename: str) -> str:
     - Other plain-text files
     """
     if not file_path or not os.path.exists(file_path):
-        current_app.logger.error(f"File not found for extraction: {file_path}")
+        current_app.logger.error("Document extraction failed category=FILE_NOT_FOUND")
         return ""
 
     ext = filename.lower().rsplit(".", 1)[-1].strip() if "." in filename else ""
@@ -197,14 +199,14 @@ def extract_text_from_file(file_path: str, filename: str) -> str:
             except ImportError:
                 current_app.logger.error("openpyxl is not installed. Run: pip install openpyxl")
                 return f"[XLSX extraction failed. openpyxl not installed. File: {filename}]"
-            except Exception as e:
-                current_app.logger.error(f"Failed to extract XLSX {filename}: {e}")
+            except Exception:
+                current_app.logger.error("XLSX extraction failed category=INVALID_DOCUMENT")
                 return ""
 
         with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
             return f.read()
-    except Exception as e:
-        current_app.logger.error(f"Failed to read file {filename}: {e}")
+    except Exception:
+        current_app.logger.error("Document extraction failed category=INVALID_DOCUMENT")
         return ""
 
 
@@ -240,6 +242,7 @@ def index_document(file_id: str, filename: str, text: str, user_id: Optional[str
         return 0
 
     embedded_chunks = []
+    embedding_failed = False
 
     for chunk in chunks:
         try:
@@ -251,11 +254,14 @@ def index_document(file_id: str, filename: str, text: str, user_id: Optional[str
             vector = [float(value) for value in vector]
 
             embedded_chunks.append((chunk, vector))
-        except Exception as e:
-            current_app.logger.error(f"Embedding failed for {filename}: {e}")
+        except Exception:
+            embedding_failed = True
+            current_app.logger.error("Document embedding failed category=PROVIDER_ERROR")
             continue
 
     if not embedded_chunks:
+        if embedding_failed:
+            raise RAGEmbeddingUnavailable("RAG_EMBEDDING_UNAVAILABLE")
         return 0
 
     document = RAGDocument(id=str(file_id), user_id=user_id, filename=filename, chunk_count=len(embedded_chunks))
@@ -342,7 +348,10 @@ def import_legacy_json(path: str):
     return {"documents": imported_documents, "chunks": imported_chunks, "ownerless_skipped": skipped_ownerless}
 
 
-def search(query: str, top_k: int = 4, user_id: Optional[str] = None) -> List[Dict]:
+def search(
+    query: str, top_k: int = 4, user_id: Optional[str] = None,
+    require_embedding: bool = False,
+) -> List[Dict]:
     """
     Return the top_k most relevant chunks for a query, deduplicated.
     """
@@ -359,11 +368,15 @@ def search(query: str, top_k: int = 4, user_id: Optional[str] = None) -> List[Di
     try:
         query_vector_raw = embed_text(query)
         query_vec = np.array(query_vector_raw, dtype=float).flatten()
-    except Exception as e:
-        current_app.logger.error(f"Query embedding failed: {e}")
+    except Exception:
+        current_app.logger.error("Query embedding failed category=PROVIDER_ERROR")
+        if require_embedding:
+            raise RAGEmbeddingUnavailable("RAG_EMBEDDING_UNAVAILABLE")
         return []
 
     if query_vec.size == 0:
+        if require_embedding:
+            raise RAGEmbeddingUnavailable("RAG_EMBEDDING_UNAVAILABLE")
         return []
 
     # Production PostgreSQL retrieval never materializes every embedding in

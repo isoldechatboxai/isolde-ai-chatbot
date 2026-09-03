@@ -31,6 +31,15 @@ unified_engine_bp = Blueprint("unified_engine_bp", __name__)
 HISTORY_LIMIT = 20
 
 
+def _engine_error(code, message, status):
+    if request.path.startswith("/api/v1/"):
+        return jsonify({
+            "status": "error", "error": {"code": code, "message": message},
+            "request_id": getattr(g, "request_id", None),
+        }), status
+    return jsonify({"error": message}), status
+
+
 # ---------------------------------------------------------------------------
 # Unified Authentication Decorator
 # ---------------------------------------------------------------------------
@@ -78,18 +87,17 @@ def unified_auth_required(required_permission=None):
                         if item.strip()
                     }
                     if required_permission and required_permission not in permissions and "admin" not in permissions:
-                        return jsonify({
-                            "error": "Forbidden",
-                            "message": f"API key lacks required permission: '{required_permission}'.",
-                        }), 403
+                        return _engine_error(
+                            "FORBIDDEN", f"API key lacks required permission: '{required_permission}'.", 403
+                        )
                     g.auth_user_id = key_record.user_id
                     g.auth_method = 'api_key'
                     g.api_key = key_record
                     return f(*args, **kwargs)
 
-            return jsonify({
-                "error": "Authentication required. Provide a valid JWT or Isolde API key."
-            }), 401
+            return _engine_error(
+                "AUTHENTICATION_REQUIRED", "Authentication required. Provide a valid JWT or Isolde API key.", 401
+            )
 
         return decorated_function
     return decorator
@@ -216,14 +224,16 @@ def handle_unified_chat():
 
     # -- 2. Parse & validate the request body ------------------------------
     data = request.get_json(silent=True)
-    if data is None:
-        return jsonify({"error": "Request body must be valid JSON."}), 400
+    if not isinstance(data, dict):
+        return _engine_error("VALIDATION_ERROR", "Request body must be a JSON object.", 400)
 
     raw_message = data.get("message", "")
     conversation_id = data.get("conversation_id")  # may be None
 
     if not is_non_empty(raw_message):
-        return jsonify({"error": "Message cannot be empty."}), 400
+        return _engine_error("VALIDATION_ERROR", "Message cannot be empty.", 400)
+    if len(raw_message) > current_app.config.get("CHAT_MAX_PROMPT_CHARS", 12_000):
+        return _engine_error("VALIDATION_ERROR", "Message exceeds the configured length limit.", 400)
 
     message = sanitize_text(raw_message)
 
@@ -232,14 +242,14 @@ def handle_unified_chat():
         convo = _get_or_create_conversation(current_user_id, conversation_id)
     except Exception as exc:
         db.session.rollback()
-        current_app.logger.error(f"Conversation resolution failed: {exc}")
-        return jsonify({"error": "Failed to resolve conversation."}), 500
+        current_app.logger.error("Conversation resolution failed category=DATABASE_ERROR")
+        return _engine_error("DATABASE_ERROR", "Failed to resolve conversation.", 500)
 
     # -- 6. Build conversation history for the provider --------------------
     try:
         history = _history_for_provider(convo)
     except Exception as exc:
-        current_app.logger.warning(f"History load failed (continuing without): {exc}")
+        current_app.logger.warning("History load failed category=DATABASE_ERROR")
         history = []
 
     # -- 7. Save the user message BEFORE generation ------------------------
@@ -247,8 +257,8 @@ def handle_unified_chat():
         _save_message(convo.id, "user", message)
     except Exception as exc:
         db.session.rollback()
-        current_app.logger.error(f"Failed to save user message: {exc}")
-        return jsonify({"error": "Failed to save message."}), 500
+        current_app.logger.error("Message persistence failed category=DATABASE_ERROR")
+        return _engine_error("DATABASE_ERROR", "Failed to save message.", 500)
 
     _try_legacy_history_save(current_user_id, convo.id, "user", message)
 
@@ -257,18 +267,18 @@ def handle_unified_chat():
         provider_result = generate_reply_with_usage(message, history=history)
         ai_reply = provider_result.text
     except RuntimeError as exc:
-        current_app.logger.error(f"AI service not configured: {exc}")
-        return jsonify({"error": "AI service is not configured on the server."}), 503
+        current_app.logger.error("AI generation failed category=PROVIDER_NOT_CONFIGURED")
+        return _engine_error("PROVIDER_NOT_CONFIGURED", "AI service is not configured on the server.", 503)
     except Exception as exc:
-        current_app.logger.error(f"Unified Engine AI Error: {exc}")
-        return jsonify({"error": "The AI service is temporarily unavailable."}), 502
+        current_app.logger.error("AI generation failed category=PROVIDER_UNAVAILABLE")
+        return _engine_error("PROVIDER_UNAVAILABLE", "The AI service is temporarily unavailable.", 502)
 
     # -- 9. Save the assistant reply ----------------------------------------
     try:
         _save_message(convo.id, "bot", ai_reply)
     except Exception as exc:
         db.session.rollback()
-        current_app.logger.error(f"Failed to save assistant message: {exc}")
+        current_app.logger.error("Assistant message persistence failed category=DATABASE_ERROR")
         # The reply was generated successfully; still return it to the caller.
 
     _try_legacy_history_save(current_user_id, convo.id, "assistant", ai_reply)

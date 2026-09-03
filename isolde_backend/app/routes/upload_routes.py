@@ -15,7 +15,7 @@ from app.services.provider_router import analyze_image
 from app.utils.validators import allowed_file
 from app.utils.logger import log_event
 
-from app.services.rag_service import index_document
+from app.services.rag_service import RAGEmbeddingUnavailable, index_document
 from app.services.storage_service import get_storage, StorageNotConfigured
 
 upload_bp = Blueprint("upload", __name__)
@@ -30,6 +30,20 @@ def _has_valid_image_signature(path, file_type):
     if file_type == "png":
         return header.startswith(b"\x89PNG\r\n\x1a\n")
     return header.startswith(b"\xff\xd8\xff")
+
+
+def _save_bounded_upload(file, path, max_bytes):
+    written = 0
+    with open(path, "xb") as target:
+        while True:
+            chunk = file.stream.read(64 * 1024)
+            if not chunk:
+                break
+            written += len(chunk)
+            if written > max_bytes:
+                raise ValueError("UPLOAD_TOO_LARGE")
+            target.write(chunk)
+    return written
 
 
 @upload_bp.route("/upload", methods=["POST"])
@@ -62,7 +76,17 @@ def upload_file():
     unique_name = f"incoming_{record_id}_{filename}"
     save_path = os.path.join(current_app.config["UPLOAD_FOLDER"], unique_name)
     os.makedirs(current_app.config["UPLOAD_FOLDER"], exist_ok=True)
-    file.save(save_path)
+    try:
+        _save_bounded_upload(file, save_path, int(current_app.config["MAX_CONTENT_LENGTH"]))
+    except ValueError:
+        if os.path.exists(save_path):
+            os.remove(save_path)
+        return jsonify({"error": "File too large."}), 413
+    except Exception:
+        if os.path.exists(save_path):
+            os.remove(save_path)
+        current_app.logger.error("Upload staging failed category=FILESYSTEM_ERROR")
+        return jsonify({"error": "File upload failed."}), 500
     question = request.form.get("question", "").strip()
     object_key = f"users/{user_id}/{record_id}/{filename}"
 
@@ -88,16 +112,16 @@ def upload_file():
             try:
                 with open(save_path, "rb") as image_file:
                     answer = analyze_image(image_file.read(), MIME_MAP[file_type], question)
-            except Exception as error:
+            except Exception:
                 os.remove(save_path)
-                current_app.logger.error("Image analysis failed: %s", error)
+                current_app.logger.error("Image analysis failed category=PROVIDER_ERROR")
                 return jsonify({"error": "Image analysis failed."}), 502
     else:
         try:
             text = extract_text(save_path, file_type)
-        except Exception as error:
+        except Exception:
             os.remove(save_path)
-            current_app.logger.error("Text extraction failed for %s: %s", filename, error)
+            current_app.logger.error("Text extraction failed category=INVALID_DOCUMENT")
             return jsonify({"error": "Could not extract text from this file."}), 422
         record.extracted_chars = len(text)
 
@@ -117,13 +141,7 @@ def upload_file():
         if file_type not in IMAGE_TYPES and text.strip():
             record.indexed = index_document(record.id, filename, text, user_id) > 0
             db.session.commit()
-    except StorageNotConfigured as error:
-        db.session.rollback()
-        if os.path.exists(save_path):
-            os.remove(save_path)
-        current_app.logger.error("Upload storage is not configured: %s", error)
-        return jsonify({"error": "File storage is not configured."}), 503
-    except Exception as error:
+    except RAGEmbeddingUnavailable:
         db.session.rollback()
         if metadata_committed:
             try:
@@ -131,15 +149,39 @@ def upload_file():
                 db.session.commit()
             except Exception:
                 db.session.rollback()
-                current_app.logger.exception("Failed to clean up upload metadata after processing failure.")
+                current_app.logger.error("Upload metadata cleanup failed category=DATABASE_ERROR")
         if os.path.exists(save_path):
             os.remove(save_path)
         if storage:
             try:
                 storage.delete(object_key)
             except Exception:
-                current_app.logger.exception("Failed to clean up object after upload failure.")
-        current_app.logger.error("File upload failed: %s", error)
+                current_app.logger.error("Upload cleanup failed category=STORAGE_ERROR")
+        current_app.logger.error("Upload indexing failed category=EMBEDDING_UNAVAILABLE")
+        return jsonify({"error": "RAG embedding service is unavailable."}), 503
+    except StorageNotConfigured:
+        db.session.rollback()
+        if os.path.exists(save_path):
+            os.remove(save_path)
+        current_app.logger.error("Upload storage failed category=NOT_CONFIGURED")
+        return jsonify({"error": "File storage is not configured."}), 503
+    except Exception:
+        db.session.rollback()
+        if metadata_committed:
+            try:
+                db.session.delete(record)
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+                current_app.logger.error("Upload metadata cleanup failed category=DATABASE_ERROR")
+        if os.path.exists(save_path):
+            os.remove(save_path)
+        if storage:
+            try:
+                storage.delete(object_key)
+            except Exception:
+                current_app.logger.error("Upload object cleanup failed category=STORAGE_ERROR")
+        current_app.logger.error("File upload failed category=STORAGE_OR_INDEXING_ERROR")
         return jsonify({"error": "File upload failed."}), 500
 
     log_event(current_app, "FILE_UPLOAD", f"{filename} ({file_type})", user_id)

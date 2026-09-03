@@ -78,3 +78,24 @@ Before release, validate real PostgreSQL, Redis, S3, SMTP, Stripe, OAuth, and
 AI-provider credentials in staging. Confirm login, provider generation,
 storage upload/download, billing webhooks, cancellation, and authenticated
 admin calls. This repository does not fabricate those external results.
+
+## External production E2E verification
+
+After deployment, provide smoke-test values through the invoking shell or CI
+secret store; never add them to a committed `.env` file. The account must be
+active, verified, and have enough AI credits. Then run:
+
+```powershell
+$env:RUN_EXTERNAL_E2E = "1"
+$env:ISOLDE_E2E_BASE_URL = "https://your-deployment.example"
+$env:ISOLDE_E2E_EMAIL = "e2e-account@example.com"
+$env:ISOLDE_E2E_PASSWORD = "from-secret-store"
+python -m pytest test/test_external_e2e.py -q
+```
+
+The harness verifies liveness, readiness, matching capability contracts,
+password authentication, real non-streaming and streaming provider execution,
+RAG querying, optional research with validated citations, and logout. Set
+`ISOLDE_E2E_UPLOAD_FILE` to a safe disposable PDF, DOCX, TXT, CSV, or XLSX file
+to include the real upload/indexing path. It never prints tokens, passwords,
+API keys, or response bodies on failure.

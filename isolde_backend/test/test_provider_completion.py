@@ -30,6 +30,23 @@ def test_non_gemini_provider_key_can_bootstrap_from_environment_config(app, monk
     assert manager.get_api_key_for_provider("openai") == "sk-test-environment-bootstrap"
 
 
+def test_non_gemini_environment_key_is_automatically_selected(app, monkeypatch):
+    manager = ProviderManager()
+    monkeypatch.setattr(manager, "_get_setting", lambda key: None)
+    for provider in ("GEMINI", "OPENAI", "CLAUDE", "GROQ", "OPENROUTER", "DEEPSEEK", "MISTRAL"):
+        monkeypatch.setitem(app.config, f"{provider}_API_KEY", "")
+    monkeypatch.setitem(app.config, "OPENAI_API_KEY", "sk-production-bootstrap")
+    assert manager.resolve_active_provider() == "openai"
+    assert manager.generation_capability_status() == "AVAILABLE"
+    assert manager.embedding_capability_status() == "AVAILABLE"
+
+
+def test_rag_capability_requires_an_embedding_capable_active_provider(app, monkeypatch):
+    manager = ProviderManager()
+    monkeypatch.setattr(manager, "resolve_active_provider", lambda: "claude")
+    assert manager.embedding_capability_status() == "NOT_CONFIGURED"
+
+
 def test_provider_response_preserves_authoritative_usage(app, monkeypatch):
     manager = ProviderManager()
     monkeypatch.setattr(manager, "get_model_for_provider", lambda provider: "test-model")

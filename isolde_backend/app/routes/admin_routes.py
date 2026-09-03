@@ -710,11 +710,16 @@ def admin_revoke_user_sessions(admin_user, user_id):
 @admin_bp.route("/admin/login", methods=["POST"], strict_slashes=False)
 def admin_login():
     data = request.get_json(silent=True) or {}
-    email = (data.get("email") or "").strip().lower()
-    password = data.get("password") or ""
+    if not isinstance(data, dict):
+        return jsonify({"status": "error", "message": "Request body must be a JSON object."}), 400
+    raw_email = data.get("email")
+    password = data.get("password")
 
-    if not email or not password:
+    if not isinstance(raw_email, str) or not isinstance(password, str) or not raw_email.strip() or not password:
         return jsonify({"status": "error", "message": "Email and password are required."}), 400
+    email = raw_email.strip().lower()
+    if not is_valid_email(email) or len(password) > 128:
+        return jsonify({"status": "error", "message": "Invalid email or password."}), 401
 
     user = User.query.filter_by(email=email).first()
 

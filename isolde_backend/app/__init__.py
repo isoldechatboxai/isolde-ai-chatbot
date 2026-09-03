@@ -139,6 +139,7 @@ def _apply_security_sensitive_rate_limits(app):
         "auth.verify_email": app.config["AUTH_RATE_LIMIT"],
         "auth.forgot_password": app.config["AUTH_RATE_LIMIT"],
         "auth.reset_password": app.config["AUTH_RATE_LIMIT"],
+        "auth.resend_verification": app.config["AUTH_RATE_LIMIT"],
         "auth.oauth_start": app.config["OAUTH_RATE_LIMIT"],
         "auth.oauth_callback": app.config["OAUTH_RATE_LIMIT"],
         "chat.chat": app.config["CHAT_RATE_LIMIT"],
@@ -148,6 +149,8 @@ def _apply_security_sensitive_rate_limits(app):
         "ai_studio_bp.test_playground_prompt": app.config["CHAT_RATE_LIMIT"],
         "admin.admin_login": app.config["AUTH_RATE_LIMIT"],
         "unified_engine_bp.handle_unified_chat": app.config["CHAT_RATE_LIMIT"],
+        "public_api_bp.versioned_research": app.config["CHAT_RATE_LIMIT"],
+        "public_api_bp.versioned_rag_query": app.config["CHAT_RATE_LIMIT"],
         "memory_bp.save_memory": app.config["CHAT_RATE_LIMIT"],
         "studio_bp.generate_image": app.config["CHAT_RATE_LIMIT"],
         "studio_bp.generate_video": app.config["CHAT_RATE_LIMIT"],
@@ -730,26 +733,24 @@ def create_app(config_class=Config):
     def capabilities():
         """Public, secret-free runtime capability registry for API clients."""
         from app.services.research_service import capability as research_capability
-        from app.services.provider_router import get_provider_manager, KNOWN_PROVIDERS
+        from app.services.provider_router import get_provider_manager
+        from app.services.storage_service import StorageNotConfigured, StorageService
+        from app.services.oauth_service import PROVIDERS, provider_is_configured
 
         manager = get_provider_manager()
-        configured_provider = False
-        for provider in KNOWN_PROVIDERS:
-            try:
-                if manager.get_api_key_for_provider(provider):
-                    configured_provider = True
-                    break
-            except Exception:
-                # A settings-store failure is not evidence that a provider is
-                # available.  Do not expose the underlying database error.
-                continue
-        google_configured = all(app.config.get(key) for key in (
-            "GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET", "GOOGLE_OAUTH_REDIRECT_URI",
-        ))
+        ai_status = manager.generation_capability_status()
+        embedding_status = manager.embedding_capability_status()
+        google_configured = provider_is_configured("google")
+        oauth_configured = any(provider_is_configured(provider) for provider in PROVIDERS)
         research_configured = research_capability()["configured"]
         cancellation_configured = bool(app.config.get("CANCELLATION_REDIS_URL"))
         image_status = "NOT_CONFIGURED" if not app.config.get("IMAGE_PROVIDER") else "NOT_SUPPORTED"
         video_status = "NOT_CONFIGURED" if not app.config.get("VIDEO_PROVIDER") else "NOT_SUPPORTED"
+        try:
+            StorageService(app.config)
+            upload_status = "AVAILABLE"
+        except StorageNotConfigured:
+            upload_status = "NOT_CONFIGURED"
         pgvector_status = "NOT_SUPPORTED"
         try:
             if db.engine.dialect.name == "postgresql":
@@ -759,21 +760,23 @@ def create_app(config_class=Config):
                 pgvector_status = "AVAILABLE" if installed else "NOT_CONFIGURED"
         except Exception:
             pgvector_status = "UNAVAILABLE"
-        rag_status = "AVAILABLE" if configured_provider else "NOT_CONFIGURED"
-        if app.config.get("IS_PRODUCTION") and configured_provider and pgvector_status != "AVAILABLE":
+        rag_status = embedding_status
+        if app.config.get("IS_PRODUCTION") and embedding_status == "AVAILABLE" and pgvector_status != "AVAILABLE":
             rag_status = "UNAVAILABLE" if pgvector_status == "UNAVAILABLE" else "NOT_CONFIGURED"
         return jsonify({"capabilities": {
-            "ai": "AVAILABLE" if configured_provider else "NOT_CONFIGURED",
-            "ai_streaming": "AVAILABLE" if configured_provider else "NOT_CONFIGURED",
+            "ai": ai_status,
+            "ai_streaming": ai_status,
             "rag": rag_status,
             "research": "AVAILABLE" if research_configured else "NOT_CONFIGURED",
             "tavily_research": "AVAILABLE" if research_configured else "NOT_CONFIGURED",
             "google_oauth": "AVAILABLE" if google_configured else "NOT_CONFIGURED",
+            "oauth": "AVAILABLE" if oauth_configured else "NOT_CONFIGURED",
+            "api_access": "AVAILABLE",
             "cancellation": "AVAILABLE" if cancellation_configured else "NOT_CONFIGURED",
             "admin": "AVAILABLE",
             "deep_research": "NOT_SUPPORTED",
             "pgvector": pgvector_status,
-            "file_upload": "AVAILABLE",
+            "file_upload": upload_status,
             "image_generation": image_status,
             "video_generation": video_status,
         }}), 200

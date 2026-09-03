@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from abc import ABC, abstractmethod
+from concurrent.futures import ThreadPoolExecutor
 import ipaddress
 import json
 import socket
@@ -16,6 +17,10 @@ from flask import current_app, has_app_context
 
 class ResearchUnavailable(RuntimeError):
     """Raised when requested web research has no usable configured provider."""
+
+
+class ResearchProviderError(RuntimeError):
+    """Raised when a configured research provider cannot complete safely."""
 
 
 class ResearchFetchBlocked(RuntimeError):
@@ -51,47 +56,55 @@ def _is_public_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -
     ))
 
 
-def fetch_evidence(source: dict, max_bytes: int = 200_000, max_chars: int = 12_000) -> dict:
+def fetch_evidence(
+    source: dict, max_bytes: int = 200_000, max_chars: int = 12_000,
+    timeout: int | None = None,
+) -> dict:
     """HTTPS-only bounded fetch; validates DNS before every request."""
     if max_bytes <= 0 or max_chars <= 0:
         raise ValueError("fetch limits must be positive")
     url = _canonical_url(str(source.get('canonical_url') or source.get('url') or ''))
     if not url or urlsplit(url).scheme != 'https': raise ResearchFetchBlocked('RESEARCH_FETCH_BLOCKED')
     _safe_host(urlsplit(url).hostname or '')
-    timeout = current_app.config.get('RESEARCH_HTTP_TIMEOUT_SECONDS', 8) if has_app_context() else 8
+    timeout = timeout or (current_app.config.get('RESEARCH_HTTP_TIMEOUT_SECONDS', 8) if has_app_context() else 8)
     response = requests.get(url, timeout=(min(3, timeout), timeout), allow_redirects=False, stream=True,
                             headers={'User-Agent': 'IsoldeResearch/1.0'})
-    if 300 <= response.status_code < 400: raise ResearchFetchBlocked('RESEARCH_FETCH_BLOCKED')
-    response.raise_for_status(); content_type = response.headers.get('Content-Type','').split(';')[0].lower()
-    if content_type not in {'text/html','text/plain','application/json'}: raise ResearchFetchBlocked('RESEARCH_FETCH_BLOCKED')
-    # Do not join an unbounded iterator before slicing it: that defeats the
-    # response-size limit and permits a remote server to exhaust worker memory.
-    chunks, received, oversized = [], 0, False
-    for chunk in response.iter_content(8192):
-        if not chunk:
-            continue
-        remaining = max_bytes - received
-        if remaining <= 0:
-            oversized = True
-            break
-        if len(chunk) > remaining:
-            chunks.append(chunk[:remaining])
-            oversized = True
-            break
-        chunks.append(chunk)
-        received += len(chunk)
-    body = b''.join(chunks)
-    text = body.decode(response.encoding or 'utf-8', errors='replace')
-    if content_type == 'text/html':
-        parser = _TextExtractor(); parser.feed(text); text = ' '.join(' '.join(parser.parts).split())
-    elif content_type == 'application/json':
-        try:
-            text = json.dumps(json.loads(text), ensure_ascii=False)
-        except (TypeError, ValueError) as exc:
-            raise ResearchFetchBlocked('RESEARCH_FETCH_INVALID_CONTENT') from exc
-    truncated = oversized or len(text) > max_chars; text = text[:max_chars]
-    return {'source_id': source['id'], 'canonical_url': url, 'evidence_mode': 'FULL_PAGE',
-            'content_type': content_type, 'text': text, 'retrieved_at': datetime.now(timezone.utc).isoformat(), 'truncated': truncated}
+    try:
+        if 300 <= response.status_code < 400: raise ResearchFetchBlocked('RESEARCH_FETCH_BLOCKED')
+        response.raise_for_status(); content_type = response.headers.get('Content-Type','').split(';')[0].lower()
+        if content_type not in {'text/html','text/plain','application/json'}: raise ResearchFetchBlocked('RESEARCH_FETCH_BLOCKED')
+        # Do not join an unbounded iterator before slicing it: that defeats the
+        # response-size limit and permits a remote server to exhaust worker memory.
+        chunks, received, oversized = [], 0, False
+        for chunk in response.iter_content(8192):
+            if not chunk:
+                continue
+            remaining = max_bytes - received
+            if remaining <= 0:
+                oversized = True
+                break
+            if len(chunk) > remaining:
+                chunks.append(chunk[:remaining])
+                oversized = True
+                break
+            chunks.append(chunk)
+            received += len(chunk)
+        body = b''.join(chunks)
+        text = body.decode(response.encoding or 'utf-8', errors='replace')
+        if content_type == 'text/html':
+            parser = _TextExtractor(); parser.feed(text); text = ' '.join(' '.join(parser.parts).split())
+        elif content_type == 'application/json':
+            try:
+                text = json.dumps(json.loads(text), ensure_ascii=False)
+            except (TypeError, ValueError) as exc:
+                raise ResearchFetchBlocked('RESEARCH_FETCH_INVALID_CONTENT') from exc
+        truncated = oversized or len(text) > max_chars; text = text[:max_chars]
+        return {'source_id': source['id'], 'canonical_url': url, 'evidence_mode': 'FULL_PAGE',
+                'content_type': content_type, 'text': text, 'retrieved_at': datetime.now(timezone.utc).isoformat(), 'truncated': truncated}
+    finally:
+        close = getattr(response, "close", None)
+        if callable(close):
+            close()
 
 
 @dataclass(frozen=True)
@@ -284,30 +297,51 @@ def select_research_provider(plan: ResearchPlan) -> ResearchProvider:
 
 
 def research(question: str, requested: bool) -> tuple[ResearchPlan, list[dict]]:
+    if not isinstance(question, str) or not question.strip():
+        raise ValueError("RESEARCH_QUERY_INVALID")
+    if len(question) > current_app.config.get("RESEARCH_QUERY_MAX_CHARS", 2_000):
+        raise ValueError("RESEARCH_QUERY_TOO_LARGE")
     plan = classify_intent(question)
     if not requested:
         return plan, []
     provider = select_research_provider(plan)
-    sources = provider.search(question, plan.max_sources or 3)
+    try:
+        sources = provider.search(question, plan.max_sources or 3)
+    except requests.RequestException as error:
+        current_app.logger.warning("Research provider failed category=UPSTREAM_UNAVAILABLE")
+        raise ResearchProviderError("RESEARCH_PROVIDER_UNAVAILABLE") from error
+    except (AttributeError, KeyError, TypeError, ValueError) as error:
+        current_app.logger.warning("Research provider failed category=INVALID_RESPONSE")
+        raise ResearchProviderError("RESEARCH_PROVIDER_INVALID_RESPONSE") from error
     fetch_budget = min(
         plan.max_parallel_requests,
         max(0, current_app.config.get("RESEARCH_FETCH_MAX_SOURCES", 2)),
     )
-    for source in sources[:fetch_budget]:
-        try:
-            source["fetched_evidence"] = fetch_evidence(
-                source,
-                max_bytes=current_app.config.get("RESEARCH_FETCH_MAX_BYTES", 200_000),
-                max_chars=current_app.config.get("RESEARCH_FETCH_MAX_CHARS", 12_000),
-            )
-            source["fetch_status"] = "COMPLETED"
-        except (ResearchFetchBlocked, requests.RequestException, ValueError) as exc:
-            # A page-level failure must not make a search result look like a
-            # verified full-page citation or leak the external URL in logs.
-            source["fetch_status"] = "BLOCKED" if isinstance(exc, ResearchFetchBlocked) else "FAILED"
-            current_app.logger.warning(
-                "Research evidence fetch did not complete category=%s source_id=%s",
-                str(exc) if isinstance(exc, ResearchFetchBlocked) else "RESEARCH_FETCH_FAILED",
-                source["id"],
-            )
+    if fetch_budget:
+        max_bytes = current_app.config.get("RESEARCH_FETCH_MAX_BYTES", 200_000)
+        max_chars = current_app.config.get("RESEARCH_FETCH_MAX_CHARS", 12_000)
+        http_timeout = current_app.config.get("RESEARCH_HTTP_TIMEOUT_SECONDS", 8)
+
+        def fetch_one(source):
+            try:
+                return fetch_evidence(
+                    source, max_bytes=max_bytes, max_chars=max_chars, timeout=http_timeout,
+                ), "COMPLETED", None
+            except ResearchFetchBlocked:
+                return None, "BLOCKED", "RESEARCH_FETCH_BLOCKED"
+            except (requests.RequestException, ValueError):
+                return None, "FAILED", "RESEARCH_FETCH_FAILED"
+
+        selected = sources[:fetch_budget]
+        with ThreadPoolExecutor(max_workers=fetch_budget, thread_name_prefix="research-fetch") as executor:
+            outcomes = list(executor.map(fetch_one, selected))
+        for source, (evidence, status, category) in zip(selected, outcomes):
+            source["fetch_status"] = status
+            if evidence:
+                source["fetched_evidence"] = evidence
+            if category:
+                current_app.logger.warning(
+                    "Research evidence fetch did not complete category=%s source_id=%s",
+                    category, source["id"],
+                )
     return plan, sources

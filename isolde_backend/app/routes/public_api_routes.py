@@ -3,8 +3,8 @@ from flask import Blueprint, current_app, g, jsonify, request
 
 from app.routes.unified_chat_engine import unified_auth_required
 from app.services.api_key_service import track_api_usage
-from app.services.rag_service import search as rag_search
-from app.services.research_service import ResearchUnavailable, build_result, research
+from app.services.rag_service import RAGEmbeddingUnavailable, search as rag_search
+from app.services.research_service import ResearchProviderError, ResearchUnavailable, build_result, research
 from app.utils.validators import is_non_empty, sanitize_text
 
 
@@ -30,12 +30,16 @@ def versioned_research():
     data = request.get_json(silent=True)
     if not isinstance(data, dict) or not is_non_empty(data.get("question")):
         return _error("VALIDATION_ERROR", "question is required.", 400)
+    if len(data["question"]) > current_app.config.get("RESEARCH_QUERY_MAX_CHARS", 2_000):
+        return _error("VALIDATION_ERROR", "question exceeds the configured length limit.", 400)
     question = sanitize_text(data["question"])
     try:
         _plan, sources = research(question, requested=True)
         result = build_result(question, True, sources)
     except ResearchUnavailable:
         return _error("RESEARCH_PROVIDER_NOT_CONFIGURED", "Web research is not configured.", 503)
+    except ResearchProviderError:
+        return _error("RESEARCH_PROVIDER_UNAVAILABLE", "Web research is temporarily unavailable.", 502)
     except Exception:
         current_app.logger.error("Versioned research failed category=RESEARCH_UNAVAILABLE")
         return _error("RESEARCH_UNAVAILABLE", "Web research is temporarily unavailable.", 502)
@@ -49,13 +53,21 @@ def versioned_rag_query():
     data = request.get_json(silent=True)
     if not isinstance(data, dict) or not is_non_empty(data.get("query")):
         return _error("VALIDATION_ERROR", "query is required.", 400)
+    if len(data["query"]) > current_app.config.get("RAG_QUERY_MAX_CHARS", 4_000):
+        return _error("VALIDATION_ERROR", "query exceeds the configured length limit.", 400)
     try:
         top_k = int(data.get("top_k", 4))
     except (TypeError, ValueError):
         return _error("VALIDATION_ERROR", "top_k must be an integer from 1 to 10.", 400)
     if top_k < 1 or top_k > 10:
         return _error("VALIDATION_ERROR", "top_k must be an integer from 1 to 10.", 400)
-    chunks = rag_search(sanitize_text(data["query"]), top_k=top_k, user_id=str(g.auth_user_id))
+    try:
+        chunks = rag_search(
+            sanitize_text(data["query"]), top_k=top_k,
+            user_id=str(g.auth_user_id), require_embedding=True,
+        )
+    except RAGEmbeddingUnavailable:
+        return _error("RAG_UNAVAILABLE", "RAG embedding service is unavailable.", 503)
     _track_request()
     return jsonify({
         "status": "success", "data": {"chunks": chunks},

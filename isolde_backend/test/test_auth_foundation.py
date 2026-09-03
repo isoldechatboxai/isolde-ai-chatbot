@@ -5,6 +5,7 @@ from app.extensions import db as database
 from app.models.auth_model import AuthSession, AuthToken, OAuthAccount, token_digest
 from app.models.user import User
 from app.services.oauth_service import OAuthIdentity
+from app.services import oauth_service
 from app.workers.email_worker import start_email_worker
 
 
@@ -184,6 +185,66 @@ def test_oauth_start_uses_state_nonce_and_pkce(client, app):
     assert "client_secret" not in location
 
 
+def test_oauth_start_is_truthful_when_configuration_is_incomplete(client, app):
+    app.config.update({
+        "GOOGLE_OAUTH_CLIENT_ID": "client-only",
+        "GOOGLE_OAUTH_CLIENT_SECRET": "",
+        "GOOGLE_OAUTH_REDIRECT_URI": "https://example.test/api/oauth/google/callback",
+    })
+    response = client.get("/api/oauth/google/start")
+    assert response.status_code == 503
+    assert response.get_json() == {"error": "OAuth provider is not configured."}
+
+
+def test_oidc_jwks_uses_the_configured_timeout(app, monkeypatch):
+    captured = {}
+
+    class JwkClient:
+        def __init__(self, url, timeout):
+            captured.update(url=url, timeout=timeout)
+
+        def get_signing_key_from_jwt(self, token):
+            return type("Key", (), {"key": "public-key"})()
+
+    monkeypatch.setattr(oauth_service.jwt, "PyJWKClient", JwkClient)
+    monkeypatch.setattr(oauth_service.jwt, "decode", lambda *args, **kwargs: {
+        "sub": "subject", "email": "user@example.test", "email_verified": True,
+        "nonce": "nonce", "name": "User",
+    })
+    app.config["OAUTH_HTTP_TIMEOUT_SECONDS"] = 4
+    identity = oauth_service._verified_oidc_identity(
+        "google", {"jwks": "https://example.test/jwks", "client_id": "client", "issuer": "issuer"},
+        "token", "nonce",
+    )
+    assert identity.subject == "subject"
+    assert captured == {"url": "https://example.test/jwks", "timeout": 4}
+
+
+def test_registration_reports_delivery_failure_and_resend_is_enumeration_safe(client, app, monkeypatch):
+    app.config.update({
+        "TESTING": False, "REQUIRE_EMAIL_VERIFICATION": True,
+        "MAIL_SERVER": "smtp.example.test", "MAIL_USERNAME": "mailer",
+        "MAIL_PASSWORD": "mail-secret", "MAIL_DEFAULT_SENDER": "noreply@example.test",
+    })
+    monkeypatch.setattr("app.routes.auth_routes._deliver_auth_email", lambda *args: False)
+    registration = _register(client, "delivery-failed@example.test")
+    assert registration.status_code == 503
+    assert registration.get_json()["verification_required"] is True
+    assert User.query.filter_by(email="delivery-failed@example.test").one()
+
+    known = client.post("/api/resend-verification", json={"email": "delivery-failed@example.test"})
+    unknown = client.post("/api/resend-verification", json={"email": "unknown@example.test"})
+    assert known.status_code == unknown.status_code == 200
+    assert known.get_json() == unknown.get_json()
+
+
+def test_authentication_endpoints_reject_non_object_json(client):
+    for path in ("/api/forgot-password", "/api/reset-password", "/api/resend-verification", "/api/verify-email"):
+        response = client.post(path, json=["not", "an", "object"])
+        assert response.status_code == 400
+        assert response.get_json() == {"error": "Invalid JSON payload."}
+
+
 def test_oauth_provider_status_exposes_configuration_without_secrets(client, app):
     app.config.update({
         "GOOGLE_OAUTH_CLIENT_ID": "test-client",
@@ -274,3 +335,15 @@ def test_oauth_link_does_not_complete_for_disabled_user(client, db, monkeypatch)
 
     assert response.status_code == 401
     assert OAuthAccount.query.filter_by(provider="google", provider_subject="subject-disabled").first() is None
+
+
+def test_oauth_upstream_failure_is_normalized_without_details(client, monkeypatch, caplog):
+    secret_detail = "upstream-secret-response"
+    monkeypatch.setattr(
+        "app.routes.auth_routes.complete_authorization",
+        lambda *args: (_ for _ in ()).throw(oauth_service.OAuthProviderError(secret_detail)),
+    )
+    response = client.get("/api/oauth/google/callback?code=test&state=test")
+    assert response.status_code == 502
+    assert response.get_json() == {"error": "OAuth provider is temporarily unavailable."}
+    assert secret_detail not in caplog.text

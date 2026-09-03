@@ -12,6 +12,7 @@ def test_public_capabilities_are_truthful_and_secret_free(client, app):
     assert response.get_json() == {"capabilities": {
         "ai": "NOT_CONFIGURED", "ai_streaming": "NOT_CONFIGURED", "rag": "NOT_CONFIGURED",
         "research": "NOT_CONFIGURED", "google_oauth": "NOT_CONFIGURED",
+        "oauth": "NOT_CONFIGURED", "api_access": "AVAILABLE",
         "cancellation": "NOT_CONFIGURED", "admin": "AVAILABLE",
         "deep_research": "NOT_SUPPORTED", "pgvector": "NOT_SUPPORTED",
         "tavily_research": "NOT_CONFIGURED", "file_upload": "AVAILABLE",
@@ -33,6 +34,8 @@ def test_public_capabilities_report_configured_integrations_without_secrets(clie
     assert payload["capabilities"]["research"] == "AVAILABLE"
     assert payload["capabilities"]["tavily_research"] == "AVAILABLE"
     assert payload["capabilities"]["google_oauth"] == "AVAILABLE"
+    assert payload["capabilities"]["oauth"] == "AVAILABLE"
+    assert payload["capabilities"]["api_access"] == "AVAILABLE"
     assert payload["capabilities"]["cancellation"] == "AVAILABLE"
     assert payload["capabilities"]["pgvector"] == "NOT_SUPPORTED"
     assert "secret" not in response.get_data(as_text=True)

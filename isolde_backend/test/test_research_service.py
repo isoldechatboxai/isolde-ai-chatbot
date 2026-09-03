@@ -147,3 +147,17 @@ def test_research_sse_events_are_typed_and_never_deltas():
         "research_cross_check", "research_citation",
     ]
     assert all("delta" not in payload for payload in payloads)
+
+
+def test_research_provider_failure_is_normalized_without_response_body(app, monkeypatch, caplog):
+    app.config["TAVILY_API_KEY"] = "provider-secret"
+    secret_body = "upstream body containing secret-value"
+    monkeypatch.setattr(
+        research_service.TavilySearchProvider, "search",
+        lambda *_args: (_ for _ in ()).throw(research_service.requests.Timeout(secret_body)),
+    )
+    with app.app_context(), pytest.raises(
+        research_service.ResearchProviderError, match="RESEARCH_PROVIDER_UNAVAILABLE"
+    ):
+        research_service.research("latest release", requested=True)
+    assert secret_body not in caplog.text

@@ -7,6 +7,7 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 from werkzeug.utils import secure_filename
 
 from app.services.rag_service import (
+    RAGEmbeddingUnavailable,
     process_and_index_file,
     list_documents as list_owned_documents,
     get_document as get_owned_document,
@@ -154,15 +155,13 @@ def upload_rag_file():
                 "message": "File uploaded but no indexable text was found. The file may be empty or unreadable."
             }), 422
 
-        current_app.logger.info(
-            "RAG file indexed: %s (%s chunks) by user: %s", safe_name, indexed_chunks, user_id
-        )
+        current_app.logger.info("RAG file indexed chunks=%s", indexed_chunks)
 
         try:
             os.remove(file_path)
             file_path = None
-        except OSError as cleanup_error:
-            current_app.logger.warning("Indexed RAG upload cleanup failed: %s", cleanup_error)
+        except OSError:
+            current_app.logger.warning("Indexed RAG upload cleanup failed category=FILESYSTEM_ERROR")
 
         return jsonify({
             "status": "success",
@@ -171,8 +170,18 @@ def upload_rag_file():
             "chunks_indexed": indexed_chunks
         }), 200
 
-    except Exception as e:
-        current_app.logger.error("RAG indexing error for %s: %s", safe_name, e)
+    except RAGEmbeddingUnavailable:
+        current_app.logger.error("RAG indexing failed category=EMBEDDING_UNAVAILABLE")
+        if file_path:
+            try:
+                os.remove(file_path)
+            except OSError:
+                pass
+        return jsonify({
+            "status": "error", "message": "RAG embedding service is unavailable."
+        }), 503
+    except Exception:
+        current_app.logger.error("RAG indexing failed category=INDEXING_ERROR")
 
         if file_path:
             try:
