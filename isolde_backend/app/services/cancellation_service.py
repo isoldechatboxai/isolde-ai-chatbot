@@ -73,10 +73,11 @@ class CancellationStore:
                 raise ValueError("Generation ID is already registered.")
             self._memory[generation_id] = {"owner": owner, "conversation_id": str(conversation_id or ""), "cancelled": False, "expires": expires}
 
-    def cancel(self, generation_id, owner):
+    def cancel(self, generation_id, owner=None):
         client = self._redis()
         if client is not None:
-            script = """
+            if owner is not None:
+                script = """
 local raw = redis.call('GET', KEYS[1])
 if not raw then return 0 end
 local value = cjson.decode(raw)
@@ -85,21 +86,34 @@ value.cancelled = true
 redis.call('SET', KEYS[1], cjson.encode(value), 'EX', ARGV[2])
 return 1
 """
-            try:
-                return int(client.eval(script, 1, self._key(generation_id), owner, int(current_app.config.get("CANCELLATION_TTL_SECONDS", 900))))
-            except Exception as error:
-                raise CancellationStoreUnavailable("Cancellation storage is unavailable.") from error
+                try:
+                    return int(client.eval(script, 1, self._key(generation_id), owner, int(current_app.config.get("CANCELLATION_TTL_SECONDS", 900))))
+                except Exception as error:
+                    raise CancellationStoreUnavailable("Cancellation storage is unavailable.") from error
+            else:
+                script = """
+local raw = redis.call('GET', KEYS[1])
+if not raw then return 0 end
+local value = cjson.decode(raw)
+value.cancelled = true
+redis.call('SET', KEYS[1], cjson.encode(value), 'EX', ARGV[1])
+return 1
+"""
+                try:
+                    return int(client.eval(script, 1, self._key(generation_id), int(current_app.config.get("CANCELLATION_TTL_SECONDS", 900))))
+                except Exception as error:
+                    raise CancellationStoreUnavailable("Cancellation storage is unavailable.") from error
         with self._lock:
             self._purge_memory()
             value = self._memory.get(generation_id)
             if value is None:
                 return 0
-            if value["owner"] != owner:
+            if owner is not None and value["owner"] != owner:
                 return -1
             value["cancelled"] = True
             return 1
 
-    def is_cancelled(self, generation_id, owner):
+    def is_cancelled(self, generation_id, owner=None):
         client = self._redis()
         try:
             raw = client.get(self._key(generation_id)) if client is not None else None
@@ -109,13 +123,21 @@ return 1
             if not raw:
                 return False
             value = json.loads(raw)
-            return value.get("owner") == owner and value.get("cancelled") is True
+            if owner is not None:
+                return value.get("owner") == owner and value.get("cancelled") is True
+            return value.get("cancelled") is True
         with self._lock:
             self._purge_memory()
             value = self._memory.get(generation_id)
-            return bool(value and value["owner"] == owner and value["cancelled"])
+            if not value:
+                return False
+            if owner is not None and value["owner"] != owner:
+                return False
+            return bool(value["cancelled"])
 
-    def unregister(self, generation_id, owner):
+    def unregister(self, generation_id, owner=None):
+        if owner is None:
+            return self.release(generation_id)
         client = self._redis()
         if client is not None:
             script = """
@@ -134,6 +156,22 @@ return redis.call('DEL', KEYS[1])
                 del self._memory[generation_id]
                 return 1
             return -1 if value else 0
+
+    def release(self, generation_id, owner=None):
+        """Release an active generation from tracking."""
+        if owner is not None:
+            return self.unregister(generation_id, owner)
+        client = self._redis()
+        if client is not None:
+            try:
+                return int(client.delete(self._key(generation_id)))
+            except Exception as error:
+                raise CancellationStoreUnavailable("Cancellation storage is unavailable.") from error
+        with self._lock:
+            if generation_id in self._memory:
+                del self._memory[generation_id]
+                return 1
+            return 0
 
     def _purge_memory(self):
         now = time.monotonic()

@@ -183,7 +183,7 @@ def _unregister_generation(generation_id):
         entry = _ACTIVE_GENERATIONS.pop(generation_id, None)
     if entry:
         try:
-            cancellation_store.unregister(generation_id, entry["owner"])
+            cancellation_store.release(generation_id, entry["owner"])
         except CancellationStoreUnavailable:
             current_app.logger.error("Unable to clean shared cancellation state for generation %s", generation_id)
 
@@ -348,6 +348,9 @@ def chat():
     data = request.get_json(silent=True) or {}
     if not isinstance(data, dict):
         return jsonify({"error": "Request body must be a JSON object."}), 400
+
+    if _is_truthy(data.get("stream")):
+        return stream_chat()
 
     raw_message = data.get("message", "")
     conversation_id = data.get("conversation_id")
@@ -665,12 +668,16 @@ def stream_chat():
         def generate():
             provider_stream = None
             try:
-                yield f": generation_id {generation_id}\n\n"
+                # Anti-buffering initial flush ping
+                yield ": ping\n\n"
+                # Immediately emit initial event with generation_id
+                yield f"data: {json.dumps({'event': 'generation_started', 'generation_id': generation_id, 'delta': ''}, ensure_ascii=False)}\n\n"
+
                 if research_result:
                     yield from _research_sse_events(research_result)
 
                 if stop_event.is_set():
-                    yield "data: [ERROR]\n\n" if stop_event.failed else "data: [Generation Stopped by User]\n\n"
+                    yield f"data: {json.dumps({'event': 'cancelled', 'delta': '', 'generation_id': generation_id}, ensure_ascii=False)}\n\n"
                     yield "data: [DONE]\n\n"
                     return
 
@@ -686,11 +693,11 @@ def stream_chat():
                         close = getattr(provider_stream, "close", None)
                         if callable(close):
                             close()
-                        yield "data: [ERROR]\n\n" if stop_event.failed else "data: [Generation Stopped by User]\n\n"
+                        yield f"data: {json.dumps({'event': 'cancelled', 'delta': '', 'generation_id': generation_id}, ensure_ascii=False)}\n\n"
                         yield "data: [DONE]\n\n"
                         return
                     chunks.append(chunk)
-                    yield f"data: {json.dumps({'delta': chunk})}\n\n"
+                    yield f"data: {json.dumps({'delta': chunk, 'generation_id': generation_id}, ensure_ascii=False)}\n\n"
 
                 reply_text = "".join(chunks)
 
@@ -730,14 +737,12 @@ def stream_chat():
 
                     except Exception as e:
                         db.session.rollback()
-                        current_app.logger.error("Stream persistence failed category=DATABASE_ERROR")
-
-                    # Streaming usage remains unavailable unless a provider's
-                    # terminal event supplies authoritative metadata.
+                        current_app.logger.error("Stream persistence failed category=DATABASE_ERROR: %s", e)
 
             except Exception as e:
-                current_app.logger.error("Streaming failed category=PROVIDER_ERROR")
-                yield "data: [ERROR]\n\n"
+                current_app.logger.error("Streaming failed category=PROVIDER_ERROR: %s", e)
+                yield f"data: {json.dumps({'event': 'error', 'error': 'Streaming encountered an error.', 'generation_id': generation_id}, ensure_ascii=False)}\n\n"
+                yield "data: [DONE]\n\n"
 
             finally:
                 close = getattr(provider_stream, "close", None)
@@ -749,11 +754,14 @@ def stream_chat():
 
         response = Response(
             stream_with_context(generate()),
-            mimetype="text/event-stream",
+            headers={
+                "Content-Type": "text/event-stream; charset=utf-8",
+                "Cache-Control": "no-cache, no-transform",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive",
+                "X-Generation-ID": generation_id,
+            },
         )
-        response.headers["X-Generation-ID"] = generation_id
-        response.headers["Cache-Control"] = "no-cache, no-store"
-        response.headers["X-Accel-Buffering"] = "no"
         application = current_app._get_current_object()
         def cleanup_on_close():
             with application.app_context():
@@ -766,6 +774,7 @@ def stream_chat():
             _unregister_generation(generation_id)
 
 
+@chat_bp.route("/chat/cancel", methods=["POST"], strict_slashes=False)
 @chat_bp.route("/chat/stop", methods=["POST"], strict_slashes=False)
 @jwt_required()
 def stop_chat_generation():
@@ -773,7 +782,7 @@ def stop_chat_generation():
     if not isinstance(data, dict):
         return jsonify({"error": "Request body must be a JSON object."}), 400
 
-    generation_id = data.get("generation_id")
+    generation_id = data.get("generation_id") or request.args.get("generation_id")
     user_id = get_jwt_identity()
     if not generation_id:
         return jsonify({"error": "generation_id is required."}), 400
@@ -783,15 +792,25 @@ def stop_chat_generation():
     except CancellationStoreUnavailable:
         return jsonify({"error": "Cancellation service unavailable."}), 503
     stopped = result == 1
-    if stopped:
-        with _ACTIVE_GENERATIONS_LOCK:
-            entry = _ACTIVE_GENERATIONS.get(generation_id)
-            if entry and entry.get("owner") == owner:
+    with _ACTIVE_GENERATIONS_LOCK:
+        entry = _ACTIVE_GENERATIONS.get(generation_id)
+        if entry:
+            if entry.get("owner") == owner or entry.get("user_id") == user_id:
                 entry["event"].set()
+                stopped = True
+            elif result == -1:
+                return jsonify({
+                    "ok": False,
+                    "status": "not_found",
+                    "stopped": False,
+                    "error": "Generation was not found or is not owned by this session."
+                }), 404
 
     if not stopped:
         return jsonify({
-            "status": "not_found", "stopped": False,
+            "ok": False,
+            "status": "not_found",
+            "stopped": False,
             "error": "Generation was not found or is not owned by this session."
         }), 404
-    return jsonify({"status": "success", "stopped": True}), 200
+    return jsonify({"ok": True, "status": "success", "stopped": True}), 200

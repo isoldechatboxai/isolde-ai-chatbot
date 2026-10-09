@@ -369,24 +369,26 @@
         });
         stopBtn.addEventListener("click", async (e) => {
           e.preventDefault();
-          if (!state.generationId) {
-            appendBotMessage("Cancellation is not yet available for this request.");
-            return;
+          const genId = state.generationId;
+          if (state.abortController) {
+            state.abortController.abort();
           }
-          try {
-              const response = await fetch("/api/chat/stop", {
+          if (genId) {
+            try {
+              await fetch("/api/chat/cancel", {
                 method: "POST",
                 headers: getAuthHeaders(true),
-                body: JSON.stringify({ generation_id: state.generationId }),
+                body: JSON.stringify({ generation_id: genId }),
+              }).catch(() => {
+                return fetch("/api/chat/stop", {
+                  method: "POST",
+                  headers: getAuthHeaders(true),
+                  body: JSON.stringify({ generation_id: genId }),
+                });
               });
-              const data = await response.json().catch(() => ({}));
-              if (!response.ok || data.stopped !== true) {
-                appendBotMessage(data.error || "This generation could not be cancelled.");
-                return;
-              }
-              if (state.abortController) state.abortController.abort();
-          } catch (err) {
-            appendBotMessage("Cancellation service could not be reached.");
+            } catch (err) {
+              // Ignore cancellation network errors
+            }
           }
         });
 
@@ -409,6 +411,7 @@
     function updateStopButtonVisibility() {
       if (dom.stopGenerationBtn) {
         dom.stopGenerationBtn.style.display = state.isLoading ? "inline-block" : "none";
+        dom.stopGenerationBtn.disabled = !state.isLoading;
       }
     }
 
@@ -1279,7 +1282,7 @@
         throw new Error(errorData.error || "AI service unavailable.");
       }
 
-      state.generationId = response.headers.get("X-Generation-ID");
+      state.generationId = response.headers.get("X-Generation-ID") || null;
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -1308,8 +1311,14 @@
           const lines = eventBuffer.split("\n\n");
           eventBuffer = lines.pop() || "";
           for (const line of lines) {
-            if (line.startsWith("data: ")) {
-              const dataText = line.replace("data: ", "").trim();
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith(":")) {
+              continue;
+            }
+            if (line.startsWith("data:") || trimmed.startsWith("data:")) {
+              hideTyping();
+              const dataIndex = line.indexOf("data:");
+              const dataText = line.substring(dataIndex + 5).trim();
               if (dataText === "[DONE]") { streamDone = true; break; }
               if (dataText === "[ERROR]") throw new Error("Streaming encountered an error.");
               if (dataText.startsWith("[SOURCES]")) {
@@ -1319,30 +1328,54 @@
                 }
                 continue;
               }
-              let delta = dataText;
+              let delta = "";
               try {
                 const parsed = JSON.parse(dataText);
-                if (parsed && typeof parsed.delta === "string") {
-                  delta = parsed.delta;
-                } else if (parsed && typeof parsed.event === "string" && parsed.event.startsWith("research_")) {
-                  // Typed research events are provenance metadata, never model
-                  // text. Keeping them out of the transcript avoids a source
-                  // payload being rendered as an assistant response.
-                  botMsgObj.research = botMsgObj.research || { citations: [], status: "" };
-                  if (parsed.event === "research_citation" && parsed.citation) {
-                    botMsgObj.research.citations.push(parsed.citation);
+                if (parsed && typeof parsed === "object") {
+                  if (parsed.generation_id) {
+                    state.generationId = parsed.generation_id;
                   }
-                  if (parsed.event === "research_completed") {
-                    botMsgObj.research.status = parsed.status || "COMPLETED";
+                  if (parsed.event === "generation_started") {
+                    continue;
                   }
-                  continue;
+                  if (parsed.event === "cancelled") {
+                    wasAborted = true;
+                    break;
+                  }
+                  if (parsed.event === "error") {
+                    throw new Error(parsed.error || "Streaming encountered an error.");
+                  }
+                  if (typeof parsed.event === "string" && parsed.event.startsWith("research_")) {
+                    botMsgObj.research = botMsgObj.research || { citations: [], status: "" };
+                    if (parsed.event === "research_citation" && parsed.citation) {
+                      botMsgObj.research.citations.push(parsed.citation);
+                    }
+                    if (parsed.event === "research_completed") {
+                      botMsgObj.research.status = parsed.status || "COMPLETED";
+                    }
+                    continue;
+                  }
+                  if (typeof parsed.delta === "string") {
+                    delta = parsed.delta;
+                  } else if (typeof parsed.chunk === "string") {
+                    delta = parsed.chunk;
+                  } else if (typeof parsed.content === "string") {
+                    delta = parsed.content;
+                  }
                 }
-              } catch (err) {}
-              accumulatedText += delta;
-              botMsgObj.text = accumulatedText;
-              if (typeof marked !== "undefined") textEl.innerHTML = sanitizeHtml(marked.parse(accumulatedText));
-              else textEl.innerHTML = escapeHtml(accumulatedText).replace(/\n/g, "<br>");
-              requestAnimationFrame(() => scrollToBottom());
+              } catch (parseErr) {
+                if (parseErr.message && parseErr.message.includes("Streaming encountered")) {
+                  throw parseErr;
+                }
+                delta = dataText;
+              }
+              if (delta) {
+                accumulatedText += delta;
+                botMsgObj.text = accumulatedText;
+                if (typeof marked !== "undefined") textEl.innerHTML = sanitizeHtml(marked.parse(accumulatedText));
+                else textEl.innerHTML = escapeHtml(accumulatedText).replace(/\n/g, "<br>");
+                requestAnimationFrame(() => scrollToBottom());
+              }
             }
           }
 
@@ -1353,10 +1386,13 @@
         }
       } finally {
         try { reader.cancel(); } catch (e) {}
+        hideTyping();
         state.abortController = null;
         state.streamingBotMsgObj = null;
         state.streamingTextEl = null;
         state.generationId = null;
+        updateStopButtonVisibility();
+        updateSendButtonState();
       }
 
       if (wasAborted) {
