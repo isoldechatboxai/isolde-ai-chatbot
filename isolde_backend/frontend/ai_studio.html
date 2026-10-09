@@ -1,31 +1,58 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Isolde — AI Studio</title>
-<link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Studio · Isolde AI</title>
+  <link rel="stylesheet" href="/style.css">
+  <script>
+    try {
+      const t = sessionStorage.getItem("isolde-theme");
+      if (t) document.documentElement.setAttribute("data-theme", t);
+    } catch(e) {}
+  </script>
 </head>
-<body>
-<div style="max-width:960px;margin:40px auto;padding:24px;">
-  <p><a href="/">← Workspace</a> · <a href="/smart_library.html">Files &amp; RAG</a> · <a href="/workflows.html">Workflows</a> · <a href="/billing.html">Usage &amp; Billing</a> · <a href="/organization.html">Organization</a></p>
-  <h1>AI Studio</h1>
+<body class="subpage-body">
+  <div class="subpage-container">
+    <nav class="subpage-header-nav" aria-label="Main Navigation">
+      <a href="/" class="brand">
+        <span class="brand-logo" aria-hidden="true"></span>
+        <span>Isolde AI</span>
+      </a>
+      <div class="subpage-nav-links">
+        <a href="/" class="subpage-nav-link">💬 Workspace</a>
+        <a href="/ai_studio.html" class="subpage-nav-link active">✨ AI Studio</a>
+        <a href="/smart_library.html" class="subpage-nav-link">📚 Files &amp; RAG</a>
+        <a href="/workflows.html" class="subpage-nav-link">🔁 Workflows</a>
+        <a href="/organization.html" class="subpage-nav-link">🏢 Organization</a>
+        <a href="/billing.html" class="subpage-nav-link">💳 Usage &amp; Billing</a>
+      </div>
+    </nav>
 
-  <section style="border:1px solid var(--border-color,#333);border-radius:10px;padding:16px;margin-bottom:20px;">
-    <h2>Custom Models</h2>
-    <p>Fine-tuning is not configured. Existing model records are shown read-only.</p>
-    <ul id="model-list"></ul>
-  </section>
+    <header style="margin-bottom: 24px;">
+      <h1 class="subpage-title">✨ AI Studio &amp; Playground</h1>
+      <p class="subpage-subtitle">Experiment with generative prompts, inspect fine-tuned models, and test completions.</p>
+    </header>
 
-  <section style="border:1px solid var(--border-color,#333);border-radius:10px;padding:16px;">
-    <h2>Playground</h2>
-    <p>Provider: automatic, subject to your tenant provider policy.</p>
-    <textarea id="playground-prompt" placeholder="Enter prompt..." rows="4" style="width:100%;"></textarea>
-    <button id="run-prompt-btn">Run</button>
-    <pre id="playground-output"></pre>
-  </section>
-</div>
+    <section class="subpage-card">
+      <h2 style="font-size: 18px; margin-bottom: 12px; color: var(--text-primary);">Custom Models</h2>
+      <p class="subpage-subtitle" style="margin-bottom: 12px;">Fine-tuning is not configured. Existing model records are shown read-only.</p>
+      <ul id="model-list" style="display: flex; flex-direction: column; gap: 8px;"></ul>
+    </section>
 
-<script src="ai_studio.js"></script>
+    <section class="subpage-card">
+      <h2 style="font-size: 18px; margin-bottom: 8px; color: var(--text-primary);">Prompt Playground</h2>
+      <p class="subpage-subtitle" style="margin-bottom: 16px;">Provider routing: automatic, subject to your active tenant policy.</p>
+      <div class="subpage-form-group">
+        <textarea id="playground-prompt" class="subpage-textarea" placeholder="Enter test prompt description..." rows="4"></textarea>
+      </div>
+      <div style="margin-bottom: 16px;">
+        <button id="run-prompt-btn" class="subpage-btn">▶ Run Prompt</button>
+      </div>
+      <pre id="playground-output" style="background: var(--bg-code); padding: 16px; border-radius: var(--radius-md); border: 1px solid var(--border-default); color: var(--text-primary); font-family: var(--font-mono); font-size: 13px; white-space: pre-wrap; word-break: break-word; min-height: 80px;"></pre>
+    </section>
+  </div>
+
+  <script src="ai_studio.js"></script>
 </body>
 </html>

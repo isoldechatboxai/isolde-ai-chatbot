@@ -230,15 +230,30 @@
                 grid-template-columns: 1fr;
             }
         }
-    </style>
+    <link rel="stylesheet" href="/style.css">
 </head>
-<body>
+<body class="subpage-body">
+    <div style="max-width: 900px; margin: 20px auto 0; padding: 0 24px;">
+        <nav class="subpage-header-nav" aria-label="Main Navigation">
+            <a href="/" class="brand">
+                <span class="brand-logo" aria-hidden="true"></span>
+                <span>Isolde AI</span>
+            </a>
+            <div class="subpage-nav-links">
+                <a href="/" class="subpage-nav-link">💬 Workspace</a>
+                <a href="/ai_studio.html" class="subpage-nav-link">✨ AI Studio</a>
+                <a href="/smart_library.html" class="subpage-nav-link active">📚 Files &amp; RAG</a>
+                <a href="/workflows.html" class="subpage-nav-link">🔁 Workflows</a>
+                <a href="/organization.html" class="subpage-nav-link">🏢 Organization</a>
+                <a href="/billing.html" class="subpage-nav-link">💳 Usage &amp; Billing</a>
+            </div>
+        </nav>
+    </div>
 
     <div class="smart-library-page" id="smart-library-app">
         
         <div class="sl-header">
             <h1><span>📚</span> Smart Library</h1>
-            <p><a href="/">← Workspace</a> · <a href="/ai_studio.html">AI Studio</a> · <a href="/workflows.html">Workflows</a> · <a href="/billing.html">Usage &amp; Billing</a> · <a href="/organization.html">Organization</a></p>
         </div>
 
         <div class="sl-upload-section">

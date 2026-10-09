@@ -847,8 +847,10 @@ def create_app(config_class=Config):
         return jsonify({"capabilities": {
             "ai": ai_status,
             "ai_streaming": ai_status,
+            "ai_image": image_status,
             "rag": rag_status,
             "research": "AVAILABLE" if research_configured else "NOT_CONFIGURED",
+            "web_search": "AVAILABLE" if research_configured else "NOT_CONFIGURED",
             "tavily_research": "AVAILABLE" if research_configured else "NOT_CONFIGURED",
             "google_oauth": "AVAILABLE" if google_configured else "NOT_CONFIGURED",
             "oauth": "AVAILABLE" if oauth_configured else "NOT_CONFIGURED",
@@ -932,6 +934,36 @@ def create_app(config_class=Config):
             FRONTEND_DIR,
             "register.html",
         )
+
+    @app.route("/organization", methods=["GET"])
+    @app.route("/organization.html", methods=["GET"])
+    def serve_organization_page():
+        return send_from_directory(FRONTEND_DIR, "organization.html")
+
+    @app.route("/workflows", methods=["GET"])
+    @app.route("/workflows.html", methods=["GET"])
+    def serve_workflows_page():
+        return send_from_directory(FRONTEND_DIR, "workflows.html")
+
+    @app.route("/billing", methods=["GET"])
+    @app.route("/billing.html", methods=["GET"])
+    def serve_billing_page():
+        return send_from_directory(FRONTEND_DIR, "billing.html")
+
+    @app.route("/ai_studio", methods=["GET"])
+    @app.route("/ai_studio.html", methods=["GET"])
+    def serve_ai_studio_page():
+        return send_from_directory(FRONTEND_DIR, "ai_studio.html")
+
+    @app.route("/smart_library", methods=["GET"])
+    @app.route("/smart_library.html", methods=["GET"])
+    def serve_smart_library_page():
+        return send_from_directory(FRONTEND_DIR, "smart_library.html")
+
+    @app.route("/marketplace", methods=["GET"])
+    @app.route("/marketplace.html", methods=["GET"])
+    def serve_marketplace_page():
+        return send_from_directory(FRONTEND_DIR, "marketplace.html")
 
     # ----------------------------------------------------------------
     # Development database initialization

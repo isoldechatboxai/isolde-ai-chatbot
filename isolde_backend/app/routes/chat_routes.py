@@ -405,9 +405,15 @@ def chat():
         else:
             web_context = ""
     except ResearchUnavailable:
-        return jsonify({"error": "RESEARCH_PROVIDER_NOT_CONFIGURED"}), 503
+        if _is_truthy(data.get("web_search")) or str(data.get("research_mode", "")).lower() == "required":
+            return jsonify({"error": "RESEARCH_PROVIDER_NOT_CONFIGURED"}), 503
+        current_app.logger.warning("Research auto-routed but provider not configured; proceeding without web search.")
+        web_context = ""
     except ResearchProviderError:
-        return jsonify({"error": "RESEARCH_PROVIDER_UNAVAILABLE"}), 502
+        if _is_truthy(data.get("web_search")) or str(data.get("research_mode", "")).lower() == "required":
+            return jsonify({"error": "RESEARCH_PROVIDER_UNAVAILABLE"}), 502
+        current_app.logger.warning("Research provider failed; proceeding without web search.")
+        web_context = ""
 
     corrections = find_relevant_corrections(message)
     correction_context = build_correction_context(corrections)
@@ -620,9 +626,15 @@ def stream_chat():
             else:
                 web_context = ""
         except ResearchUnavailable:
-            return jsonify({"error": "RESEARCH_PROVIDER_NOT_CONFIGURED"}), 503
+            if _is_truthy(data.get("web_search")) or str(data.get("research_mode", "")).lower() == "required":
+                return jsonify({"error": "RESEARCH_PROVIDER_NOT_CONFIGURED"}), 503
+            current_app.logger.warning("Research auto-routed but provider not configured; proceeding without web search.")
+            web_context = ""
         except ResearchProviderError:
-            return jsonify({"error": "RESEARCH_PROVIDER_UNAVAILABLE"}), 502
+            if _is_truthy(data.get("web_search")) or str(data.get("research_mode", "")).lower() == "required":
+                return jsonify({"error": "RESEARCH_PROVIDER_UNAVAILABLE"}), 502
+            current_app.logger.warning("Research provider failed; proceeding without web search.")
+            web_context = ""
 
         model_context = _model_selection_context(selected_model)
 

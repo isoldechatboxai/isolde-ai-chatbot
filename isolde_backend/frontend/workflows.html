@@ -1,34 +1,67 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Isolde — Workflows</title>
-  <link rel="stylesheet" href="style.css">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Workflows · Isolde AI</title>
+  <link rel="stylesheet" href="/style.css">
+  <script>
+    try {
+      const t = sessionStorage.getItem("isolde-theme");
+      if (t) document.documentElement.setAttribute("data-theme", t);
+    } catch(e) {}
+  </script>
   <script src="workflows.js" defer></script>
 </head>
-<body>
-  <main style="max-width:960px;margin:2rem auto;padding:1rem">
-    <p><a href="/">← Workspace</a> · <a href="/ai_studio.html">AI Studio</a> · <a href="/smart_library.html">Files &amp; RAG</a> · <a href="/billing.html">Usage &amp; Billing</a> · <a href="/organization.html">Organization</a></p>
-    <h1>Workflows</h1>
-    <p>Manual workflow definitions are available. Workflow execution is <strong>NOT_SUPPORTED</strong>.</p>
-    <div id="workflow-message" role="status" aria-live="polite">Loading…</div>
+<body class="subpage-body">
+  <div class="subpage-container">
+    <nav class="subpage-header-nav" aria-label="Main Navigation">
+      <a href="/" class="brand">
+        <span class="brand-logo" aria-hidden="true"></span>
+        <span>Isolde AI</span>
+      </a>
+      <div class="subpage-nav-links">
+        <a href="/" class="subpage-nav-link">💬 Workspace</a>
+        <a href="/ai_studio.html" class="subpage-nav-link">✨ AI Studio</a>
+        <a href="/smart_library.html" class="subpage-nav-link">📚 Files &amp; RAG</a>
+        <a href="/workflows.html" class="subpage-nav-link active">🔁 Workflows</a>
+        <a href="/organization.html" class="subpage-nav-link">🏢 Organization</a>
+        <a href="/billing.html" class="subpage-nav-link">💳 Usage &amp; Billing</a>
+      </div>
+    </nav>
 
-    <section>
-      <h2>Create manual workflow</h2>
-      <form id="workflow-form">
-        <label>Workspace <select id="workflow-workspace" required></select></label>
-        <label>Name <input id="workflow-name" maxlength="255" required></label>
-        <label>Description <textarea id="workflow-description" rows="3"></textarea></label>
-        <button type="submit" id="workflow-create">Create workflow</button>
+    <header style="margin-bottom: 24px;">
+      <h1 class="subpage-title">🔁 Workflows &amp; Automation</h1>
+      <p class="subpage-subtitle">Manual workflow definitions are available. Workflow execution is <strong class="subpage-badge">NOT_SUPPORTED</strong>.</p>
+      <div id="workflow-message" class="subpage-status" role="status" aria-live="polite">Loading…</div>
+    </header>
+
+    <div class="subpage-card">
+      <h2 style="font-size: 18px; margin-bottom: 16px; color: var(--text-primary);">Create manual workflow</h2>
+      <form id="workflow-form" style="display: flex; flex-direction: column; gap: 14px;">
+        <div class="subpage-form-group">
+          <label for="workflow-workspace">Workspace</label>
+          <select id="workflow-workspace" class="subpage-select" required></select>
+        </div>
+        <div class="subpage-form-group">
+          <label for="workflow-name">Name</label>
+          <input id="workflow-name" class="subpage-input" maxlength="255" placeholder="e.g. Weekly Report Summarization" required>
+        </div>
+        <div class="subpage-form-group">
+          <label for="workflow-description">Description</label>
+          <textarea id="workflow-description" class="subpage-textarea" rows="3" placeholder="Describe the workflow purpose..."></textarea>
+        </div>
+        <div>
+          <button type="submit" id="workflow-create" class="subpage-btn">Create workflow</button>
+        </div>
       </form>
-    </section>
+    </div>
 
-    <section>
-      <h2>Your workflows</h2>
-      <div id="workflow-list"></div>
-      <p id="workflow-empty" hidden>No workflows yet.</p>
-    </section>
-  </main>
+    <div class="subpage-card">
+      <h2 style="font-size: 18px; margin-bottom: 16px; color: var(--text-primary);">Your workflows</h2>
+      <div id="workflow-list" style="display: flex; flex-direction: column; gap: 12px;"></div>
+      <p id="workflow-empty" style="color: var(--text-secondary); margin-top: 8px;" hidden>No workflows yet.</p>
+    </div>
+  </div>
 </body>
 </html>

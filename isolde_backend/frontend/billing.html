@@ -1,30 +1,54 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Isolde — Billing</title>
-<link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Usage &amp; Billing · Isolde AI</title>
+  <link rel="stylesheet" href="/style.css">
+  <script>
+    try {
+      const t = sessionStorage.getItem("isolde-theme");
+      if (t) document.documentElement.setAttribute("data-theme", t);
+    } catch(e) {}
+  </script>
 </head>
-<body>
-<div style="max-width:720px;margin:40px auto;padding:24px;">
-  <p><a href="/">← Workspace</a> · <a href="/ai_studio.html">AI Studio</a> · <a href="/smart_library.html">Files &amp; RAG</a> · <a href="/workflows.html">Workflows</a> · <a href="/organization.html">Organization</a></p>
-  <h1>Billing &amp; Subscription</h1>
-  <section id="sub-card" style="border:1px solid var(--border-color,#333);border-radius:10px;padding:16px;margin-bottom:20px;">
-    <h2>Current Plan</h2>
-    <p id="plan-name">Loading...</p>
-    <p id="credits-left">Credits: --</p>
-    <p id="billing-status">Plan changes are unavailable until a payment provider is configured.</p>
-    <div id="billing-checkout-actions"></div>
-  </section>
+<body class="subpage-body">
+  <div class="subpage-container">
+    <nav class="subpage-header-nav" aria-label="Main Navigation">
+      <a href="/" class="brand">
+        <span class="brand-logo" aria-hidden="true"></span>
+        <span>Isolde AI</span>
+      </a>
+      <div class="subpage-nav-links">
+        <a href="/" class="subpage-nav-link">💬 Workspace</a>
+        <a href="/ai_studio.html" class="subpage-nav-link">✨ AI Studio</a>
+        <a href="/smart_library.html" class="subpage-nav-link">📚 Files &amp; RAG</a>
+        <a href="/workflows.html" class="subpage-nav-link">🔁 Workflows</a>
+        <a href="/organization.html" class="subpage-nav-link">🏢 Organization</a>
+        <a href="/billing.html" class="subpage-nav-link active">💳 Usage &amp; Billing</a>
+      </div>
+    </nav>
 
-  <section id="invoices-card" style="border:1px solid var(--border-color,#333);border-radius:10px;padding:16px;">
-    <h2>Invoices</h2>
-    <ul id="invoice-list"></ul>
-    <p id="invoice-empty" hidden>No invoices.</p>
-  </section>
-</div>
+    <header style="margin-bottom: 24px;">
+      <h1 class="subpage-title">💳 Usage &amp; Billing</h1>
+      <p class="subpage-subtitle">View active subscription tier, track token usage balance, and access invoices.</p>
+    </header>
 
-<script src="billing.js"></script>
+    <section id="sub-card" class="subpage-card">
+      <h2 style="font-size: 18px; margin-bottom: 12px; color: var(--text-primary);">Current Plan</h2>
+      <p id="plan-name" style="font-size: 16px; font-weight: 600; color: var(--accent); margin-bottom: 8px;">Loading...</p>
+      <p id="credits-left" style="font-size: 14.5px; color: var(--text-secondary); margin-bottom: 8px;">Credits: --</p>
+      <p id="billing-status" class="subpage-status" style="margin-top: 12px;">Plan changes are unavailable until a payment provider is configured.</p>
+      <div id="billing-checkout-actions" style="margin-top: 12px;"></div>
+    </section>
+
+    <section id="invoices-card" class="subpage-card">
+      <h2 style="font-size: 18px; margin-bottom: 12px; color: var(--text-primary);">Invoices</h2>
+      <ul id="invoice-list" style="display: flex; flex-direction: column; gap: 8px;"></ul>
+      <p id="invoice-empty" style="color: var(--text-secondary);" hidden>No invoices.</p>
+    </section>
+  </div>
+
+  <script src="billing.js"></script>
 </body>
 </html>

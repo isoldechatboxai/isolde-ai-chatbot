@@ -1,29 +1,58 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Isolde — Marketplace</title>
-<link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Plugin Marketplace · Isolde AI</title>
+  <link rel="stylesheet" href="/style.css">
+  <script>
+    try {
+      const t = sessionStorage.getItem("isolde-theme");
+      if (t) document.documentElement.setAttribute("data-theme", t);
+    } catch(e) {}
+  </script>
 </head>
-<body>
-<div style="max-width:960px;margin:40px auto;padding:24px;">
-  <h1>Plugin Marketplace</h1>
-  <div>
-    <select id="category-filter">
-      <option value="All">All Categories</option>
-      <option value="Productivity">Productivity</option>
-      <option value="Coding">Coding</option>
-      <option value="Finance">Finance</option>
-    </select>
-    <button id="refresh-btn">Refresh</button>
+<body class="subpage-body">
+  <div class="subpage-container">
+    <nav class="subpage-header-nav" aria-label="Main Navigation">
+      <a href="/" class="brand">
+        <span class="brand-logo" aria-hidden="true"></span>
+        <span>Isolde AI</span>
+      </a>
+      <div class="subpage-nav-links">
+        <a href="/" class="subpage-nav-link">💬 Workspace</a>
+        <a href="/ai_studio.html" class="subpage-nav-link">✨ AI Studio</a>
+        <a href="/smart_library.html" class="subpage-nav-link">📚 Files &amp; RAG</a>
+        <a href="/workflows.html" class="subpage-nav-link">🔁 Workflows</a>
+        <a href="/organization.html" class="subpage-nav-link">🏢 Organization</a>
+        <a href="/billing.html" class="subpage-nav-link">💳 Usage &amp; Billing</a>
+      </div>
+    </nav>
+
+    <header style="margin-bottom: 24px;">
+      <h1 class="subpage-title">🔌 Plugin Marketplace</h1>
+      <p class="subpage-subtitle">Discover and install extensions to customize agent behavior and tools.</p>
+    </header>
+
+    <div class="subpage-card">
+      <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+        <select id="category-filter" class="subpage-select" style="max-width: 200px;">
+          <option value="All">All Categories</option>
+          <option value="Productivity">Productivity</option>
+          <option value="Coding">Coding</option>
+          <option value="Finance">Finance</option>
+        </select>
+        <button id="refresh-btn" class="subpage-btn subpage-btn-secondary">🔄 Refresh</button>
+      </div>
+      <div id="plugin-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px;margin-top:20px;"></div>
+    </div>
+
+    <div class="subpage-card">
+      <h2 style="font-size: 18px; margin-bottom: 12px; color: var(--text-primary);">Installed Plugins</h2>
+      <ul id="installed-list" style="display: flex; flex-direction: column; gap: 8px;"></ul>
+    </div>
   </div>
-  <div id="plugin-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px;margin-top:20px;"></div>
 
-  <h2>Installed Plugins</h2>
-  <ul id="installed-list"></ul>
-</div>
-
-<script src="marketplace.js"></script>
+  <script src="marketplace.js"></script>
 </body>
 </html>

@@ -17,6 +17,7 @@ embed_text()
 analyze_image()
 ProviderManager / ProviderResponse / get_provider_manager()
 """
+import os
 import json
 import time
 import threading
@@ -40,7 +41,7 @@ KNOWN_PROVIDERS = frozenset({
 DEFAULT_PRIORITY: List[str] = []
 
 DEFAULT_MODELS: Dict[str, str] = {
-    "gemini": "gemini-3.7-flash",
+    "gemini": "gemini-flash-latest",
     "groq": "llama-3.3-70b-versatile",
     "openai": "gpt-4o",
     "claude": "claude-sonnet-4-20250514",
@@ -334,17 +335,19 @@ class ProviderManager:
                 f"Falling back to auto-detection."
             )
 
-        legacy_key = (
-            self._get_setting("gemini_api_key")
-            or current_app.config.get("GEMINI_API_KEY", "")
-        )
+        legacy_key = self._get_setting("gemini_api_key")
+        if not legacy_key:
+            if has_app_context() and "GEMINI_API_KEY" in current_app.config:
+                legacy_key = current_app.config.get("GEMINI_API_KEY", "")
+            else:
+                legacy_key = os.getenv("GEMINI_API_KEY", "")
         if legacy_key:
             return self.detect_provider_from_key(legacy_key.strip())
 
         # Production permits any supported provider to bootstrap from an
         # environment credential. Select the first actually configured
         # provider deterministically when no admin selection exists.
-        for provider in ("openai", "claude", "groq", "openrouter", "deepseek", "mistral"):
+        for provider in ("gemini", "openai", "claude", "groq", "openrouter", "deepseek", "mistral"):
             try:
                 if self.get_api_key_for_provider(provider):
                     return provider
@@ -443,13 +446,23 @@ class ProviderManager:
             value = self._get_setting("gemini_api_key")
             if value:
                 return value.strip()
-            value = current_app.config.get("GEMINI_API_KEY", "")
-            if value:
-                return value.strip()
+            if has_app_context() and "GEMINI_API_KEY" in current_app.config:
+                val = current_app.config.get("GEMINI_API_KEY")
+                if val:
+                    return val.strip()
+            else:
+                env_val = os.getenv("GEMINI_API_KEY", "").strip()
+                if env_val:
+                    return env_val
 
-        environment_key = current_app.config.get(f"{provider.upper()}_API_KEY", "")
-        if environment_key:
-            return environment_key.strip()
+        if has_app_context() and f"{provider.upper()}_API_KEY" in current_app.config:
+            environment_key = current_app.config.get(f"{provider.upper()}_API_KEY", "")
+            if environment_key:
+                return environment_key.strip()
+        else:
+            environment_key = os.getenv(f"{provider.upper()}_API_KEY", "")
+            if environment_key:
+                return environment_key.strip()
 
         raise RuntimeError(
             f"No API key configured for provider '{provider}'. "
@@ -585,19 +598,38 @@ class ProviderManager:
             api_key=api_key,
             http_options=types.HttpOptions(api_version="v1beta", timeout=int(timeout * 1000)),
         )
+        candidate_models = [model_name]
+        for fallback in ("gemini-flash-latest", "gemini-3.8-flash", "gemini-2.5-flash", "gemini-1.5-flash"):
+            if fallback not in candidate_models:
+                candidate_models.append(fallback)
+
+        last_exc = None
         try:
-            chat = client.chats.create(
-                model=model_name,
-                history=_to_content_history(history),
-                config=types.GenerateContentConfig(system_instruction=sys_prompt),
-            )
-            response = chat.send_message(message=prompt)
-            usage = response.usage_metadata
-            return (response.text or "").strip(), {
-                "input_tokens": getattr(usage, "prompt_token_count", None),
-                "output_tokens": getattr(usage, "candidates_token_count", None),
-                "total_tokens": getattr(usage, "total_token_count", None),
-            }
+            for candidate in candidate_models:
+                try:
+                    chat = client.chats.create(
+                        model=candidate,
+                        history=_to_content_history(history),
+                        config=types.GenerateContentConfig(system_instruction=sys_prompt),
+                    )
+                    response = chat.send_message(message=prompt)
+                    usage = response.usage_metadata
+                    return (response.text or "").strip(), {
+                        "input_tokens": getattr(usage, "prompt_token_count", None),
+                        "output_tokens": getattr(usage, "candidates_token_count", None),
+                        "total_tokens": getattr(usage, "total_token_count", None),
+                    }
+                except Exception as exc:
+                    last_exc = exc
+                    err_str = str(exc)
+                    if "404" in err_str or "503" in err_str or "high demand" in err_str.lower() or "not found" in err_str.lower():
+                        _get_logger().warning(
+                            "Gemini model '%s' failed: %s. Attempting fallback model.", candidate, exc
+                        )
+                        continue
+                    raise
+            if last_exc:
+                raise last_exc
         finally:
             close = getattr(client, "close", None)
             if callable(close):
@@ -616,16 +648,45 @@ class ProviderManager:
             api_key=api_key,
             http_options=types.HttpOptions(api_version="v1beta", timeout=int(timeout * 1000)),
         )
+        candidate_models = [model_name]
+        for fallback in ("gemini-flash-latest", "gemini-3.8-flash", "gemini-2.5-flash", "gemini-1.5-flash"):
+            if fallback not in candidate_models:
+                candidate_models.append(fallback)
+
+        last_exc = None
         try:
-            chat = client.chats.create(
-                model=model_name,
-                history=_to_content_history(history),
-                config=types.GenerateContentConfig(system_instruction=sys_prompt),
-            )
-            for chunk in chat.send_message_stream(message=prompt):
-                text = chunk.text or ""
-                if text:
-                    yield text
+            stream_established = False
+            for candidate in candidate_models:
+                try:
+                    chat = client.chats.create(
+                        model=candidate,
+                        history=_to_content_history(history),
+                        config=types.GenerateContentConfig(system_instruction=sys_prompt),
+                    )
+                    stream_iter = chat.send_message_stream(message=prompt)
+                    first_chunk = next(stream_iter, None)
+                    stream_established = True
+                    if first_chunk:
+                        text = first_chunk.text or ""
+                        if text:
+                            yield text
+                    for chunk in stream_iter:
+                        text = chunk.text or ""
+                        if text:
+                            yield text
+                    return
+                except Exception as exc:
+                    last_exc = exc
+                    if not stream_established:
+                        err_str = str(exc)
+                        if "404" in err_str or "503" in err_str or "high demand" in err_str.lower() or "not found" in err_str.lower():
+                            _get_logger().warning(
+                                "Gemini stream model '%s' failed: %s. Attempting fallback model.", candidate, exc
+                            )
+                            continue
+                    raise
+            if last_exc:
+                raise last_exc
         finally:
             close = getattr(client, "close", None)
             if callable(close):

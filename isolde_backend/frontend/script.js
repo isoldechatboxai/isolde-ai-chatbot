@@ -151,6 +151,9 @@
     }
     return headers;
   }
+  if (typeof window !== "undefined") {
+    window.getAuthHeaders = getAuthHeaders;
+  }
 
   function initLoginPage() {
     const init = () => {
@@ -1875,7 +1878,8 @@ onDocumentReady(() => {
     if (runBtn) runBtn.disabled = true;
     if (desc) desc.textContent = "Checking provider capability…";
     try {
-      const response = await fetch("/api/studio/capabilities", { headers: getAuthHeaders() });
+      const authHeaders = typeof getAuthHeaders === "function" ? getAuthHeaders() : (typeof window !== "undefined" && window.getAuthHeaders ? window.getAuthHeaders() : {});
+      const response = await fetch("/api/studio/capabilities", { headers: authHeaders });
       const data = await response.json().catch(() => ({}));
       if (response.status === 401) {
         sessionStorage.removeItem("access_token");
@@ -1883,8 +1887,8 @@ onDocumentReady(() => {
         window.location.replace("/login.html");
         return;
       }
-      const capability = type === "image" ? data.image : data.video;
-      if (capability === "READY") {
+      const capability = type === "image" ? (data.image || data.ai_image) : (data.video || data.video_generation);
+      if (capability === "READY" || capability === "AVAILABLE") {
         if (desc) desc.textContent = "Provider ready.";
         if (runBtn) runBtn.disabled = false;
       } else if (desc) {
@@ -1923,7 +1927,7 @@ onDocumentReady(() => {
         const endpoint = isImage ? "/api/studio/generate-image" : "/api/studio/generate-video";
         const res = await fetch(endpoint, {
           method: "POST",
-          headers: getAuthHeaders(),
+          headers: (typeof getAuthHeaders === "function" ? getAuthHeaders() : (typeof window !== "undefined" && window.getAuthHeaders ? window.getAuthHeaders() : {})),
           body: JSON.stringify({ prompt: promptText }),
         });
         const data = await res.json();

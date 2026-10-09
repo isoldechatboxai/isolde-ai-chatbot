@@ -10,8 +10,8 @@ def test_public_capabilities_are_truthful_and_secret_free(client, app):
     response = client.get("/api/capabilities")
     assert response.status_code == 200
     assert response.get_json() == {"capabilities": {
-        "ai": "NOT_CONFIGURED", "ai_streaming": "NOT_CONFIGURED", "rag": "NOT_CONFIGURED",
-        "research": "NOT_CONFIGURED", "google_oauth": "NOT_CONFIGURED",
+        "ai": "NOT_CONFIGURED", "ai_streaming": "NOT_CONFIGURED", "ai_image": "NOT_CONFIGURED", "rag": "NOT_CONFIGURED",
+        "research": "NOT_CONFIGURED", "web_search": "NOT_CONFIGURED", "google_oauth": "NOT_CONFIGURED",
         "oauth": "NOT_CONFIGURED", "api_access": "AVAILABLE",
         "cancellation": "NOT_CONFIGURED", "admin": "AVAILABLE",
         "deep_research": "NOT_SUPPORTED", "pgvector": "NOT_SUPPORTED",
@@ -34,6 +34,7 @@ def test_public_capabilities_report_configured_integrations_without_secrets(clie
     assert payload["capabilities"]["ai"] == "AVAILABLE"
     assert payload["capabilities"]["ai_streaming"] == "AVAILABLE"
     assert payload["capabilities"]["research"] == "AVAILABLE"
+    assert payload["capabilities"]["web_search"] == "AVAILABLE"
     assert payload["capabilities"]["tavily_research"] == "AVAILABLE"
     assert payload["capabilities"]["google_oauth"] == "AVAILABLE"
     assert payload["capabilities"]["oauth"] == "AVAILABLE"

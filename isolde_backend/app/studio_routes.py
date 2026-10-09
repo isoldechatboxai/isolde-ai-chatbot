@@ -25,7 +25,7 @@ def generate_video():
 
 
 @studio_bp.route('/api/studio/capabilities', methods=['GET'])
-@jwt_required()
+@jwt_required(optional=True)
 def studio_capabilities():
     return jsonify({
         "image": "NOT_CONFIGURED" if not current_app.config.get("IMAGE_PROVIDER") else "NOT_SUPPORTED",
