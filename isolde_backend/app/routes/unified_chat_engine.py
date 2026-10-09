@@ -59,12 +59,14 @@ def unified_auth_required(required_permission=None):
             try:
                 verify_jwt_in_request(optional=True)
                 jwt_identity = get_jwt_identity()
-                if jwt_identity:
-                    g.auth_user_id = str(jwt_identity)
-                    g.auth_method = 'jwt'
-                    return f(*args, **kwargs)
             except Exception:
-                pass
+                jwt_identity = None
+            # Route exceptions must never be swallowed as authentication
+            # failures or cause the request to execute a second time.
+            if jwt_identity:
+                g.auth_user_id = str(jwt_identity)
+                g.auth_method = 'jwt'
+                return f(*args, **kwargs)
 
             # 2. Try API key authentication
             api_key = None
@@ -133,7 +135,8 @@ def _history_for_provider(convo: Conversation, limit: int = HISTORY_LIMIT) -> li
     chat_routes._history_for_gemini produces, which is understood by
     every provider implementation in provider_router.
     """
-    recent = convo.messages[-limit:] if convo.messages else []
+    recent = list(reversed(Message.query.filter_by(conversation_id=convo.id)
+                           .order_by(Message.created_at.desc(), Message.id.desc()).limit(limit).all()))
     history: list[dict] = []
     for m in recent:
         role = "user" if m.role == "user" else "model"

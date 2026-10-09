@@ -31,16 +31,34 @@ def upgrade():
         # JSON is retained in ``embedding`` and must be safely re-embedded,
         # rather than making migration success depend on invented vectors.
         op.execute("""
-            UPDATE rag_chunks
-               SET embedding_vector = embedding::text::vector
-             WHERE embedding_vector IS NULL
-               AND jsonb_typeof(embedding::jsonb) = 'array'
-               AND jsonb_array_length(embedding::jsonb) > 0
-               AND NOT EXISTS (
-                   SELECT 1
-                     FROM jsonb_array_elements(embedding::jsonb) AS value
-                    WHERE jsonb_typeof(value) <> 'number'
-               )
+            DO $$
+            DECLARE item record;
+            BEGIN
+                FOR item IN SELECT id, embedding FROM rag_chunks
+                            WHERE embedding_vector IS NULL
+                LOOP
+                    BEGIN
+                        -- SQL predicates have no guaranteed evaluation order.
+                        -- Check shape before calling any array functions, and
+                        -- isolate conversion failures (overflow, empty arrays,
+                        -- excessive dimensions) without losing legacy data.
+                        IF jsonb_typeof(item.embedding::jsonb) = 'array' THEN
+                            IF jsonb_array_length(item.embedding::jsonb) > 0
+                               AND NOT EXISTS (
+                                   SELECT 1 FROM jsonb_array_elements(item.embedding::jsonb) AS value
+                                   WHERE jsonb_typeof(value) <> 'number'
+                               ) THEN
+                                UPDATE rag_chunks
+                                   SET embedding_vector = item.embedding::text::vector,
+                                       embedding_dimension = jsonb_array_length(item.embedding::jsonb)
+                                 WHERE id = item.id;
+                            END IF;
+                        END IF;
+                    EXCEPTION WHEN data_exception THEN
+                        NULL; -- Retain the row and JSON for explicit re-embedding.
+                    END;
+                END LOOP;
+            END $$;
         """)
     elif "embedding_vector" not in columns:
         # SQLite is used only by the isolated test suite. Keeping a JSON

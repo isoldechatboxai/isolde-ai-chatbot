@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 
 from app.extensions import db
 from app.models import User
-from app.models.auth_model import AuthSession, AuthToken, OAuthAccount, RevokedToken, token_digest, utcnow
+from app.models.auth_model import AuthSession, AuthToken, OAuthAccount, RevokedToken, token_digest, utcnow, revoke_user_auth
 from app.services.oauth_service import (
     OAuthProviderError, PROVIDERS, begin_authorization, complete_authorization,
     provider_is_configured,
@@ -243,7 +243,10 @@ def register():
             "error": "Registration was saved, but verification email delivery failed. Request a new verification email.",
             "verification_required": True,
         }), 503
-    response = {"message": "Registration successful. Verify your email before signing in.", "user": user.to_dict()}
+    response = {"message": (
+        "Registration successful. You can sign in." if user.is_verified
+        else "Registration successful. Verify your email before signing in."
+    ), "user": user.to_dict()}
     _testing_token(response, "verification_token", raw)
     return jsonify(response), 201
 
@@ -300,7 +303,7 @@ def login():
     password = str(data.get("password") or "")
     if len(password) > 128:
         return jsonify({"error": "Invalid email or password."}), 401
-    user = User.query.filter_by(email=email).first()
+    user = _user_with_normalized_email(email)
     if not user or not user.check_password(password) or not user.is_active:
         log_event(current_app, "LOGIN_FAILED", "invalid credentials")
         return jsonify({"error": "Invalid email or password."}), 401
@@ -339,9 +342,7 @@ def logout():
 @auth_bp.route("/logout-all", methods=["POST"])
 @jwt_required()
 def logout_all():
-    AuthSession.query.filter_by(user_id=str(get_jwt_identity()), revoked_at=None).update(
-        {"revoked_at": utcnow()}, synchronize_session=False
-    )
+    revoke_user_auth(get_jwt_identity())
     db.session.commit()
     return jsonify({"message": "All sessions have been revoked."}), 200
 
@@ -416,9 +417,7 @@ def reset_password():
         return jsonify({"error": "Reset token is invalid or expired."}), 400
     user.set_password(new_password)
     user.is_verified = True
-    AuthSession.query.filter_by(user_id=user.id, revoked_at=None).update(
-        {"revoked_at": utcnow()}, synchronize_session=False
-    )
+    revoke_user_auth(user.id)
     db.session.commit()
     log_event(current_app, "PASSWORD_RESET_SUCCESS", "completed", user.id)
     return jsonify({"message": "Password has been reset. Sign in again."}), 200

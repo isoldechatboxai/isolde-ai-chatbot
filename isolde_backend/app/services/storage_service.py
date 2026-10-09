@@ -33,11 +33,15 @@ class StorageService:
     def _s3(self):
         try:
             import boto3
+            from botocore.config import Config
         except ImportError as exc:
             raise StorageNotConfigured("S3 storage dependency is unavailable.") from exc
         return boto3.client(
             "s3", region_name=self.region, endpoint_url=self.endpoint,
             aws_access_key_id=self.access_key, aws_secret_access_key=self.secret_key,
+            config=Config(
+                connect_timeout=3, read_timeout=15, retries={"max_attempts": 2},
+            ),
         )
 
     def put_file(self, key, source_path, content_type):
@@ -54,7 +58,11 @@ class StorageService:
     def read_bytes(self, key):
         if self.backend == "local":
             return self._local_path(key).read_bytes()
-        return self._s3().get_object(Bucket=self.bucket, Key=key)["Body"].read()
+        body = self._s3().get_object(Bucket=self.bucket, Key=key)["Body"]
+        try:
+            return body.read()
+        finally:
+            body.close()
 
     def delete(self, key):
         if self.backend == "local":

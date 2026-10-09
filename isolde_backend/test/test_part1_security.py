@@ -31,7 +31,7 @@ class TestConfig(Config):
     TESTING = True
     IS_PRODUCTION = False
     SECRET_KEY = "test-flask-secret-key"
-    JWT_SECRET_KEY = "test-jwt-secret-key"
+    JWT_SECRET_KEY = "test-jwt-secret-key-with-32-plus-characters"
     SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
     SQLALCHEMY_ENGINE_OPTIONS = {
         "poolclass": StaticPool,

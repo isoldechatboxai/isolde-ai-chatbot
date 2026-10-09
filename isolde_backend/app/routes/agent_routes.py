@@ -7,6 +7,18 @@ from app.models.workspace_model import Agent, Workspace
 agent_bp = Blueprint("agent_bp", __name__)
 
 
+def _validate_agent_payload(data):
+    if not isinstance(data, dict):
+        return "Request body must be a JSON object."
+    for field, limit in (("name", 255), ("role_description", 255), ("system_prompt", 12000), ("avatar_emoji", 10)):
+        if field in data and (not isinstance(data[field], str) or len(data[field]) > limit):
+            return f"{field} must be a string of at most {limit} characters."
+    for field in ("is_default", "is_active"):
+        if field in data and not isinstance(data[field], bool):
+            return f"{field} must be a boolean."
+    return None
+
+
 @agent_bp.route("/agent/list", methods=["GET"])
 @jwt_required()
 def list_all_agents_global():
@@ -20,7 +32,7 @@ def list_all_agents_global():
         )
         return jsonify({"agents": [a.to_dict() for a in agents]}), 200
     except Exception as e:
-        return jsonify({"error": "Failed to fetch agents", "details": str(e)}), 500
+        return jsonify({"error": "Failed to fetch agents"}), 500
 
 
 @agent_bp.route("/workspace/<int:workspace_id>/agents", methods=["GET"])
@@ -39,7 +51,7 @@ def list_agents(workspace_id: int):
         )
         return jsonify({"agents": [a.to_dict() for a in agents]}), 200
     except Exception as e:
-        return jsonify({"error": "Failed to fetch agents", "details": str(e)}), 500
+        return jsonify({"error": "Failed to fetch agents"}), 500
 
 
 @agent_bp.route("/workspace/<int:workspace_id>/agents", methods=["POST"])
@@ -51,7 +63,10 @@ def create_agent(workspace_id: int):
         if not workspace:
             return jsonify({"error": "Workspace not found"}), 404
 
-        data = request.get_json() or {}
+        data = request.get_json(silent=True)
+        error = _validate_agent_payload(data)
+        if error:
+            return jsonify({"error": error}), 400
         name = (data.get("name") or "").strip()
         system_prompt = (data.get("system_prompt") or "").strip()
 
@@ -77,7 +92,7 @@ def create_agent(workspace_id: int):
         return jsonify({"message": "Agent created", "agent": agent.to_dict()}), 201
     except Exception as e:
         db.session.rollback()
-        return jsonify({"error": "Failed to create agent", "details": str(e)}), 500
+        return jsonify({"error": "Failed to create agent"}), 500
 
 
 @agent_bp.route("/agent/<int:agent_id>", methods=["PUT"])
@@ -91,7 +106,10 @@ def update_agent(agent_id: int):
         if not agent:
             return jsonify({"error": "Agent not found"}), 404
 
-        data = request.get_json() or {}
+        data = request.get_json(silent=True)
+        error = _validate_agent_payload(data)
+        if error:
+            return jsonify({"error": error}), 400
         if "name" in data and data["name"].strip():
             agent.name = data["name"].strip()
         if "role_description" in data:
@@ -102,17 +120,18 @@ def update_agent(agent_id: int):
             agent.avatar_emoji = data["avatar_emoji"]
         if "is_active" in data:
             agent.is_active = bool(data["is_active"])
-        if "is_default" in data and data["is_default"]:
-            Agent.query.filter_by(workspace_id=agent.workspace_id, is_default=True).update(
-                {"is_default": False}
-            )
-            agent.is_default = True
+        if "is_default" in data:
+            if data["is_default"]:
+                Agent.query.filter_by(workspace_id=agent.workspace_id, is_default=True).update(
+                    {"is_default": False}
+                )
+            agent.is_default = data["is_default"]
 
         db.session.commit()
         return jsonify({"message": "Agent updated", "agent": agent.to_dict()}), 200
     except Exception as e:
         db.session.rollback()
-        return jsonify({"error": "Failed to update agent", "details": str(e)}), 500
+        return jsonify({"error": "Failed to update agent"}), 500
 
 
 @agent_bp.route("/agent/<int:agent_id>", methods=["DELETE"])
@@ -131,7 +150,7 @@ def delete_agent(agent_id: int):
         return jsonify({"message": "Agent deleted successfully"}), 200
     except Exception as e:
         db.session.rollback()
-        return jsonify({"error": "Failed to delete agent", "details": str(e)}), 500
+        return jsonify({"error": "Failed to delete agent"}), 500
 
 
 @agent_bp.route("/agent/<int:agent_id>/activate", methods=["POST"])
@@ -159,7 +178,7 @@ def activate_agent(agent_id: int):
             "active_agent": agent.to_dict()
         }), 200
     except Exception as e:
-        return jsonify({"error": "Failed to switch agent", "details": str(e)}), 500
+        return jsonify({"error": "Failed to switch agent"}), 500
 
 
 @agent_bp.route("/agent/active", methods=["GET"])
@@ -181,4 +200,4 @@ def get_active_agent():
 
         return jsonify({"active_agent": agent.to_dict()}), 200
     except Exception as e:
-        return jsonify({"error": "Failed to fetch active agent", "details": str(e)}), 500
+        return jsonify({"error": "Failed to fetch active agent"}), 500

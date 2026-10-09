@@ -279,6 +279,8 @@ def change_password(user, old_password, new_password):
         return _failure("New password must be different from the current password.")
 
     user.set_password(new_password)
+    from app.models.auth_model import revoke_user_auth
+    revoke_user_auth(user.id)
 
     return _commit("Password changed.", None)
 

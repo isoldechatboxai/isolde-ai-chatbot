@@ -8,10 +8,12 @@ from concurrent.futures import ThreadPoolExecutor
 import ipaddress
 import json
 import socket
+import time
 from html.parser import HTMLParser
 from urllib.parse import urlsplit, urlunsplit
 
 import requests
+import urllib3
 from flask import current_app, has_app_context
 
 
@@ -38,7 +40,7 @@ class _TextExtractor(HTMLParser):
         if not self.blocked: self.parts.append(data)
 
 
-def _safe_host(host: str) -> None:
+def _safe_host(host: str) -> str:
     if not host or host.lower().endswith('.local') or host.lower() == 'localhost':
         raise ResearchFetchBlocked('RESEARCH_FETCH_BLOCKED')
     try: addresses = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
@@ -47,6 +49,48 @@ def _safe_host(host: str) -> None:
         address = ipaddress.ip_address(item[4][0])
         if not _is_public_address(address):
             raise ResearchFetchBlocked('RESEARCH_FETCH_BLOCKED')
+    if not addresses:
+        raise ResearchFetchBlocked('RESEARCH_FETCH_FAILED')
+    return addresses[0][4][0]
+
+
+def _open_evidence(url, address, timeout):
+    """Pin the validated IP while verifying TLS against the original host.
+
+    A second DNS lookup would permit rebinding to private infrastructure.
+    Direct pools also avoid forwarding ambient proxy or netrc credentials.
+    """
+    parsed = urlsplit(url)
+    pool = urllib3.HTTPSConnectionPool(
+        address, port=parsed.port or 443, server_hostname=parsed.hostname,
+        assert_hostname=parsed.hostname, cert_reqs="CERT_REQUIRED",
+        ca_certs=requests.certs.where(),
+        timeout=urllib3.Timeout(connect=min(3, timeout), read=timeout),
+        retries=False,
+    )
+    try:
+        raw = pool.urlopen(
+            "GET", urlunsplit(("", "", parsed.path or "/", parsed.query, "")),
+            headers={"Host": parsed.netloc, "User-Agent": "IsoldeResearch/1.0"},
+            redirect=False, preload_content=False,
+        )
+    except (urllib3.exceptions.HTTPError, OSError) as error:
+        pool.close()
+        raise ResearchFetchBlocked("RESEARCH_FETCH_FAILED") from error
+    response = requests.Response()
+    response.status_code = raw.status
+    response.headers.update(raw.headers)
+    response.raw = raw
+    response.url = url
+    response.encoding = requests.utils.get_encoding_from_headers(response.headers)
+    original_close = response.close
+    def close():
+        try:
+            original_close()
+        finally:
+            pool.close()
+    response.close = close
+    return response
 
 
 def _is_public_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
@@ -65,10 +109,10 @@ def fetch_evidence(
         raise ValueError("fetch limits must be positive")
     url = _canonical_url(str(source.get('canonical_url') or source.get('url') or ''))
     if not url or urlsplit(url).scheme != 'https': raise ResearchFetchBlocked('RESEARCH_FETCH_BLOCKED')
-    _safe_host(urlsplit(url).hostname or '')
+    address = _safe_host(urlsplit(url).hostname or '')
     timeout = timeout or (current_app.config.get('RESEARCH_HTTP_TIMEOUT_SECONDS', 8) if has_app_context() else 8)
-    response = requests.get(url, timeout=(min(3, timeout), timeout), allow_redirects=False, stream=True,
-                            headers={'User-Agent': 'IsoldeResearch/1.0'})
+    deadline = time.monotonic() + timeout
+    response = _open_evidence(url, address, timeout)
     try:
         if 300 <= response.status_code < 400: raise ResearchFetchBlocked('RESEARCH_FETCH_BLOCKED')
         response.raise_for_status(); content_type = response.headers.get('Content-Type','').split(';')[0].lower()
@@ -77,6 +121,8 @@ def fetch_evidence(
         # response-size limit and permits a remote server to exhaust worker memory.
         chunks, received, oversized = [], 0, False
         for chunk in response.iter_content(8192):
+            if time.monotonic() >= deadline:
+                raise ResearchFetchBlocked('RESEARCH_FETCH_TIMEOUT')
             if not chunk:
                 continue
             remaining = max_bytes - received
@@ -217,7 +263,12 @@ def _canonical_url(value: str) -> str | None:
         parsed = urlsplit(value.strip())
     except ValueError:
         return None
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username or parsed.password:
+        return None
+    try:
+        if parsed.port not in (None, 80, 443):
+            return None
+    except ValueError:
         return None
     host = parsed.hostname or ""
     if host in {"localhost", "127.0.0.1", "0.0.0.0", "::1"} or host.endswith(".local"):

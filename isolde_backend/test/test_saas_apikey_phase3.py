@@ -236,5 +236,5 @@ def test_create_api_key_route_returns_raw_key_once_and_safe_metadata(app, client
     assert metadata.get("key_prefix")
     assert body["raw_key"] not in str(metadata)
 
-    stored = APIKey.query.get(metadata["id"])
+    stored = db.session.get(APIKey, metadata["id"])
     assert stored.key_secret is None

@@ -20,7 +20,9 @@ def test_public_capabilities_are_truthful_and_secret_free(client, app):
     }}
 
 
-def test_public_capabilities_report_configured_integrations_without_secrets(client, app):
+def test_public_capabilities_report_configured_integrations_without_secrets(client, app, monkeypatch):
+    from app.services import cancellation_service
+    monkeypatch.setattr(cancellation_service, "redis_dependency_status", lambda url: "AVAILABLE")
     app.config.update({
         "GEMINI_API_KEY": "provider-secret", "TAVILY_API_KEY": "research-secret",
         "GOOGLE_OAUTH_CLIENT_ID": "client-id", "GOOGLE_OAUTH_CLIENT_SECRET": "client-secret",

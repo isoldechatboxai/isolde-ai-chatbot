@@ -198,6 +198,13 @@ def create_app(config_class=Config):
     # Configuration
     # ----------------------------------------------------------------
     app.config.from_object(config_class)
+    app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
+        **app.config.get("SQLALCHEMY_ENGINE_OPTIONS", {}), "hide_parameters": True,
+    }
+    # Validate the configuration actually supplied to the factory, including
+    # custom production configurations used by WSGI entry points.
+    if not app.config.get("TESTING"):
+        config_class.validate()
     proxy_hops = int(app.config.get("TRUST_PROXY_HOPS", 0))
     if proxy_hops:
         app.wsgi_app = ProxyFix(app.wsgi_app, x_for=proxy_hops, x_proto=proxy_hops, x_host=proxy_hops, x_port=proxy_hops)
@@ -269,9 +276,10 @@ def create_app(config_class=Config):
         session_id = jwt_payload.get("sid")
         if not session_id:
             # Compatibility for tokens issued before database-backed sessions.
-            return False
+            return db.session.get(RevokedToken, f"user:{jwt_payload.get('sub')}") is not None
         auth_session = db.session.get(AuthSession, session_id)
-        return not auth_session or not auth_session.is_valid
+        return (not auth_session or not auth_session.is_valid
+                or auth_session.user_id != str(jwt_payload.get("sub")))
 
     @jwt.needs_fresh_token_loader
     def needs_fresh_callback(jwt_header, jwt_payload):
@@ -542,6 +550,9 @@ def create_app(config_class=Config):
             raise click.ClickException("Database is already migration-managed; run 'flask db upgrade'.")
         if tables:
             raise click.ClickException("Refusing to bootstrap a non-empty unversioned database.")
+        if db.engine.dialect.name == "postgresql":
+            with db.engine.begin() as connection:
+                connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         db.create_all()
         from flask_migrate import stamp
         stamp(revision="head")
@@ -606,6 +617,8 @@ def create_app(config_class=Config):
         Requires the application context with a live database connection.
         """
         from app.utils.validators import is_valid_email, is_valid_password
+        from app.models.auth_model import revoke_user_auth
+        email = email.strip().lower()
         if not is_valid_email(email):
             raise click.ClickException(f"Invalid email address: {email!r}")
         ok, reason = is_valid_password(password)
@@ -613,11 +626,15 @@ def create_app(config_class=Config):
             raise click.ClickException(f"Password rejected: {reason}")
         email = email.strip().lower()
         with app.app_context():
-            user = User.query.filter_by(email=email).first()
+            user = User.query.filter(db.func.lower(db.func.trim(User.email)) == email).first()
             if user:
                 user.set_password(password)
                 user.is_verified = True
                 user.status = "Active"
+                revoke_user_auth(user.id)
+                user.verification_token = None
+                user.reset_otp = None
+                user.reset_otp_expires = None
                 db.session.commit()
                 click.echo(f"User {email!r} password reset and account verified.")
             else:
@@ -688,6 +705,7 @@ def create_app(config_class=Config):
         "/api/live",
         methods=["GET"],
     )
+    @limiter.exempt
     def liveness():
         """
         Lightweight process-level liveness check.
@@ -705,6 +723,7 @@ def create_app(config_class=Config):
         "/api/ready",
         methods=["GET"],
     )
+    @limiter.exempt
     def readiness():
         """
         Readiness check.
@@ -724,7 +743,12 @@ def create_app(config_class=Config):
             from app.models.rag_model import RAGDocument
             db.session.query(RAGDocument.id).limit(1).all()
             checks["vector_store"] = True
+            if db.engine.dialect.name == "postgresql":
+                checks["vector_store"] = bool(db.session.execute(text(
+                    "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector')"
+                )).scalar())
         except Exception as error:
+            db.session.rollback()
             _log_readiness_failure(app, "database", error)
 
         try:
@@ -745,13 +769,8 @@ def create_app(config_class=Config):
         try:
             cancellation_url = app.config.get("CANCELLATION_REDIS_URL", "")
             if cancellation_url:
-                import redis
-                redis.Redis.from_url(
-                    cancellation_url,
-                    socket_connect_timeout=app.config.get("REDIS_CONNECT_TIMEOUT_SECONDS", 2),
-                    socket_timeout=app.config.get("REDIS_SOCKET_TIMEOUT_SECONDS", 2),
-                ).ping()
-                checks["cancellation"] = True
+                from app.services.cancellation_service import redis_dependency_status
+                checks["cancellation"] = redis_dependency_status(cancellation_url) == "AVAILABLE"
             else:
                 # No Redis URL configured. Cancellation is not available via
                 # distributed storage. In production this is blocked by
@@ -767,7 +786,22 @@ def create_app(config_class=Config):
         except Exception as error:
             _log_readiness_failure(app, "cancellation", error)
 
-        ready = all(checks.values())
+        rate_limit_url = app.config.get("RATELIMIT_STORAGE_URI", "")
+        if rate_limit_url.startswith(("redis://", "rediss://")):
+            checks["rate_limiting"] = False
+            try:
+                import redis
+                with redis.Redis.from_url(
+                    rate_limit_url,
+                    socket_connect_timeout=app.config.get("REDIS_CONNECT_TIMEOUT_SECONDS", 2),
+                    socket_timeout=app.config.get("REDIS_SOCKET_TIMEOUT_SECONDS", 2),
+                ) as client:
+                    checks["rate_limiting"] = bool(client.ping())
+            except Exception as error:
+                _log_readiness_failure(app, "rate_limiting", error)
+        elif app.config.get("IS_PRODUCTION"):
+            checks["rate_limiting"] = False
+        ready = all(value is True for key, value in checks.items() if not key.endswith("_info"))
         return jsonify({
             "status": "ready" if ready else "not_ready",
             "service": "Isolde backend",
@@ -789,10 +823,8 @@ def create_app(config_class=Config):
         google_configured = provider_is_configured("google")
         oauth_configured = any(provider_is_configured(provider) for provider in PROVIDERS)
         research_configured = research_capability()["configured"]
-        # Cancellation is reported as AVAILABLE when a Redis URL is configured.
-        # The /api/ready endpoint uses the same URL check so both endpoints agree.
-        _cancellation_url = app.config.get("CANCELLATION_REDIS_URL", "")
-        cancellation_configured = bool(_cancellation_url)
+        from app.services.cancellation_service import redis_dependency_status
+        cancellation_status = redis_dependency_status(app.config.get("CANCELLATION_REDIS_URL", ""))
         image_status = "NOT_CONFIGURED" if not app.config.get("IMAGE_PROVIDER") else "NOT_SUPPORTED"
         video_status = "NOT_CONFIGURED" if not app.config.get("VIDEO_PROVIDER") else "NOT_SUPPORTED"
         try:
@@ -821,7 +853,7 @@ def create_app(config_class=Config):
             "google_oauth": "AVAILABLE" if google_configured else "NOT_CONFIGURED",
             "oauth": "AVAILABLE" if oauth_configured else "NOT_CONFIGURED",
             "api_access": "AVAILABLE",
-            "cancellation": "AVAILABLE" if cancellation_configured else "NOT_CONFIGURED",
+            "cancellation": cancellation_status,
             "admin": "AVAILABLE",
             "deep_research": "NOT_SUPPORTED",
             "pgvector": pgvector_status,
@@ -855,6 +887,7 @@ def create_app(config_class=Config):
         "/api/v1/ready",
         methods=["GET"],
     )
+    @limiter.exempt
     def api_v1_ready():
         """Compatibility alias for the readiness endpoint in the target API namespace."""
         return readiness()

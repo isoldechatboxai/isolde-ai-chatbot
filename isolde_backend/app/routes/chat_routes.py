@@ -6,7 +6,7 @@ from app.models.conversation import Conversation, Message
 from app.models.user import User, Setting, Broadcast
 from app.models.memory_model import UserMemory
 
-from app.services.provider_router import generate_reply, generate_reply_stream, generate_reply_with_usage
+from app.services.provider_router import generate_reply, generate_reply_stream, generate_reply_with_usage, get_provider_manager
 from app.services.credit_service import deduct_authoritative_usage
 from app.models.billing_model import CreditBalance
 from app.services.rag_service import search as rag_search, build_context_block
@@ -317,7 +317,8 @@ def _get_or_create_conversation(user_id: str, conversation_id: str | None) -> Co
 
 
 def _history_for_gemini(convo: Conversation, limit: int = 20):
-    recent = convo.messages[-limit:] if convo.messages else []
+    recent = list(reversed(Message.query.filter_by(conversation_id=convo.id)
+                           .order_by(Message.created_at.desc(), Message.id.desc()).limit(limit).all()))
     history = []
 
     for m in recent:
@@ -558,6 +559,10 @@ def stream_chat():
         return jsonify({"error": "Research query exceeds the configured length limit."}), 400
     user_id = get_jwt_identity()
 
+    availability = get_provider_manager().generation_capability_status()
+    if availability != "AVAILABLE":
+        return jsonify({"error": "AI service is not configured." if availability == "NOT_CONFIGURED"
+                        else "AI service is temporarily unavailable."}), 503
     generation_id = str(uuid.uuid4())
     owner = _request_generation_owner(user_id)
     stop_event = _SharedCancellationEvent(generation_id, owner)
@@ -713,13 +718,13 @@ def stream_chat():
 
                     except Exception as e:
                         db.session.rollback()
-                        current_app.logger.error(f"Error saving messages in stream: {e}")
+                        current_app.logger.error("Stream persistence failed category=DATABASE_ERROR")
 
                     # Streaming usage remains unavailable unless a provider's
                     # terminal event supplies authoritative metadata.
 
             except Exception as e:
-                current_app.logger.error(f"Streaming error: {e}")
+                current_app.logger.error("Streaming failed category=PROVIDER_ERROR")
                 yield "data: [ERROR]\n\n"
 
             finally:

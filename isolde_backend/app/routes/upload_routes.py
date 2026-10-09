@@ -15,7 +15,7 @@ from app.services.provider_router import analyze_image
 from app.utils.validators import allowed_file
 from app.utils.logger import log_event
 
-from app.services.rag_service import RAGEmbeddingUnavailable, index_document
+from app.services.rag_service import RAGEmbeddingUnavailable, RAGDocumentTooLarge, index_document
 from app.services.storage_service import get_storage, StorageNotConfigured
 
 upload_bp = Blueprint("upload", __name__)
@@ -141,7 +141,7 @@ def upload_file():
         if file_type not in IMAGE_TYPES and text.strip():
             record.indexed = index_document(record.id, filename, text, user_id) > 0
             db.session.commit()
-    except RAGEmbeddingUnavailable:
+    except (RAGEmbeddingUnavailable, RAGDocumentTooLarge) as error:
         db.session.rollback()
         if metadata_committed:
             try:
@@ -158,6 +158,8 @@ def upload_file():
             except Exception:
                 current_app.logger.error("Upload cleanup failed category=STORAGE_ERROR")
         current_app.logger.error("Upload indexing failed category=EMBEDDING_UNAVAILABLE")
+        if isinstance(error, RAGDocumentTooLarge):
+            return jsonify({"error": "Document exceeds the indexing limit."}), 413
         return jsonify({"error": "RAG embedding service is unavailable."}), 503
     except StorageNotConfigured:
         db.session.rollback()

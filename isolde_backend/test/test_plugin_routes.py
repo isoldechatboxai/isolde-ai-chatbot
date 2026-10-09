@@ -11,7 +11,7 @@ from flask_jwt_extended import create_access_token
 class TestConfig(Config):
     TESTING = True
     SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
-    JWT_SECRET_KEY = "test-secret-key-for-testing"
+    JWT_SECRET_KEY = "test-secret-key-for-testing-with-32-plus-characters"
     # Override engine options for SQLite in-memory compatibility
     SQLALCHEMY_ENGINE_OPTIONS = {}
 

@@ -17,7 +17,7 @@ class TestConfig(Config):
     IS_DEMO_STAGING = False
     DEMO_ADMIN_BOOTSTRAP_ENABLED = False
     SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
-    JWT_SECRET_KEY = "test-secret-key-for-testing"
+    JWT_SECRET_KEY = "test-secret-key-for-testing-with-32-plus-characters"
     _TEST_RUNTIME_ROOT = os.path.join(os.path.dirname(__file__), ".runtime")
     UPLOAD_FOLDER = os.path.join(_TEST_RUNTIME_ROOT, "uploads")
     LOG_DIR = os.path.join(_TEST_RUNTIME_ROOT, "logs")

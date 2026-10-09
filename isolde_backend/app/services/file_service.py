@@ -5,13 +5,28 @@ PDFs/images if needed later.
 """
 import os
 import csv
-import PyPDF2
+import zipfile
+import pypdf
 import docx
 import pandas as pd
 
 
+def validate_document_container(filepath, file_type):
+    """Reject Office archives whose expanded data can exhaust a worker."""
+    if file_type not in {"docx", "xlsx"}:
+        return
+    with zipfile.ZipFile(filepath) as archive:
+        entries = archive.infolist()
+        if len(entries) > 2000 or sum(item.file_size for item in entries) > 50 * 1024 * 1024:
+            raise ValueError("Document archive exceeds extraction limits.")
+        if any(item.file_size > 10 * 1024 * 1024 and item.file_size > max(item.compress_size, 1) * 200
+               for item in entries):
+            raise ValueError("Document archive exceeds compression limits.")
+
+
 def extract_text(filepath: str, file_type: str) -> str:
     file_type = file_type.lower()
+    validate_document_container(filepath, file_type)
 
     if file_type == "pdf":
         return _extract_pdf(filepath)
@@ -31,7 +46,7 @@ def extract_text(filepath: str, file_type: str) -> str:
 def _extract_pdf(filepath: str) -> str:
     text = []
     with open(filepath, "rb") as f:
-        reader = PyPDF2.PdfReader(f)
+        reader = pypdf.PdfReader(f)
         for page in reader.pages:
             content = page.extract_text() or ""
             text.append(content)

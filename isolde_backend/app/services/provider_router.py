@@ -404,7 +404,8 @@ class ProviderManager:
             from flask import g, has_request_context
             from app.services.organization_policy_service import effective_policy_for_user
             jwt_claims = getattr(g, "_jwt_extended_jwt", {}) if has_request_context() else {}
-            identity = jwt_claims.get("sub") if isinstance(jwt_claims, dict) else None
+            identity = (getattr(g, "auth_user_id", None) if has_request_context() else None)
+            identity = identity or (jwt_claims.get("sub") if isinstance(jwt_claims, dict) else None)
             if identity:
                 allowed = effective_policy_for_user(identity)["allowed_providers"]
                 if allowed is not None:
@@ -422,7 +423,7 @@ class ProviderManager:
             try:
                 parsed = json.loads(raw)
                 if isinstance(parsed, list) and parsed:
-                    valid = [p.lower().strip() for p in parsed if p.lower().strip() in KNOWN_PROVIDERS]
+                    valid = [p.lower().strip() for p in parsed if isinstance(p, str) and p.lower().strip() in KNOWN_PROVIDERS]
                     if valid:
                         return valid
             except (json.JSONDecodeError, TypeError):
@@ -584,18 +585,23 @@ class ProviderManager:
             api_key=api_key,
             http_options=types.HttpOptions(api_version="v1beta", timeout=int(timeout * 1000)),
         )
-        chat = client.chats.create(
-            model=model_name,
-            history=_to_content_history(history),
-            config=types.GenerateContentConfig(system_instruction=sys_prompt),
-        )
-        response = chat.send_message(message=prompt)
-        usage = response.usage_metadata
-        return (response.text or "").strip(), {
-            "input_tokens": getattr(usage, "prompt_token_count", None),
-            "output_tokens": getattr(usage, "candidates_token_count", None),
-            "total_tokens": getattr(usage, "total_token_count", None),
-        }
+        try:
+            chat = client.chats.create(
+                model=model_name,
+                history=_to_content_history(history),
+                config=types.GenerateContentConfig(system_instruction=sys_prompt),
+            )
+            response = chat.send_message(message=prompt)
+            usage = response.usage_metadata
+            return (response.text or "").strip(), {
+                "input_tokens": getattr(usage, "prompt_token_count", None),
+                "output_tokens": getattr(usage, "candidates_token_count", None),
+                "total_tokens": getattr(usage, "total_token_count", None),
+            }
+        finally:
+            close = getattr(client, "close", None)
+            if callable(close):
+                close()
 
     def _call_gemini_stream(self, prompt: str, history, sys_prompt: str, timeout: int) -> Generator[str, None, None]:
         try:
@@ -610,15 +616,20 @@ class ProviderManager:
             api_key=api_key,
             http_options=types.HttpOptions(api_version="v1beta", timeout=int(timeout * 1000)),
         )
-        chat = client.chats.create(
-            model=model_name,
-            history=_to_content_history(history),
-            config=types.GenerateContentConfig(system_instruction=sys_prompt),
-        )
-        for chunk in chat.send_message_stream(message=prompt):
-            text = chunk.text or ""
-            if text:
-                yield text
+        try:
+            chat = client.chats.create(
+                model=model_name,
+                history=_to_content_history(history),
+                config=types.GenerateContentConfig(system_instruction=sys_prompt),
+            )
+            for chunk in chat.send_message_stream(message=prompt):
+                text = chunk.text or ""
+                if text:
+                    yield text
+        finally:
+            close = getattr(client, "close", None)
+            if callable(close):
+                close()
 
     # -- OpenAI-compatible generic call ------------------------------------
     def _call_openai_compatible(
@@ -665,7 +676,8 @@ class ProviderManager:
         resp = session.post(base_url, headers=headers, json=payload, timeout=timeout, stream=stream)
 
         if resp.status_code != 200:
-            raise RuntimeError(f"{provider} API Error ({resp.status_code}): {resp.text[:500]}")
+            resp.close()
+            raise RuntimeError(f"{provider} API Error ({resp.status_code})")
 
         if not stream:
             try:
@@ -821,32 +833,36 @@ class ProviderManager:
         resp = session.post("https://api.anthropic.com/v1/messages", headers=headers, json=data, timeout=timeout, stream=True)
 
         if resp.status_code != 200:
-            raise RuntimeError(f"Claude Stream Error ({resp.status_code}): {resp.text[:500]}")
+            resp.close()
+            raise RuntimeError(f"Claude Stream Error ({resp.status_code})")
 
         def gen():
-            for line in resp.iter_lines(decode_unicode=True):
-                if not line:
-                    continue
-                if line.startswith("data: "):
-                    data_str = line[6:]
-                    try:
-                        obj = json.loads(data_str)
-                        if obj.get("type") == "error":
-                            err_msg = obj.get("error", {}).get("message", str(obj.get("error")))
-                            raise RuntimeError(f"Claude Stream Error: {err_msg}")
-                        if obj.get("type") == "content_block_delta":
-                            delta = obj.get("delta") or {}
-                            text = delta.get("text", "")
-                            if text:
-                                yield text
-                        elif obj.get("type") == "message_stop":
-                            break
-                    except json.JSONDecodeError:
+            try:
+                for line in resp.iter_lines(decode_unicode=True):
+                    if not line:
                         continue
-                    except RuntimeError:
-                        raise
-                    except Exception:
-                        continue
+                    if line.startswith("data: "):
+                        data_str = line[6:]
+                        try:
+                            obj = json.loads(data_str)
+                            if obj.get("type") == "error":
+                                err_msg = obj.get("error", {}).get("message", str(obj.get("error")))
+                                raise RuntimeError(f"Claude Stream Error: {err_msg}")
+                            if obj.get("type") == "content_block_delta":
+                                delta = obj.get("delta") or {}
+                                text = delta.get("text", "")
+                                if text:
+                                    yield text
+                            elif obj.get("type") == "message_stop":
+                                break
+                        except json.JSONDecodeError:
+                            continue
+                        except RuntimeError:
+                            raise
+                        except Exception:
+                            continue
+            finally:
+                resp.close()
         return gen()
 
     # -- dispatch tables ----------------------------------------------------
@@ -918,6 +934,8 @@ class ProviderManager:
                 continue
 
             start = time.time()
+            stream = None
+            emitted = False
             try:
                 stream = fn(
                     prompt, history, sys_prompt,
@@ -929,6 +947,7 @@ class ProviderManager:
                         if callable(close):
                             close()
                         return
+                    emitted = True
                     yield chunk
                 latency = (time.time() - start) * 1000
                 self.metrics.record(provider, latency, True)
@@ -940,6 +959,8 @@ class ProviderManager:
                     "Provider '%s' streaming failed category=%s", provider, category,
                 )
                 self.metrics.record(provider, (time.time() - start) * 1000, False)
+                if emitted:
+                    raise RuntimeError("PROVIDER_STREAM_INTERRUPTED") from None
                 continue
             except Exception as exc:
                 latency = (time.time() - start) * 1000
@@ -950,9 +971,15 @@ class ProviderManager:
                     "Provider '%s' streaming failed category=%s",
                     provider, _provider_error_category(exc),
                 )
+                if emitted:
+                    raise RuntimeError("PROVIDER_STREAM_INTERRUPTED") from None
                 continue
+            finally:
+                close = getattr(stream, "close", None)
+                if callable(close):
+                    close()
 
-        yield "[ERROR] All providers failed."
+        raise RuntimeError("PROVIDER_STREAM_UNAVAILABLE")
 
     def get_metrics(self) -> Dict:
         return self.metrics.get_all()
@@ -1150,12 +1177,16 @@ def embed_text(text: str):
         raise RuntimeError("google-genai package is not installed.")
 
     api_key = manager.get_api_key_for_provider("gemini")
-    client  = genai.Client(api_key=api_key)
-    result  = client.models.embed_content(
-        model=current_app.config.get("GEMINI_EMBEDDING_MODEL") or "gemini-embedding-2",
-        contents=text,
-    )
-    return list(result.embeddings[0].values)
+    from google.genai import types
+    client  = genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=int(_provider_timeout() * 1000)))
+    try:
+        result  = client.models.embed_content(
+            model=current_app.config.get("GEMINI_EMBEDDING_MODEL") or "gemini-embedding-2",
+            contents=text,
+        )
+        return list(result.embeddings[0].values)
+    finally:
+        client.close()
 
 def analyze_image(image_bytes: bytes, mime_type: str, question: str) -> str:
     try:
@@ -1167,12 +1198,15 @@ def analyze_image(image_bytes: bytes, mime_type: str, question: str) -> str:
     manager    = get_provider_manager()
     api_key    = manager.get_api_key_for_provider("gemini")
     model_name = manager.get_model_for_provider("gemini")
-    client   = genai.Client(api_key=api_key)
-    response = client.models.generate_content(
-        model=model_name,
-        contents=[
-            types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
-            question,
-        ],
-    )
-    return (response.text or "").strip()
+    client   = genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=int(_provider_timeout() * 1000)))
+    try:
+        response = client.models.generate_content(
+            model=model_name,
+            contents=[
+                types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
+                question,
+            ],
+        )
+        return (response.text or "").strip()
+    finally:
+        client.close()

@@ -8,6 +8,7 @@ from werkzeug.utils import secure_filename
 
 from app.services.rag_service import (
     RAGEmbeddingUnavailable,
+    RAGDocumentTooLarge,
     process_and_index_file,
     list_documents as list_owned_documents,
     get_document as get_owned_document,
@@ -170,13 +171,15 @@ def upload_rag_file():
             "chunks_indexed": indexed_chunks
         }), 200
 
-    except RAGEmbeddingUnavailable:
+    except (RAGEmbeddingUnavailable, RAGDocumentTooLarge) as error:
         current_app.logger.error("RAG indexing failed category=EMBEDDING_UNAVAILABLE")
         if file_path:
             try:
                 os.remove(file_path)
             except OSError:
                 pass
+        if isinstance(error, RAGDocumentTooLarge):
+            return jsonify({"status": "error", "message": "Document exceeds the indexing limit."}), 413
         return jsonify({
             "status": "error", "message": "RAG embedding service is unavailable."
         }), 503

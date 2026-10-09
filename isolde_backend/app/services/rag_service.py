@@ -10,8 +10,10 @@ SQLite remains a compatibility-only test backend.
 import json
 import os
 import uuid
+import time
 
 import numpy as np
+from sqlalchemy import case
 
 from typing import Optional, List, Dict
 
@@ -29,6 +31,19 @@ class RAGEmbeddingUnavailable(RuntimeError):
     """Raised when a requested RAG operation cannot obtain an embedding."""
 
 
+class RAGDocumentTooLarge(ValueError):
+    """The document exceeds the bounded synchronous indexing budget."""
+
+
+def _validated_vector(raw):
+    vector = np.asarray(raw, dtype=float)
+    if (vector.ndim != 1 or not 0 < vector.size <= 16000
+            or not np.isfinite(vector).all() or not np.any(vector)
+            or np.abs(vector).max() > np.finfo(np.float32).max):
+        raise ValueError("Invalid embedding vector.")
+    return vector.tolist()
+
+
 def _index_path():
     store_dir = current_app.config.get("VECTOR_STORE_DIR", "vector_store")
     os.makedirs(store_dir, exist_ok=True)
@@ -44,7 +59,7 @@ def _load_index(user_id=None):
     if user_id is None:
         query = query.filter(RAGChunk.user_id.is_(None))
     else:
-        query = query.filter(RAGChunk.user_id == str(user_id))
+        query = query.filter(RAGChunk.user_id == str(user_id), RAGDocument.user_id == str(user_id))
     rows = query.all()
     return [{
         "id": chunk.id,
@@ -94,16 +109,16 @@ def _chunk_text(text: str, chunk_size: int = 800, overlap: int = 100):
 
 def _extract_pdf_text(file_path: str, filename: str) -> str:
     try:
-        import PyPDF2
+        import pypdf
     except ImportError:
-        current_app.logger.error("PyPDF2 is not installed. Run: pip install PyPDF2")
+        current_app.logger.error("pypdf is not installed. Run: pip install pypdf")
         return ""
 
     try:
         text_parts = []
 
         with open(file_path, "rb") as f:
-            reader = PyPDF2.PdfReader(f)
+            reader = pypdf.PdfReader(f)
 
             for page in reader.pages:
                 try:
@@ -176,6 +191,8 @@ def extract_text_from_file(file_path: str, filename: str) -> str:
     ext = filename.lower().rsplit(".", 1)[-1].strip() if "." in filename else ""
 
     try:
+        from app.services.file_service import validate_document_container
+        validate_document_container(file_path, ext)
         if ext == "pdf":
             return _extract_pdf_text(file_path, filename)
 
@@ -236,6 +253,9 @@ def index_document(file_id: str, filename: str, text: str, user_id: Optional[str
     user_id = str(user_id).strip() if user_id is not None else ""
     if not user_id:
         raise ValueError("Authenticated document ownership is required for RAG indexing.")
+    max_chunks = int(current_app.config.get("RAG_MAX_INDEX_CHUNKS", 128))
+    if len(text) > max_chunks * 700:
+        raise RAGDocumentTooLarge("Document exceeds the synchronous indexing limit.")
     chunks = _chunk_text(text)
 
     if not chunks:
@@ -243,25 +263,25 @@ def index_document(file_id: str, filename: str, text: str, user_id: Optional[str
 
     embedded_chunks = []
     embedding_failed = False
+    deadline = time.monotonic() + current_app.config.get("RAG_INDEX_TIMEOUT_SECONDS", 60)
 
     for chunk in chunks:
+        if time.monotonic() >= deadline:
+            raise RAGEmbeddingUnavailable("RAG_INDEX_TIMEOUT")
         try:
             vector = embed_text(chunk)
 
-            if not vector:
-                continue
-
-            vector = [float(value) for value in vector]
+            vector = _validated_vector(vector)
 
             embedded_chunks.append((chunk, vector))
         except Exception:
             embedding_failed = True
             current_app.logger.error("Document embedding failed category=PROVIDER_ERROR")
-            continue
+            break
 
+    if embedding_failed:
+        raise RAGEmbeddingUnavailable("RAG_EMBEDDING_UNAVAILABLE")
     if not embedded_chunks:
-        if embedding_failed:
-            raise RAGEmbeddingUnavailable("RAG_EMBEDDING_UNAVAILABLE")
         return 0
 
     document = RAGDocument(id=str(file_id), user_id=user_id, filename=filename, chunk_count=len(embedded_chunks))
@@ -331,13 +351,11 @@ def import_legacy_json(path: str):
             document = RAGDocument(id=document_id, user_id=owner, filename=filename, chunk_count=len(chunks))
             db.session.add(document)
             for position, record in enumerate(chunks):
-                vector = [float(value) for value in record["vector"]]
-                if not vector:
-                    raise ValueError("Legacy RAG embedding cannot be empty.")
+                vector = _validated_vector(record["vector"])
                 db.session.add(RAGChunk(
                     id=str(record.get("id") or uuid.uuid4()), document_id=document_id,
                     user_id=owner, position=position, text=str(record["text"]),
-                    embedding=vector, embedding_dimension=len(vector),
+                    embedding=vector, embedding_vector=vector, embedding_dimension=len(vector),
                 ))
                 imported_chunks += 1
             imported_documents += 1
@@ -367,7 +385,7 @@ def search(
 
     try:
         query_vector_raw = embed_text(query)
-        query_vec = np.array(query_vector_raw, dtype=float).flatten()
+        query_vec = np.asarray(_validated_vector(query_vector_raw), dtype=float)
     except Exception:
         current_app.logger.error("Query embedding failed category=PROVIDER_ERROR")
         if require_embedding:
@@ -409,7 +427,7 @@ def search(
             continue
 
         try:
-            vec = np.array(record.get("vector"), dtype=float).flatten()
+            vec = np.asarray(_validated_vector(record.get("vector")), dtype=float)
         except Exception:
             continue
 
@@ -446,13 +464,19 @@ def _search_postgres(query_vector: list[float], top_k: int, user_id: str) -> Lis
     pgvector then computes exact cosine distance without a Python full scan.
     """
     dimension = len(query_vector)
-    distance = RAGChunk.embedding_vector.cosine_distance(query_vector)
+    # CASE, unlike WHERE predicate order, guarantees malformed legacy
+    # dimensions cannot reach the pgvector distance operator.
+    distance = case((
+        db.func.vector_dims(RAGChunk.embedding_vector) == dimension,
+        RAGChunk.embedding_vector.cosine_distance(query_vector),
+    ), else_=None)
     max_distance = 1 - float(current_app.config.get("RAG_RELEVANCE_THRESHOLD", DEFAULT_RELEVANCE_THRESHOLD))
     rows = (
         db.session.query(RAGChunk, RAGDocument.filename, distance.label("distance"))
         .join(RAGDocument, RAGDocument.id == RAGChunk.document_id)
         .filter(
             RAGChunk.user_id == user_id,
+            RAGDocument.user_id == user_id,
             RAGChunk.embedding_dimension == dimension,
             RAGChunk.embedding_vector.isnot(None),
             distance <= max_distance,

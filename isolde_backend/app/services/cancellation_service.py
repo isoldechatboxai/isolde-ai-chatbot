@@ -9,6 +9,24 @@ class CancellationStoreUnavailable(RuntimeError):
     pass
 
 
+def redis_dependency_status(url):
+    if not url:
+        return "NOT_CONFIGURED"
+    client = None
+    try:
+        import redis
+        client = redis.Redis.from_url(
+            url, socket_connect_timeout=current_app.config.get("REDIS_CONNECT_TIMEOUT_SECONDS", 2),
+            socket_timeout=current_app.config.get("REDIS_SOCKET_TIMEOUT_SECONDS", 2),
+        )
+        return "AVAILABLE" if client.ping() else "UNAVAILABLE"
+    except Exception:
+        return "UNAVAILABLE"
+    finally:
+        if client is not None:
+            client.close()
+
+
 class CancellationStore:
     def __init__(self):
         self._memory = {}

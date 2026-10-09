@@ -136,6 +136,7 @@ def test_provider_failures_are_categorized_without_logging_secrets(caplog, monke
 
 
 def test_stream_response_close_cleans_cancellation_state(client, monkeypatch):
+    monkeypatch.setattr(ProviderManager, "generation_capability_status", lambda self: "AVAILABLE")
     user = User(name="Stream User", email="stream-close@example.com", status="Active")
     user.set_password("StrongPass123!")
     db.session.add(user)

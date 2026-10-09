@@ -75,7 +75,7 @@ def test_html_extraction_strips_active_content(monkeypatch):
         def raise_for_status(self): pass
         def iter_content(self, _size): yield b"<title>Title</title><script>steal()</script><style>x</style><h1>Heading</h1><p>Safe text</p>"
     monkeypatch.setattr(socket, "getaddrinfo", lambda *args, **kwargs: [(None, None, None, None, ("8.8.8.8", 443))])
-    monkeypatch.setattr(research_service.requests, "get", lambda *args, **kwargs: Response())
+    monkeypatch.setattr(research_service, "_open_evidence", lambda *args, **kwargs: Response())
     evidence = research_service.fetch_evidence({"id": "web-1", "url": "https://public.example.test/"})
     assert evidence["evidence_mode"] == "FULL_PAGE"
     assert "Safe text" in evidence["text"]
@@ -93,7 +93,7 @@ def test_fetcher_stops_reading_after_byte_budget(monkeypatch):
             yield b"def"
             raise AssertionError("fetcher read past its byte budget")
     monkeypatch.setattr(socket, "getaddrinfo", lambda *args, **kwargs: [(None, None, None, None, ("8.8.8.8", 443))])
-    monkeypatch.setattr(research_service.requests, "get", lambda *args, **kwargs: Response())
+    monkeypatch.setattr(research_service, "_open_evidence", lambda *args, **kwargs: Response())
     evidence = research_service.fetch_evidence({"id": "web-1", "url": "https://public.example.test/"}, max_bytes=4)
     assert evidence["text"] == "abcd"
     assert evidence["truncated"] is True

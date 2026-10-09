@@ -13,6 +13,26 @@ def token_digest(raw_token: str) -> str:
     return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
 
 
+def revoke_user_auth(user_id):
+    """Revoke sessions, pending credential exchanges and pre-session JWTs.
+
+    The caller commits this in the same transaction as the credential change.
+    The marker only affects legacy JWTs without a database session identifier.
+    """
+    user_id = str(user_id)
+    now = utcnow()
+    AuthSession.query.filter_by(user_id=user_id, revoked_at=None).update(
+        {"revoked_at": now}, synchronize_session=False
+    )
+    AuthToken.query.filter_by(user_id=user_id, used_at=None).update(
+        {"used_at": now}, synchronize_session=False
+    )
+    marker = db.session.get(RevokedToken, f"user:{user_id}")
+    if marker is None:
+        db.session.add(RevokedToken(jti=f"user:{user_id}", user_id=user_id,
+                                   revoked_at=now, expires_at=datetime.max))
+
+
 class AuthSession(db.Model):
     __tablename__ = "auth_sessions"
 

@@ -70,7 +70,7 @@ def _database_engine_options(database_url: str) -> dict:
     connection before a request starts; ``pool_recycle`` limits its age.
     Neither setting retries an application write or changes TLS verification.
     """
-    if not database_url.startswith(("postgresql://", "postgres://")):
+    if not database_url.startswith(("postgresql://", "postgres://", "postgresql+psycopg2://")):
         return {}
     return {
         "pool_pre_ping": True,
@@ -258,6 +258,8 @@ class Config:
     # Content-Length guard.  This also protects deployments receiving
     # chunked multipart bodies without a trustworthy Content-Length header.
     RAG_MAX_UPLOAD_BYTES = _env_int("RAG_MAX_UPLOAD_BYTES", MAX_CONTENT_LENGTH)
+    RAG_MAX_INDEX_CHUNKS = _env_int("RAG_MAX_INDEX_CHUNKS", 128)
+    RAG_INDEX_TIMEOUT_SECONDS = _env_int("RAG_INDEX_TIMEOUT_SECONDS", 60)
 
     ALLOWED_EXTENSIONS = {
         "pdf",
@@ -325,7 +327,7 @@ class Config:
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = os.getenv(
         "SESSION_COOKIE_SAMESITE",
-        "Lax",
+        "None" if APPLE_OAUTH_CLIENT_ID and IS_PRODUCTION else "Lax",
     ).strip()
 
     # ==========================================================
@@ -442,6 +444,8 @@ class Config:
     def _is_valid_public_url(value: str, require_https: bool = False, origin_only: bool = False) -> bool:
         try:
             parsed = urlsplit(value)
+            if not parsed.hostname or (parsed.port is not None and not 1 <= parsed.port <= 65535):
+                return False
         except ValueError:
             return False
         if parsed.scheme not in ({"https"} if require_https else {"http", "https"}):
@@ -499,6 +503,16 @@ class Config:
             raise RuntimeError(
                 "FLASK_DEBUG must be disabled in production."
             )
+        if cls.TESTING:
+            raise RuntimeError("FLASK_TESTING must be disabled in production.")
+        if cls.SQLALCHEMY_ECHO:
+            raise RuntimeError("SQLALCHEMY_ECHO must be disabled in production.")
+        if any(len(value) < 32 for value in (cls.SECRET_KEY, cls.JWT_SECRET_KEY)):
+            raise RuntimeError("FLASK_SECRET_KEY and JWT_SECRET_KEY must contain at least 32 characters in production.")
+        if cls.TRUST_PROXY_HOPS < 0 or cls.TRUST_PROXY_HOPS > 1:
+            raise RuntimeError("TRUST_PROXY_HOPS must be 0 or 1 for the supported production proxy topology.")
+        if cls.APPLE_OAUTH_CLIENT_ID and cls.SESSION_COOKIE_SAMESITE != "None":
+            raise RuntimeError("Apple form_post OAuth requires SESSION_COOKIE_SAMESITE=None in production.")
 
         cors_origins = cls.CORS_ORIGINS or []
         if "*" in cors_origins or any(origin.strip() == "*" for origin in cors_origins):
@@ -573,6 +587,13 @@ class Config:
             ("CHAT_MAX_PROMPT_CHARS", cls.CHAT_MAX_PROMPT_CHARS),
             ("RESEARCH_QUERY_MAX_CHARS", cls.RESEARCH_QUERY_MAX_CHARS),
             ("RAG_QUERY_MAX_CHARS", cls.RAG_QUERY_MAX_CHARS),
+            ("MAX_CONTENT_LENGTH", cls.MAX_CONTENT_LENGTH),
+            ("RAG_MAX_UPLOAD_BYTES", cls.RAG_MAX_UPLOAD_BYTES),
+            ("RAG_MAX_INDEX_CHUNKS", cls.RAG_MAX_INDEX_CHUNKS),
+            ("RAG_INDEX_TIMEOUT_SECONDS", cls.RAG_INDEX_TIMEOUT_SECONDS),
+            ("CANCELLATION_TTL_SECONDS", cls.CANCELLATION_TTL_SECONDS),
+            ("REDIS_CONNECT_TIMEOUT_SECONDS", cls.REDIS_CONNECT_TIMEOUT_SECONDS),
+            ("REDIS_SOCKET_TIMEOUT_SECONDS", cls.REDIS_SOCKET_TIMEOUT_SECONDS),
         ):
             if value <= 0:
                 raise RuntimeError(f"{name} must be greater than zero.")
@@ -611,6 +632,8 @@ class Config:
             raise RuntimeError("S3_BUCKET is required in production.")
         if cls.SQLALCHEMY_DATABASE_URI.startswith("sqlite:"):
             raise RuntimeError("DATABASE_URL must use a multi-worker production database, not SQLite.")
+        if not cls.SQLALCHEMY_DATABASE_URI.startswith(("postgresql://", "postgresql+psycopg2://")):
+            raise RuntimeError("DATABASE_URL must use PostgreSQL in production.")
 
 
 def ensure_runtime_directories() -> None:
