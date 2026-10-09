@@ -754,12 +754,12 @@ def stream_chat():
 
         response = Response(
             stream_with_context(generate()),
+            content_type="text/event-stream; charset=utf-8",
             headers={
-                "Content-Type": "text/event-stream; charset=utf-8",
                 "Cache-Control": "no-cache, no-transform",
                 "X-Accel-Buffering": "no",
                 "Connection": "keep-alive",
-                "X-Generation-ID": generation_id,
+                "X-Generation-ID": str(generation_id),
             },
         )
         application = current_app._get_current_object()

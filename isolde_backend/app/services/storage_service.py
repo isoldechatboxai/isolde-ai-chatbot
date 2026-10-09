@@ -78,8 +78,18 @@ class StorageService:
         if self.backend == "local":
             self.root.mkdir(parents=True, exist_ok=True)
             return self.root.is_dir()
-        self._s3().head_bucket(Bucket=self.bucket)
-        return True
+        try:
+            import boto3
+            from botocore.config import Config
+            client = boto3.client(
+                "s3", region_name=self.region, endpoint_url=self.endpoint,
+                aws_access_key_id=self.access_key, aws_secret_access_key=self.secret_key,
+                config=Config(connect_timeout=2, read_timeout=3, retries={"max_attempts": 1}),
+            )
+            client.head_bucket(Bucket=self.bucket)
+            return True
+        except Exception:
+            return False
 
 
 def get_storage():

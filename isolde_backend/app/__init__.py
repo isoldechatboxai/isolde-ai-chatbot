@@ -198,9 +198,13 @@ def create_app(config_class=Config):
     # Configuration
     # ----------------------------------------------------------------
     app.config.from_object(config_class)
-    app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
-        **app.config.get("SQLALCHEMY_ENGINE_OPTIONS", {}), "hide_parameters": True,
-    }
+    db_uri = app.config.get("SQLALCHEMY_DATABASE_URI", "")
+    if db_uri.startswith("sqlite"):
+        app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {"hide_parameters": True}
+    else:
+        app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
+            **app.config.get("SQLALCHEMY_ENGINE_OPTIONS", {}), "hide_parameters": True,
+        }
     # Validate the configuration actually supplied to the factory, including
     # custom production configurations used by WSGI entry points.
     if not app.config.get("TESTING"):

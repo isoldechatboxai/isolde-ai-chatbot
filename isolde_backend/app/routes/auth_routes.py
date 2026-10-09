@@ -303,23 +303,28 @@ def login():
     password = str(data.get("password") or "")
     if len(password) > 128:
         return jsonify({"error": "Invalid email or password."}), 401
-    user = _user_with_normalized_email(email)
-    if not user or not user.check_password(password) or not user.is_active:
-        log_event(current_app, "LOGIN_FAILED", "invalid credentials")
-        return jsonify({"error": "Invalid email or password."}), 401
-    if not user.is_verified:
-        if current_app.config.get("REQUIRE_EMAIL_VERIFICATION"):
-            return jsonify({"error": "Email verification is required.", "verification_required": True}), 403
-        # Verification not required — promote the account silently so legacy
-        # unverified rows are not permanently locked out.
-        user.is_verified = True
-        db.session.commit()
-    token, auth_session = _create_login(user)
-    log_event(current_app, "LOGIN_SUCCESS", "password", user.id)
-    return jsonify({
-        "message": "Login successful.", "access_token": token,
-        "session_id": auth_session.id, "user": user.to_dict()
-    }), 200
+    try:
+        user = _user_with_normalized_email(email)
+        if not user or not user.check_password(password) or not user.is_active:
+            log_event(current_app, "LOGIN_FAILED", "invalid credentials")
+            return jsonify({"error": "Invalid email or password."}), 401
+        if not user.is_verified:
+            if current_app.config.get("REQUIRE_EMAIL_VERIFICATION"):
+                return jsonify({"error": "Email verification is required.", "verification_required": True}), 403
+            # Verification not required — promote the account silently so legacy
+            # unverified rows are not permanently locked out.
+            user.is_verified = True
+            db.session.commit()
+        token, auth_session = _create_login(user)
+        log_event(current_app, "LOGIN_SUCCESS", "password", user.id)
+        return jsonify({
+            "message": "Login successful.", "access_token": token,
+            "session_id": auth_session.id, "user": user.to_dict()
+        }), 200
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.error("Login processing error: %s", exc)
+        return jsonify({"error": "Authentication service is temporarily unavailable."}), 503
 
 
 @auth_bp.route("/logout", methods=["POST"])
